@@ -24,6 +24,7 @@ from app.api.dependencies import (
     escape_like,
 )
 from app.api.schemas.common import PaginatedResponse
+from app.api.schemas.envelope import PaginatedEnvelope, PaginationMeta
 from app.api.schemas.issue import (
     IssueActivityResponse,
     IssueAssignRequest,
@@ -202,7 +203,7 @@ def _cascade_findings_status(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/issues", response_model=PaginatedResponse[IssueResponse])
+@router.get("/issues", response_model=PaginatedEnvelope[IssueResponse])
 def list_issues(
     tenant_id: int,
     severity: Optional[str] = Query(None, description="Filter by severity"),
@@ -217,7 +218,7 @@ def list_issues(
     pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
     membership=Depends(verify_tenant_access),
-) -> PaginatedResponse[IssueResponse]:
+) -> PaginatedEnvelope[IssueResponse]:
     """List issues with filtering, search, and pagination.
 
     Supports filtering by severity, status, assignment, and project.
@@ -290,12 +291,14 @@ def list_issues(
 
     items = [_issue_to_response(issue, db) for issue in issues]
 
-    return PaginatedResponse(
-        items=items,
-        total=total,
-        page=pagination.page,
-        page_size=pagination.page_size,
-        total_pages=(total + pagination.page_size - 1) // pagination.page_size,
+    return PaginatedEnvelope(
+        data=items,
+        meta=PaginationMeta(
+            total=total,
+            page=pagination.page,
+            page_size=pagination.page_size,
+            total_pages=(total + pagination.page_size - 1) // pagination.page_size,
+        ),
     )
 
 

@@ -6,8 +6,9 @@ Finding Schemas
 Pydantic models for vulnerability findings
 """
 
+import json
 from typing import Optional, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from datetime import datetime
 
 
@@ -27,9 +28,45 @@ class FindingResponse(BaseModel):
     last_seen: datetime = Field(..., description="Last seen timestamp")
     status: str = Field(..., description="Finding status (open, suppressed, fixed)")
 
+    # Nuclei integration metadata
+    matched_at: Optional[str] = Field(None, description="URL where finding was discovered")
+    host: Optional[str] = Field(None, description="Hostname extracted from matched_at")
+    matcher_name: Optional[str] = Field(None, description="Nuclei matcher name")
+
+    # Deduplication
+    fingerprint: Optional[str] = Field(None, description="SHA-256 dedup fingerprint")
+    occurrence_count: int = Field(1, description="Number of times this finding was detected")
+
     # Related asset info (for joined queries)
     asset_identifier: Optional[str] = Field(None, description="Asset identifier")
     asset_type: Optional[str] = Field(None, description="Asset type")
+
+    @field_validator('evidence', mode='before')
+    @classmethod
+    def parse_evidence(cls, v: object) -> object:
+        """Parse evidence from JSON string if stored as TEXT in DB."""
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except (json.JSONDecodeError, TypeError):
+                return None
+        return v
+
+    @field_validator('severity', mode='before')
+    @classmethod
+    def parse_severity(cls, v: object) -> object:
+        """Extract .value from SQLAlchemy enum if needed."""
+        if hasattr(v, 'value'):
+            return v.value
+        return v
+
+    @field_validator('status', mode='before')
+    @classmethod
+    def parse_status(cls, v: object) -> object:
+        """Extract .value from SQLAlchemy enum if needed."""
+        if hasattr(v, 'value'):
+            return v.value
+        return v
 
     model_config = ConfigDict(
         from_attributes=True,
@@ -51,6 +88,8 @@ class FindingResponse(BaseModel):
                 "first_seen": "2024-01-15T10:00:00Z",
                 "last_seen": "2024-01-15T12:00:00Z",
                 "status": "open",
+                "fingerprint": None,
+                "occurrence_count": 1,
                 "asset_identifier": "api.example.com",
                 "asset_type": "subdomain"
             }

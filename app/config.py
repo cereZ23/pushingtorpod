@@ -203,6 +203,19 @@ class Settings(BaseSettings):
     webhook_url: Optional[str] = None
     webhook_secret: Optional[str] = None
 
+    # SAML SSO
+    saml_enabled: bool = False
+    saml_idp_entity_id: Optional[str] = None
+    saml_idp_sso_url: Optional[str] = None
+    saml_idp_slo_url: Optional[str] = None
+    saml_idp_x509_cert: Optional[str] = None
+    saml_sp_entity_id: str = "easm-platform"
+    saml_sp_acs_url: Optional[str] = None  # e.g. https://easm.example.com/api/v1/auth/saml/acs
+    saml_default_tenant_id: int = 1
+    saml_default_role: str = "member"
+    saml_auto_provision: bool = True  # auto-create users on first SAML login
+    saml_frontend_url: str = "http://localhost:13000"  # frontend URL for post-login redirect
+
     # Feature Flags
     feature_uncover_enabled: bool = True
     feature_nuclei_enabled: bool = True

@@ -20,7 +20,7 @@ from app.api.schemas.finding import (
     FindingStatsResponse,
     SeverityDistribution
 )
-from app.api.schemas.common import PaginatedResponse
+from app.api.schemas.envelope import PaginatedEnvelope, PaginationMeta
 from app.models.database import Asset, Finding, FindingSeverity, FindingStatus
 
 logger = logging.getLogger(__name__)
@@ -215,7 +215,7 @@ def get_severity_trends(
     return trends
 
 
-@router.get("", response_model=PaginatedResponse[FindingResponse])
+@router.get("", response_model=PaginatedEnvelope[FindingResponse])
 def list_findings(
     tenant_id: int,
     asset_id: Optional[int] = Query(None),
@@ -351,12 +351,14 @@ def list_findings(
         finding_dict['asset_type'] = asset_type.value if hasattr(asset_type, 'value') else asset_type
         items.append(finding_dict)
 
-    return PaginatedResponse(
-        items=items,
-        total=total,
-        page=pagination.page,
-        page_size=pagination.page_size,
-        total_pages=(total + pagination.page_size - 1) // pagination.page_size
+    return PaginatedEnvelope(
+        data=items,
+        meta=PaginationMeta(
+            total=total,
+            page=pagination.page,
+            page_size=pagination.page_size,
+            total_pages=(total + pagination.page_size - 1) // pagination.page_size,
+        ),
     )
 
 

@@ -62,8 +62,16 @@ def login(
             detail="Invalid email or password"
         )
 
+    # SSO-only users cannot use password login
+    if not user.hashed_password and user.sso_provider:
+        logger.warning(f"Password login attempt for SSO-only user: {credentials.email}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This account uses SSO. Please sign in with your identity provider."
+        )
+
     # Verify password
-    if not user.verify_password(credentials.password):
+    if not user.hashed_password or not user.verify_password(credentials.password):
         logger.warning(f"Failed login attempt for user: {credentials.email}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -9,6 +9,9 @@ const password = ref('')
 const isLoading = ref(false)
 const error = ref('')
 
+const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
+const ssoLoginUrl = `${apiBase}/api/v1/auth/saml/login`
+
 async function handleLogin() {
   error.value = ''
   isLoading.value = true
@@ -82,6 +85,29 @@ async function handleLogin() {
             <span v-else>Sign in</span>
           </button>
         </div>
+        <div class="relative">
+          <div class="absolute inset-0 flex items-center">
+            <div class="w-full border-t border-gray-300 dark:border-dark-border"></div>
+          </div>
+          <div class="relative flex justify-center text-sm">
+            <span class="px-2 bg-gray-50 dark:bg-dark-bg-primary text-gray-500 dark:text-dark-text-secondary">
+              Or
+            </span>
+          </div>
+        </div>
+
+        <div>
+          <a
+            :href="ssoLoginUrl"
+            class="group relative w-full flex justify-center py-2 px-4 border border-gray-300 dark:border-dark-border text-sm font-medium rounded-md text-gray-700 dark:text-dark-text-primary bg-white dark:bg-dark-bg-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+          >
+            <svg class="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            Sign in with SSO
+          </a>
+        </div>
+
         <p class="text-center text-sm text-gray-600 dark:text-dark-text-secondary">
           New organization?
           <router-link to="/onboarding" class="font-medium text-primary-600 hover:text-primary-500">

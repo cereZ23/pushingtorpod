@@ -23,6 +23,7 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.1.2  # Pin bcrypt 4.x for passlib compatibility
 python-multipart==0.0.6
 slowapi==0.1.9  # Rate limiting for FastAPI
+python3-saml>=1.16.0  # SAML2 SSO authentication
 
 # HTTP client
 httpx==0.26.0

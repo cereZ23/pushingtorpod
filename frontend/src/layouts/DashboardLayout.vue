@@ -11,6 +11,7 @@ import {
   AdjustmentsHorizontalIcon,
   ChevronRightIcon,
 } from '@heroicons/vue/24/outline'
+import ErrorBoundary from '@/components/ErrorBoundary.vue'
 
 // --- Types ---
 
@@ -440,7 +441,9 @@ function toggleSidebar() {
         <div v-if="isLoading" class="flex items-center justify-center h-64">
           <div class="text-gray-600 dark:text-dark-text-secondary">Loading...</div>
         </div>
-        <RouterView v-else />
+        <ErrorBoundary v-else>
+          <RouterView />
+        </ErrorBoundary>
       </main>
     </div>
   </div>

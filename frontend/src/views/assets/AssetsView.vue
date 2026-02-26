@@ -60,9 +60,9 @@ async function loadAssets() {
     }
 
     const response: PaginatedResponse<Asset> = await assetApi.list(currentTenantId.value, params)
-    assets.value = response.items
-    totalItems.value = response.total
-    totalPages.value = response.total_pages
+    assets.value = response.data
+    totalItems.value = response.meta.total
+    totalPages.value = response.meta.total_pages
   } catch (err: unknown) {
     const axiosErr = err as { message?: string }
     error.value = axiosErr.message || 'Failed to load assets'

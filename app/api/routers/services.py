@@ -17,7 +17,7 @@ from app.api.schemas.service import (
     TechnologyStackResponse,
     PortDistributionResponse
 )
-from app.api.schemas.common import PaginatedResponse
+from app.api.schemas.envelope import PaginatedEnvelope, PaginationMeta
 from app.models.database import Asset, Service
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/tenants/{tenant_id}/services", tags=["Services"])
 
 
-@router.get("", response_model=PaginatedResponse[ServiceResponse])
+@router.get("", response_model=PaginatedEnvelope[ServiceResponse])
 def list_services(
     tenant_id: int,
     asset_id: Optional[int] = Query(None),
@@ -118,12 +118,14 @@ def list_services(
             resp.asset_type = s.asset.type.value if hasattr(s.asset.type, 'value') else str(s.asset.type)
         items.append(resp)
 
-    return PaginatedResponse(
-        items=items,
-        total=total,
-        page=pagination.page,
-        page_size=pagination.page_size,
-        total_pages=(total + pagination.page_size - 1) // pagination.page_size
+    return PaginatedEnvelope(
+        data=items,
+        meta=PaginationMeta(
+            total=total,
+            page=pagination.page,
+            page_size=pagination.page_size,
+            total_pages=(total + pagination.page_size - 1) // pagination.page_size,
+        ),
     )
 
 

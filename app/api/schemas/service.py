@@ -16,6 +16,8 @@ class ServiceResponse(BaseModel):
 
     id: int = Field(..., description="Service ID")
     asset_id: int = Field(..., description="Asset ID")
+    asset_identifier: Optional[str] = Field(None, description="Asset identifier (domain/IP)")
+    asset_type: Optional[str] = Field(None, description="Asset type (domain/subdomain/ip)")
     port: Optional[int] = Field(None, description="Port number")
     protocol: Optional[str] = Field(None, description="Protocol (tcp/udp)")
     product: Optional[str] = Field(None, description="Product name")

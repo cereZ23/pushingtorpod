@@ -133,6 +133,25 @@ class AssetDetailResponse(AssetResponse):
     findings: List[Any] = Field(default_factory=list, description="Associated findings")
     events: List[Any] = Field(default_factory=list, description="Recent events")
 
+    # Aggregated data
+    summary: Optional[Dict[str, Any]] = Field(None, description="Summary statistics")
+    tech_stack: List[str] = Field(default_factory=list, description="Aggregated technology stack")
+    http_info: List[Dict[str, Any]] = Field(default_factory=list, description="HTTP service details")
+
+    # Network intelligence enrichment
+    dns_info: Optional[Dict[str, Any]] = Field(
+        None,
+        description="DNS and network intelligence data (WHOIS, ASN, rDNS, cloud provider, nameservers)"
+    )
+    cdn: Optional[str] = Field(None, description="Detected CDN provider (e.g. cloudflare, akamai)")
+    waf: Optional[str] = Field(None, description="Detected WAF provider (e.g. cloudflare, aws_waf)")
+
+    # Parent asset reference (for SERVICE-type assets)
+    parent_asset: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Parent asset info (for SERVICE-type assets that inherit data from parent subdomain/domain)"
+    )
+
     model_config = ConfigDict(from_attributes=True)
 
 

@@ -26,4 +26,13 @@ app.use(VueQueryPlugin, {
   },
 })
 
+// Global error handler — catch unhandled Vue errors to prevent app crashes
+app.config.errorHandler = (err, instance, info) => {
+  console.error('[Vue Global Error]', {
+    error: err,
+    component: instance?.$options?.name || instance?.$options?.__name || 'Unknown',
+    info,
+  })
+}
+
 app.mount('#app')

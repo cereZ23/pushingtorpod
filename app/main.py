@@ -45,6 +45,7 @@ from app.api.routers import (
     threat_intel_admin_router,
     threat_intel_tenant_router,
     tickets_router,
+    saml_router,
 )
 
 logger = logging.getLogger(__name__)
@@ -140,7 +141,8 @@ async def add_process_time_header(request: Request, call_next):
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """Log all requests for monitoring"""
-    logger.info(f"{request.method} {request.url.path} - Client: {request.client.host}")
+    client_host = request.client.host if request.client else "unknown"
+    logger.info(f"{request.method} {request.url.path} - Client: {client_host}")
     try:
         response = await call_next(request)
         logger.info(f"{request.method} {request.url.path} - Status: {response.status_code}")
@@ -333,6 +335,7 @@ app.include_router(suppressions_router)
 app.include_router(threat_intel_admin_router)
 app.include_router(threat_intel_tenant_router)
 app.include_router(tickets_router)
+app.include_router(saml_router)
 
 
 # Startup and shutdown events

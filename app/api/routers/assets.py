@@ -29,7 +29,8 @@ from app.api.schemas.asset import (
     SeedResponse,
     BulkAssetCreate
 )
-from app.api.schemas.common import PaginatedResponse, BulkOperationResult
+from app.api.schemas.common import BulkOperationResult
+from app.api.schemas.envelope import PaginatedEnvelope, PaginationMeta
 from app.models.database import Asset, AssetType, Seed, Service, Finding
 from app.models.enrichment import Certificate, Endpoint
 from app.repositories.asset_repository import AssetRepository
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/tenants/{tenant_id}/assets", tags=["Assets"])
 
 
-@router.get("", response_model=PaginatedResponse[AssetResponse])
+@router.get("", response_model=PaginatedEnvelope[AssetResponse])
 def list_assets(
     tenant_id: int,
     asset_type: Optional[str] = Query(None, description="Filter by asset type"),
@@ -179,12 +180,14 @@ def list_assets(
         asset_dict['finding_count'] = row.finding_count if hasattr(row, 'finding_count') else 0
         items.append(asset_dict)
 
-    return PaginatedResponse(
-        items=items,
-        total=total,
-        page=pagination.page,
-        page_size=pagination.page_size,
-        total_pages=(total + pagination.page_size - 1) // pagination.page_size
+    return PaginatedEnvelope(
+        data=items,
+        meta=PaginationMeta(
+            total=total,
+            page=pagination.page,
+            page_size=pagination.page_size,
+            total_pages=(total + pagination.page_size - 1) // pagination.page_size,
+        ),
     )
 
 

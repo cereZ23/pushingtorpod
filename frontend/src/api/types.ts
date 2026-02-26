@@ -41,6 +41,65 @@ export interface Tenant {
   updated_at?: string
 }
 
+// Asset summary statistics (returned by detail endpoint)
+export interface AssetSummary {
+  total_services: number
+  total_findings: number
+  total_certificates: number
+  total_endpoints: number
+  open_ports: number[]
+  has_tls: boolean
+  has_http: boolean
+  severity_breakdown: Record<string, number>
+  open_findings: number
+}
+
+// DNS and network intelligence
+export interface AssetDnsInfo {
+  resolved_ips: string[]
+  reverse_dns: string | null
+  whois_summary: {
+    registrar?: string
+    org?: string
+    country?: string
+    created?: string
+    expires?: string
+  } | null
+  asn_info: {
+    asn?: number
+    org?: string
+    country?: string
+  } | null
+  cloud_provider: string | null
+  nameservers: string[]
+}
+
+// HTTP service info
+export interface AssetHttpInfo {
+  port: number
+  title: string
+  status_code: number
+  web_server: string
+  technologies: string[]
+  response_time_ms: number
+  redirect_url: string
+  has_tls: boolean
+  tls_version: string
+}
+
+// Discovered endpoint
+export interface AssetEndpoint {
+  id: number
+  url: string
+  path: string
+  method: string
+  status_code: number
+  content_type: string
+  endpoint_type: string
+  is_api: boolean
+  depth: number
+}
+
 // Asset types
 export interface Asset {
   id: number
@@ -64,11 +123,26 @@ export interface Asset {
   endpoint_count?: number
   finding_count?: number
   metadata?: Record<string, any>
+  raw_metadata?: Record<string, any>
+  // New enriched fields
+  summary?: AssetSummary
+  dns_info?: AssetDnsInfo
+  tech_stack?: string[]
+  http_info?: AssetHttpInfo[]
+  endpoints?: AssetEndpoint[]
   // Nested data for detail view
   services?: Service[]
   findings?: Finding[]
   certificates?: Certificate[]
   events?: AssetEvent[]
+  // Parent asset (for SERVICE-type assets)
+  parent_asset?: {
+    id: number
+    identifier: string
+    type: string
+    risk_score?: number
+    is_active: boolean
+  }
 }
 
 // Asset Event types
@@ -94,6 +168,8 @@ export interface Finding {
   first_seen: string
   last_seen: string
   status: 'open' | 'suppressed' | 'fixed'
+  fingerprint?: string
+  occurrence_count: number
   asset_identifier?: string
   asset_type?: string
   matched_at?: string
@@ -127,6 +203,8 @@ export interface Certificate {
 export interface Service {
   id: number
   asset_id: number
+  asset_identifier?: string
+  asset_type?: string
   port?: number
   protocol?: string
   product?: string
@@ -139,6 +217,11 @@ export interface Service {
   tls_fingerprint?: string
   has_tls: boolean
   tls_version?: string
+  enrichment_source?: string
+  enriched_at?: string
+  response_time_ms?: number
+  content_length?: number
+  redirect_url?: string
   first_seen: string
   last_seen: string
 }
@@ -175,8 +258,24 @@ export interface DashboardStats {
   risk_distribution: Record<string, number>
 }
 
-// Paginated response
+// Pagination metadata (used by the new envelope format)
+export interface PaginationMeta {
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+}
+
+// Paginated response envelope: { data, meta }
+// Used by: assets, findings, services, issues list endpoints
 export interface PaginatedResponse<T> {
+  data: T[]
+  meta: PaginationMeta
+}
+
+// Legacy paginated response (flat format): { items, total, page, ... }
+// Used by: certificates, endpoints, projects, dnstwist, suppressions
+export interface PaginatedResponseLegacy<T> {
   items: T[]
   total: number
   page: number

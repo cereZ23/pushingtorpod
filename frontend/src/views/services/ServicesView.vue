@@ -51,9 +51,9 @@ async function loadServices() {
     }
 
     const response: PaginatedResponse<Service> = await serviceApi.list(currentTenantId.value, params)
-    services.value = response.items
-    totalItems.value = response.total
-    totalPages.value = response.total_pages
+    services.value = response.data
+    totalItems.value = response.meta.total
+    totalPages.value = response.meta.total_pages
   } catch (err: unknown) {
     const axiosErr = err as { message?: string }
     error.value = axiosErr.message || 'Failed to load services'

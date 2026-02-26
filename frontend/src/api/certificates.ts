@@ -1,5 +1,5 @@
 import apiClient from './client'
-import type { Certificate, PaginatedResponse } from './types'
+import type { Certificate, PaginatedResponseLegacy } from './types'
 
 export interface CertificateListParams {
   page?: number
@@ -16,8 +16,8 @@ export interface CertificateListParams {
 }
 
 export const certificateApi = {
-  async list(tenantId: number, params?: CertificateListParams): Promise<PaginatedResponse<Certificate>> {
-    const response = await apiClient.get<PaginatedResponse<Certificate>>(
+  async list(tenantId: number, params?: CertificateListParams): Promise<PaginatedResponseLegacy<Certificate>> {
+    const response = await apiClient.get<PaginatedResponseLegacy<Certificate>>(
       `/api/v1/tenants/${tenantId}/certificates`,
       { params }
     )

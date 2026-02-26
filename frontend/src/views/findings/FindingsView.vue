@@ -55,9 +55,9 @@ async function loadFindings() {
     }
 
     const response: PaginatedResponse<Finding> = await findingApi.list(currentTenantId.value, params)
-    findings.value = response.items
-    totalItems.value = response.total
-    totalPages.value = response.total_pages
+    findings.value = response.data
+    totalItems.value = response.meta.total
+    totalPages.value = response.meta.total_pages
   } catch (err: unknown) {
     const axiosErr = err as { message?: string }
     error.value = axiosErr.message || 'Failed to load findings'
@@ -238,11 +238,34 @@ function formatDate(dateString: string): string {
                 <div v-if="finding.template_id" class="text-xs text-gray-500 dark:text-dark-text-secondary">{{ finding.template_id }}</div>
               </td>
               <td class="px-6 py-4 whitespace-nowrap">
-                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full" :class="getSeverityColor(finding.severity)">
-                  {{ finding.severity }}
-                </span>
-                <div v-if="finding.cvss_score" class="text-xs text-gray-500 dark:text-dark-text-secondary mt-1">
-                  CVSS: {{ finding.cvss_score }}
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full" :class="getSeverityColor(finding.severity)">
+                    {{ finding.severity }}
+                  </span>
+                  <span
+                    v-if="finding.evidence?.threat_intel?.is_kev === true"
+                    class="px-1.5 inline-flex text-xs leading-5 font-bold rounded-full bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300"
+                    title="CISA Known Exploited Vulnerability"
+                  >
+                    KEV
+                  </span>
+                </div>
+                <div class="flex items-center gap-2 mt-1">
+                  <span v-if="finding.cvss_score" class="text-xs text-gray-500 dark:text-dark-text-secondary">
+                    CVSS: {{ finding.cvss_score }}
+                  </span>
+                  <span
+                    v-if="finding.evidence?.threat_intel?.epss_score != null"
+                    class="text-xs font-medium"
+                    :class="finding.evidence.threat_intel.epss_score >= 0.7
+                      ? 'text-red-600 dark:text-red-400'
+                      : finding.evidence.threat_intel.epss_score >= 0.4
+                        ? 'text-orange-600 dark:text-orange-400'
+                        : 'text-gray-500 dark:text-dark-text-secondary'"
+                    :title="`Exploit Prediction Scoring System: ${(finding.evidence.threat_intel.epss_score * 100).toFixed(1)}% probability of exploitation in the next 30 days`"
+                  >
+                    EPSS: {{ Math.round(finding.evidence.threat_intel.epss_score * 100) }}%
+                  </span>
                 </div>
               </td>
               <td class="px-6 py-4 whitespace-nowrap">

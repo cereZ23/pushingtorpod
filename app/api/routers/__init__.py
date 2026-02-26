@@ -23,6 +23,7 @@ from .suppressions import router as suppressions_router
 from .threat_intel import admin_router as threat_intel_admin_router
 from .threat_intel import tenant_router as threat_intel_tenant_router
 from .tickets import router as tickets_router
+from .saml import router as saml_router
 
 __all__ = [
     "auth_router",
@@ -44,4 +45,5 @@ __all__ = [
     "threat_intel_admin_router",
     "threat_intel_tenant_router",
     "tickets_router",
+    "saml_router",
 ]
