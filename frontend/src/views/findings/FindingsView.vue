@@ -58,9 +58,9 @@ async function loadFindings() {
     findings.value = response.items
     totalItems.value = response.total
     totalPages.value = response.total_pages
-  } catch (err: any) {
-    console.error('Failed to load findings:', err)
-    error.value = err.message || 'Failed to load findings'
+  } catch (err: unknown) {
+    const axiosErr = err as { message?: string }
+    error.value = axiosErr.message || 'Failed to load findings'
   } finally {
     isLoading.value = false
   }
@@ -219,6 +219,9 @@ function formatDate(dateString: string): string {
               <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 Source
               </th>
+              <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+                Seen
+              </th>
               <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 First Seen
               </th>
@@ -254,6 +257,16 @@ function formatDate(dateString: string): string {
               <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-dark-text-primary">
                 {{ finding.source }}
               </td>
+              <td class="px-6 py-4 whitespace-nowrap text-center">
+                <span
+                  v-if="finding.occurrence_count > 1"
+                  class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300"
+                  :title="`Detected ${finding.occurrence_count} times`"
+                >
+                  {{ finding.occurrence_count }}x
+                </span>
+                <span v-else class="text-xs text-gray-400 dark:text-dark-text-secondary">1x</span>
+              </td>
               <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-dark-text-secondary">
                 {{ formatDate(finding.first_seen) }}
               </td>
@@ -271,8 +284,23 @@ function formatDate(dateString: string): string {
       </div>
 
       <!-- Empty State -->
-      <div v-if="findings.length === 0" class="text-center py-12">
-        <p class="text-gray-500 dark:text-dark-text-secondary">No findings found</p>
+      <div v-if="findings.length === 0" class="flex flex-col items-center justify-center py-16 px-4">
+        <svg class="w-16 h-16 text-gray-300 dark:text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m0-10.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285zm0 13.036h.008v.008H12v-.008z" />
+        </svg>
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-dark-text-primary mb-1">No vulnerabilities found</h3>
+        <p class="text-sm text-gray-500 dark:text-dark-text-secondary mb-6 max-w-md text-center">
+          Vulnerabilities detected by Nuclei scans and other scanning engines will be listed here. Run a vulnerability scan to start identifying security issues.
+        </p>
+        <router-link
+          to="/scans"
+          class="inline-flex items-center px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-md hover:bg-primary-700 transition-colors"
+        >
+          <svg class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+          </svg>
+          Run a Vulnerability Scan
+        </router-link>
       </div>
 
       <!-- Pagination -->

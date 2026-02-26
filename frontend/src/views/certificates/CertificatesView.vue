@@ -60,9 +60,9 @@ async function loadCertificates() {
     certificates.value = response.items
     totalItems.value = response.total
     totalPages.value = response.total_pages
-  } catch (err: any) {
-    console.error('Failed to load certificates:', err)
-    error.value = err.message || 'Failed to load certificates'
+  } catch (err: unknown) {
+    const axiosErr = err as { message?: string }
+    error.value = axiosErr.message || 'Failed to load certificates'
   } finally {
     isLoading.value = false
   }
@@ -290,8 +290,23 @@ function formatDate(dateString: string | undefined): string {
       </div>
 
       <!-- Empty State -->
-      <div v-if="certificates.length === 0" class="text-center py-12">
-        <p class="text-gray-500 dark:text-dark-text-secondary">No certificates found</p>
+      <div v-if="certificates.length === 0" class="flex flex-col items-center justify-center py-16 px-4">
+        <svg class="w-16 h-16 text-gray-300 dark:text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+        </svg>
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-dark-text-primary mb-1">No certificates found</h3>
+        <p class="text-sm text-gray-500 dark:text-dark-text-secondary mb-6 max-w-md text-center">
+          TLS certificates appear here after a TLS enrichment scan (TLSX). They help you track expiring certs, weak signatures, and self-signed certificates across your attack surface.
+        </p>
+        <router-link
+          to="/scans"
+          class="inline-flex items-center px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-md hover:bg-primary-700 transition-colors"
+        >
+          <svg class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+          </svg>
+          Go to Scans
+        </router-link>
       </div>
 
       <!-- Pagination -->

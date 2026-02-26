@@ -31,22 +31,22 @@ async function loadCertificateDetails() {
       return
     }
 
-    // Fetch certificate details
-    const certsRes = await certificateApi.list(tenantStore.currentTenantId, {})
-    certificate.value = certsRes.items.find(c => c.id === certId.value) || null
+    // Fetch certificate details by ID
+    certificate.value = await certificateApi.get(tenantStore.currentTenantId, certId.value)
 
     if (!certificate.value) {
       error.value = 'Certificate not found'
       return
     }
 
-    // Fetch related asset
-    const assetsRes = await assetApi.list(tenantStore.currentTenantId, {})
-    asset.value = assetsRes.items.find(a => a.id === certificate.value!.asset_id) || null
+    // Fetch related asset by ID
+    if (certificate.value.asset_id) {
+      asset.value = await assetApi.get(tenantStore.currentTenantId, certificate.value.asset_id)
+    }
 
-  } catch (err: any) {
-    console.error('Failed to load certificate details:', err)
-    error.value = err.response?.data?.detail || 'Failed to load certificate details'
+  } catch (err: unknown) {
+    const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
+    error.value = axiosErr.response?.data?.detail || axiosErr.message || 'Failed to load certificate details'
   } finally {
     isLoading.value = false
   }

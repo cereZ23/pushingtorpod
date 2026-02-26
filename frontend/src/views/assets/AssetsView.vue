@@ -63,9 +63,9 @@ async function loadAssets() {
     assets.value = response.items
     totalItems.value = response.total
     totalPages.value = response.total_pages
-  } catch (err: any) {
-    console.error('Failed to load assets:', err)
-    error.value = err.message || 'Failed to load assets'
+  } catch (err: unknown) {
+    const axiosErr = err as { message?: string }
+    error.value = axiosErr.message || 'Failed to load assets'
   } finally {
     isLoading.value = false
   }
@@ -255,8 +255,23 @@ function formatDate(dateString: string): string {
       </div>
 
       <!-- Empty State -->
-      <div v-if="assets.length === 0" class="text-center py-12">
-        <p class="text-gray-500 dark:text-dark-text-secondary">No assets found</p>
+      <div v-if="assets.length === 0" class="flex flex-col items-center justify-center py-16 px-4">
+        <svg class="w-16 h-16 text-gray-300 dark:text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418" />
+        </svg>
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-dark-text-primary mb-1">No assets discovered yet</h3>
+        <p class="text-sm text-gray-500 dark:text-dark-text-secondary mb-6 max-w-md text-center">
+          Assets such as domains, subdomains, IPs, and services will appear here once a discovery scan has been completed.
+        </p>
+        <router-link
+          to="/scans"
+          class="inline-flex items-center px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-md hover:bg-primary-700 transition-colors"
+        >
+          <svg class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+          </svg>
+          Start a Scan
+        </router-link>
       </div>
 
       <!-- Pagination -->

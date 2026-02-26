@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import apiClient from '@/api/client'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -156,27 +157,15 @@ const submitOnboarding = async () => {
     // Filter out empty domains
     const cleanDomains = formData.value.domains.filter(d => d.trim())
 
-    const response = await fetch('http://localhost:8000/api/v1/onboarding/register', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        company_name: formData.value.companyName,
-        email: formData.value.email,
-        password: formData.value.password,
-        domains: cleanDomains
-      })
+    const response = await apiClient.post('/api/v1/onboarding/register', {
+      company_name: formData.value.companyName,
+      email: formData.value.email,
+      password: formData.value.password,
+      domains: cleanDomains
     })
 
-    const data = await response.json()
-
-    if (!response.ok) {
-      throw new Error(data.detail || 'Registration failed')
-    }
-
     // Success!
-    successMessage.value = data.message
+    successMessage.value = response.data.message
 
     // Auto-login after 2 seconds
     setTimeout(async () => {
@@ -192,9 +181,9 @@ const submitOnboarding = async () => {
       }
     }, 2000)
 
-  } catch (err: any) {
-    console.error('Onboarding error:', err)
-    error.value = err.message || 'Registration failed. Please try again.'
+  } catch (err: unknown) {
+    const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
+    error.value = axiosErr.response?.data?.detail || axiosErr.message || 'Registration failed. Please try again.'
   } finally {
     isLoading.value = false
   }

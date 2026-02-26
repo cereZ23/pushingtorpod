@@ -54,9 +54,9 @@ async function loadServices() {
     services.value = response.items
     totalItems.value = response.total
     totalPages.value = response.total_pages
-  } catch (err: any) {
-    console.error('Failed to load services:', err)
-    error.value = err.message || 'Failed to load services'
+  } catch (err: unknown) {
+    const axiosErr = err as { message?: string }
+    error.value = axiosErr.message || 'Failed to load services'
   } finally {
     isLoading.value = false
   }
@@ -175,6 +175,9 @@ function getPortColor(port: number): string {
           <thead class="bg-gray-50 dark:bg-dark-bg-tertiary">
             <tr>
               <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+                Asset
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 Port
               </th>
               <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
@@ -196,6 +199,19 @@ function getPortColor(port: number): string {
           </thead>
           <tbody class="bg-white dark:bg-dark-bg-secondary divide-y divide-gray-200 dark:divide-dark-border">
             <tr v-for="service in services" :key="service.id" class="hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary">
+              <td class="px-6 py-4">
+                <router-link
+                  v-if="service.asset_identifier"
+                  :to="`/assets/${service.asset_id}`"
+                  class="text-sm font-medium text-primary-600 dark:text-primary-400 hover:underline"
+                >
+                  {{ service.asset_identifier }}
+                </router-link>
+                <span v-else class="text-sm text-gray-500">ID: {{ service.asset_id }}</span>
+                <div v-if="service.asset_type" class="text-xs text-gray-500 dark:text-dark-text-secondary capitalize">
+                  {{ service.asset_type }}
+                </div>
+              </td>
               <td class="px-6 py-4 whitespace-nowrap">
                 <span class="text-sm font-bold" :class="getPortColor(service.port || 0)">
                   {{ service.port || '-' }}
@@ -250,8 +266,23 @@ function getPortColor(port: number): string {
       </div>
 
       <!-- Empty State -->
-      <div v-if="services.length === 0" class="text-center py-12">
-        <p class="text-gray-500 dark:text-dark-text-secondary">No services found</p>
+      <div v-if="services.length === 0" class="flex flex-col items-center justify-center py-16 px-4">
+        <svg class="w-16 h-16 text-gray-300 dark:text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z" />
+        </svg>
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-dark-text-primary mb-1">No services detected yet</h3>
+        <p class="text-sm text-gray-500 dark:text-dark-text-secondary mb-6 max-w-md text-center">
+          Services such as open ports, HTTP servers, and TLS endpoints are discovered during enrichment scans. Run a scan to start detecting services on your attack surface.
+        </p>
+        <router-link
+          to="/scans"
+          class="inline-flex items-center px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-md hover:bg-primary-700 transition-colors"
+        >
+          <svg class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+          </svg>
+          Go to Scans
+        </router-link>
       </div>
 
       <!-- Pagination -->

@@ -4,21 +4,21 @@ Onboarding Router
 Handles self-service customer onboarding
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr, Field
 from typing import List
 import logging
 import re
 
-from app.api.dependencies import get_db, require_admin
+from app.api.dependencies import get_db
 from app.models.database import Tenant, Seed
 from app.models.auth import User, TenantMembership
-from app.database import SessionLocal
+from app.rate_limiter import limiter
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/onboarding", tags=["Admin Onboarding"])
+router = APIRouter(prefix="/api/v1/onboarding", tags=["Onboarding"])
 
 
 class OnboardingRequest(BaseModel):
@@ -68,32 +68,34 @@ def validate_domain(domain: str) -> bool:
 
 
 @router.post("/register", response_model=OnboardingResponse)
+@limiter.limit("3/hour")
 def register_organization(
     request: OnboardingRequest,
+    http_request: Request,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin)
 ):
     """
-    Admin-only customer onboarding
+    Self-service customer onboarding
 
-    Allows platform admins to onboard new customers through the UI dashboard.
+    Public endpoint for new organizations to register.
+    Rate-limited to 3 registrations per hour per IP.
 
     Creates:
     - Tenant
-    - Customer admin user account
-    - Tenant membership
+    - Admin user account
+    - Tenant membership (owner role)
     - Seed domains
-    - Triggers initial scan
+    - Triggers initial scan pipeline
 
     Returns:
         Onboarding response with tenant and user details
 
     Raises:
-        - 403: Not admin (authentication required)
         - 400: Invalid data or duplicate slug/email
+        - 429: Rate limit exceeded
         - 500: Internal error during creation
     """
-    logger.info(f"Admin {admin.email} starting onboarding for {request.company_name} ({request.email})")
+    logger.info(f"Self-service onboarding for {request.company_name} ({request.email})")
 
     try:
         # 1. Validate all domains
