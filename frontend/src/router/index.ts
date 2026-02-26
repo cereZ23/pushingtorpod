@@ -82,19 +82,9 @@ const router = createRouter({
           component: () => import('@/views/issues/IssueDetail.vue'),
         },
         {
-          path: 'geomap',
-          name: 'GeoMap',
-          component: () => import('@/views/geomap/GeoMapView.vue'),
-        },
-        {
           path: 'graph',
           name: 'SurfaceMap',
           component: () => import('@/views/graph/SurfaceMap.vue'),
-        },
-        {
-          path: 'exposure',
-          name: 'Exposure',
-          component: () => import('@/views/exposure/ExposureView.vue'),
         },
         {
           path: 'reports',

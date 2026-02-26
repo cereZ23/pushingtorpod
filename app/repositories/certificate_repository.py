@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import and_, or_
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.models.enrichment import Certificate
 
@@ -103,7 +103,7 @@ class CertificateRepository:
         Returns:
             List of certificates expiring soon, ordered by expiry date
         """
-        cutoff = datetime.utcnow() + timedelta(days=days_threshold)
+        cutoff = datetime.now(timezone.utc) + timedelta(days=days_threshold)
 
         return self.db.query(Certificate).join(Certificate.asset).filter(
             and_(
@@ -255,7 +255,7 @@ class CertificateRepository:
 
         # Prepare records for upsert
         records = []
-        current_time = datetime.utcnow()
+        current_time = datetime.now(timezone.utc)
 
         for data in certificates_data:
             # Serial number is required for uniqueness

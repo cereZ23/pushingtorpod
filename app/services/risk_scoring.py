@@ -3,6 +3,8 @@ Comprehensive Risk Scoring Engine for EASM Platform
 
 Calculates risk scores for assets based on multiple security factors:
 - Vulnerability findings (Nuclei)
+- EPSS exploit probability scores (FIRST.org)
+- CISA KEV known exploited vulnerabilities
 - TLS/certificate issues
 - Exposed high-risk ports
 - Login page exposure
@@ -11,7 +13,7 @@ Calculates risk scores for assets based on multiple security factors:
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -48,6 +50,12 @@ class RiskScoringEngine:
     CERT_MISMATCH_PENALTY = 12.0
     LOGIN_PAGE_EXPOSED = 10.0
     HTTP_LOGIN_EXPOSED = 15.0  # Login over HTTP (no TLS)
+
+    # Threat intelligence risk modifiers
+    KEV_BOOST = 15.0          # CISA KEV: confirmed active exploitation
+    EPSS_HIGH_BOOST = 10.0    # EPSS >= 0.7: very likely to be exploited
+    EPSS_MEDIUM_BOOST = 5.0   # EPSS >= 0.4: likely to be exploited
+    EPSS_LOW_BOOST = 2.0      # EPSS >= 0.1: some exploitation probability
 
     # High-risk ports (database, admin, remote access)
     HIGH_RISK_PORTS = {
@@ -107,14 +115,20 @@ class RiskScoringEngine:
             'certificate_score': 0.0,
             'port_exposure_score': 0.0,
             'service_security_score': 0.0,
-            'asset_age_score': 0.0
+            'asset_age_score': 0.0,
+            'threat_intel': {
+                'kev_count': 0,
+                'high_epss_count': 0,
+            }
         }
 
         recommendations = []
 
-        # 1. Findings Score (Nuclei vulnerabilities)
+        # 1. Findings Score (Nuclei vulnerabilities + EPSS/KEV boosts)
         findings_data = self._score_findings(asset)
         components['findings_score'] = findings_data['score']
+        components['threat_intel']['kev_count'] = findings_data.get('kev_count', 0)
+        components['threat_intel']['high_epss_count'] = findings_data.get('high_epss_count', 0)
         recommendations.extend(findings_data.get('recommendations', []))
 
         # 2. Certificate/TLS Score
@@ -138,7 +152,10 @@ class RiskScoringEngine:
         recommendations.extend(age_data.get('recommendations', []))
 
         # Calculate total score (capped at 100.0)
-        total_score = sum(components.values())
+        # Only sum numeric component values (skip nested dicts like threat_intel)
+        total_score = sum(
+            v for v in components.values() if isinstance(v, (int, float))
+        )
         total_score = min(total_score, 100.0)
 
         # Determine risk level
@@ -151,27 +168,97 @@ class RiskScoringEngine:
             'risk_level': risk_level,
             'components': components,
             'recommendations': recommendations,
-            'last_calculated': datetime.utcnow().isoformat()
+            'last_calculated': datetime.now(timezone.utc).isoformat()
         }
 
     def _score_findings(self, asset: Asset) -> Dict:
-        """Score based on vulnerability findings"""
+        """Score based on vulnerability findings, boosted by EPSS/KEV threat intel.
+
+        For each open finding:
+        - Base score from severity weight (critical=15, high=10, medium=5, low=2, info=0.5)
+        - EPSS boost: adds extra points based on exploit probability score
+        - KEV boost: adds 15 points if CVE is in CISA Known Exploited Vulnerabilities
+
+        Threat intel data is read from the finding's evidence.threat_intel field
+        (populated by the threat_intel_sync task) or fetched live from the
+        ThreatIntelService if not cached in the finding.
+        """
+        from app.models.database import FindingStatus
+
         findings = self.db.query(Finding).filter_by(
             asset_id=asset.id,
-            status='open'
+        ).filter(
+            Finding.status == FindingStatus.OPEN
         ).all()
 
         score = 0.0
         recommendations = []
         severity_counts = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'info': 0}
+        kev_findings = []
+        high_epss_findings = []
+
+        # Lazy-load threat intel service only if we have findings with CVEs
+        threat_intel_service = None
+        cve_findings = [f for f in findings if f.cve_id]
+        if cve_findings:
+            try:
+                from app.services.threat_intel import ThreatIntelService
+                threat_intel_service = ThreatIntelService()
+            except Exception as exc:
+                logger.warning(
+                    "Could not initialize ThreatIntelService for risk scoring: %s", exc
+                )
 
         for finding in findings:
-            severity = finding.severity.lower() if finding.severity else 'info'
+            severity = finding.severity.value.lower() if finding.severity else 'info'
             weight = self.FINDING_WEIGHTS.get(severity, 0.0)
-            score += weight
+
+            # Get threat intel data from evidence cache or live lookup
+            epss_score = 0.0
+            is_kev = False
+
+            if finding.cve_id:
+                # Try cached threat intel in evidence field first
+                evidence = finding.evidence or {}
+                threat_intel_data = evidence.get("threat_intel", {})
+
+                if threat_intel_data:
+                    epss_score = float(threat_intel_data.get("epss_score", 0.0))
+                    is_kev = bool(threat_intel_data.get("is_kev", False))
+                elif threat_intel_service:
+                    # Live lookup as fallback
+                    try:
+                        epss_score = threat_intel_service.get_epss_score(finding.cve_id)
+                        is_kev = threat_intel_service.is_in_kev(finding.cve_id)
+                    except Exception as exc:
+                        logger.debug(
+                            "Threat intel lookup failed for %s: %s",
+                            finding.cve_id, exc
+                        )
+
+            # Apply EPSS boost
+            epss_boost = 0.0
+            if epss_score >= 0.7:
+                epss_boost = self.EPSS_HIGH_BOOST
+            elif epss_score >= 0.4:
+                epss_boost = self.EPSS_MEDIUM_BOOST
+            elif epss_score >= 0.1:
+                epss_boost = self.EPSS_LOW_BOOST
+
+            # Apply KEV boost
+            kev_boost = self.KEV_BOOST if is_kev else 0.0
+
+            finding_score = weight + epss_boost + kev_boost
+            score += finding_score
 
             if severity in severity_counts:
                 severity_counts[severity] += 1
+
+            if is_kev:
+                kev_findings.append(finding)
+
+            if epss_score >= 0.5:
+                high_epss_findings.append((finding, epss_score))
 
         # Add recommendations based on findings
         if severity_counts['critical'] > 0:
@@ -186,9 +273,37 @@ class RiskScoringEngine:
                 'message': f"{severity_counts['high']} high-severity vulnerabilities need urgent attention"
             })
 
+        # Add threat intel recommendations
+        if kev_findings:
+            cve_list = ", ".join(
+                f.cve_id for f in kev_findings[:5] if f.cve_id
+            )
+            recommendations.append({
+                'priority': 'critical',
+                'message': (
+                    f"{len(kev_findings)} finding(s) with actively exploited CVEs "
+                    f"(CISA KEV): {cve_list}. Immediate patching required."
+                )
+            })
+
+        if high_epss_findings:
+            top_epss = sorted(high_epss_findings, key=lambda x: x[1], reverse=True)[:3]
+            epss_list = ", ".join(
+                f"{f.cve_id} ({s:.0%})" for f, s in top_epss if f.cve_id
+            )
+            recommendations.append({
+                'priority': 'high',
+                'message': (
+                    f"{len(high_epss_findings)} finding(s) with high exploitation "
+                    f"probability (EPSS >= 50%): {epss_list}"
+                )
+            })
+
         return {
             'score': min(score, 50.0),  # Cap findings score at 50
             'severity_counts': severity_counts,
+            'kev_count': len(kev_findings),
+            'high_epss_count': len(high_epss_findings),
             'recommendations': recommendations
         }
 
@@ -330,7 +445,7 @@ class RiskScoringEngine:
         recommendations = []
 
         if asset.first_seen:
-            days_since_discovery = (datetime.utcnow() - asset.first_seen).days
+            days_since_discovery = (datetime.now(timezone.utc) - asset.first_seen).days
 
             if days_since_discovery <= 7:
                 score += self.NEW_ASSET_BONUS
@@ -402,7 +517,7 @@ class RiskScoringEngine:
             'average_risk_score': round(average_score, 2),
             'risk_distribution': risk_levels,
             'high_risk_assets': sorted(high_risk_assets, key=lambda x: x['risk_score'], reverse=True)[:10],
-            'last_calculated': datetime.utcnow().isoformat()
+            'last_calculated': datetime.now(timezone.utc).isoformat()
         }
 
 

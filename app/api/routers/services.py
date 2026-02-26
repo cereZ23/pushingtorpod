@@ -10,7 +10,7 @@ from sqlalchemy import func, or_
 from typing import Optional, List
 import logging
 
-from app.api.dependencies import get_db, verify_tenant_access, PaginationParams
+from app.api.dependencies import get_db, verify_tenant_access, PaginationParams, escape_like
 from app.api.schemas.service import (
     ServiceResponse,
     ServiceListRequest,
@@ -71,17 +71,19 @@ def list_services(
         query = query.filter(Service.has_tls == has_tls)
 
     if product:
-        query = query.filter(Service.product.ilike(f"%{product}%"))
+        safe_product = escape_like(product)
+        query = query.filter(Service.product.ilike(f"%{safe_product}%", escape="\\"))
 
     if enrichment_source:
         query = query.filter(Service.enrichment_source == enrichment_source)
 
     if search:
+        safe_search = escape_like(search)
         query = query.filter(
             or_(
-                Service.product.ilike(f"%{search}%"),
-                Service.web_server.ilike(f"%{search}%"),
-                Service.http_title.ilike(f"%{search}%")
+                Service.product.ilike(f"%{safe_search}%", escape="\\"),
+                Service.web_server.ilike(f"%{safe_search}%", escape="\\"),
+                Service.http_title.ilike(f"%{safe_search}%", escape="\\"),
             )
         )
 
@@ -89,7 +91,14 @@ def list_services(
     total = query.count()
 
     # Apply sorting
-    sort_column = getattr(Service, sort_by, Service.last_seen)
+    ALLOWED_SORT_COLUMNS = {
+        "port": Service.port,
+        "protocol": Service.protocol,
+        "product": Service.product,
+        "last_seen": Service.last_seen,
+        "has_tls": Service.has_tls,
+    }
+    sort_column = ALLOWED_SORT_COLUMNS.get(sort_by, Service.last_seen)
     if sort_order.lower() == "desc":
         query = query.order_by(sort_column.desc())
     else:

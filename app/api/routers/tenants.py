@@ -27,7 +27,7 @@ from app.api.schemas.tenant import (
 from app.models.database import Tenant, Asset, Service, Finding, Event, AssetType, FindingSeverity, FindingStatus
 from app.models.enrichment import Certificate, Endpoint
 from app.models.auth import User
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -312,7 +312,7 @@ def _calculate_tenant_stats(db: Session, tenant_id: int) -> TenantStats:
     ).count()
 
     # Expiring certificates (within 30 days)
-    thirty_days_from_now = datetime.utcnow() + timedelta(days=30)
+    thirty_days_from_now = datetime.now(timezone.utc) + timedelta(days=30)
     expiring_certificates = db.query(Certificate).join(Asset).filter(
         Asset.tenant_id == tenant_id,
         Certificate.is_expired == False,

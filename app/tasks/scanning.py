@@ -14,7 +14,7 @@ Sprint 3: Implements comprehensive Nuclei vulnerability scanning:
 import logging
 import asyncio
 from typing import List, Optional, Dict
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.celery_app import celery
 from app.models.database import Asset, FindingSeverity
@@ -231,6 +231,14 @@ def run_nuclei_scan(
 
         tenant_logger.info(f"Updated risk scores for {assets_updated} assets")
 
+        # Trigger threat intel enrichment for newly discovered CVEs
+        try:
+            from app.tasks.threat_intel_sync import enrich_findings_threat_intel
+            enrich_findings_threat_intel.delay(tenant_id)
+            tenant_logger.info("Queued threat intel enrichment for new findings")
+        except Exception as exc:
+            tenant_logger.warning(f"Failed to queue threat intel enrichment: {exc}")
+
         return {
             'tenant_id': tenant_id,
             'assets_scanned': len(assets),
@@ -392,7 +400,7 @@ def update_asset_risk_scores(
             else:
                 asset.priority = 'low'
 
-            asset.priority_updated_at = datetime.utcnow()
+            asset.priority_updated_at = datetime.now(timezone.utc)
 
         updated_count += 1
 
@@ -430,7 +438,7 @@ def update_nuclei_templates():
         return {
             'success': False,
             'error': str(e),
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': datetime.now(timezone.utc).isoformat()
         }
 
 
@@ -475,7 +483,7 @@ def calculate_comprehensive_risk_scores(tenant_id: int):
             'tenant_id': tenant_id,
             'success': True,
             **result,
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': datetime.now(timezone.utc).isoformat()
         }
 
     except Exception as e:
@@ -484,7 +492,7 @@ def calculate_comprehensive_risk_scores(tenant_id: int):
             'tenant_id': tenant_id,
             'success': False,
             'error': str(e),
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': datetime.now(timezone.utc).isoformat()
         }
     finally:
         db.close()
@@ -536,7 +544,7 @@ def calculate_all_tenant_risk_scores():
             'successful': successful,
             'failed': failed,
             'results': results,
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': datetime.now(timezone.utc).isoformat()
         }
 
     except Exception as e:
@@ -544,7 +552,7 @@ def calculate_all_tenant_risk_scores():
         return {
             'success': False,
             'error': str(e),
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': datetime.now(timezone.utc).isoformat()
         }
     finally:
         db.close()

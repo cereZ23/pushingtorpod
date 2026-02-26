@@ -6,7 +6,7 @@ Provides User and APIKey models for multi-tenant access control.
 
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text, Index
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 from passlib.context import CryptContext
 
 from app.models.database import Base
@@ -150,7 +150,7 @@ class APIKey(Base):
         """Check if API key is expired"""
         if not self.expires_at:
             return False
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(timezone.utc) > self.expires_at
 
     def is_valid(self) -> bool:
         """Check if API key is valid (active and not expired)"""

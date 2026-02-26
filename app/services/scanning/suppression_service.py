@@ -12,7 +12,7 @@ Manages suppression rules to filter out false positives:
 import re
 import logging
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 
@@ -115,7 +115,7 @@ class SuppressionService:
             is_active=True,
             is_global=is_global,
             expires_at=expires_at,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
 
         self.db.add(suppression)
@@ -159,7 +159,7 @@ class SuppressionService:
         if expires_at is not None:
             suppression.expires_at = expires_at
 
-        suppression.updated_at = datetime.utcnow()
+        suppression.updated_at = datetime.now(timezone.utc)
 
         self.db.commit()
         self.db.refresh(suppression)
@@ -228,7 +228,7 @@ class SuppressionService:
             query = query.filter(
                 or_(
                     Suppression.expires_at.is_(None),
-                    Suppression.expires_at > datetime.utcnow()
+                    Suppression.expires_at > datetime.now(timezone.utc)
                 )
             )
 
@@ -272,7 +272,7 @@ class SuppressionService:
         Returns:
             List of Suppression objects
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         query = self.db.query(Suppression).filter(
             and_(

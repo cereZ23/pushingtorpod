@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import and_, or_
 from typing import List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 
 from app.models.database import Asset, AssetType, Event, EventKind
@@ -192,7 +192,7 @@ class AssetRepository:
 
         # Prepare records for upsert
         records = []
-        current_time = datetime.utcnow()
+        current_time = datetime.now(timezone.utc)
 
         for data in assets_data:
             records.append({
@@ -385,7 +385,7 @@ class EventRepository:
         """
         from datetime import timedelta
 
-        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
         query = self.db.query(Event).join(Asset).filter(
             and_(

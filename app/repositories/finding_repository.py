@@ -11,12 +11,13 @@ Provides bulk operations for vulnerability findings with:
 
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy import and_, or_, func
+from sqlalchemy import and_, or_, func, text
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 
 from app.models.database import Finding, FindingSeverity, FindingStatus, Asset
+from app.services.dedup import compute_finding_fingerprint
 
 class FindingRepository:
     """Repository for Finding entity operations"""
@@ -148,7 +149,7 @@ class FindingRepository:
         # Prepare records
         records = []
         errors = []
-        current_time = datetime.utcnow()
+        current_time = datetime.now(timezone.utc)
 
         for idx, finding in enumerate(findings):
             try:
@@ -194,6 +195,15 @@ class FindingRepository:
                 elif evidence and not isinstance(evidence, str):
                     evidence = str(evidence)
 
+                # Compute fingerprint for deduplication
+                fp = compute_finding_fingerprint(
+                    tenant_id=tenant_id,
+                    asset_identifier=asset.identifier,
+                    template_id=finding['template_id'],
+                    matcher_name=finding.get('matcher_name'),
+                    source=finding.get('source', 'nuclei'),
+                )
+
                 # Build record
                 record = {
                     'asset_id': finding['asset_id'],
@@ -207,6 +217,8 @@ class FindingRepository:
                     'matched_at': finding.get('matched_at'),
                     'host': finding.get('host'),
                     'matcher_name': finding.get('matcher_name'),
+                    'fingerprint': fp,
+                    'occurrence_count': 1,
                     'first_seen': current_time,
                     'last_seen': current_time,
                     'status': FindingStatus.OPEN
@@ -226,23 +238,22 @@ class FindingRepository:
                 'errors': errors
             }
 
-        # Build UPSERT statement
+        # Build UPSERT statement using fingerprint as the unique key
         stmt = insert(Finding).values(records)
 
-        # On conflict, update last_seen and evidence (but preserve first_seen)
-        # Conflict key: (asset_id, template_id, matcher_name)
-        # Note: If matcher_name is NULL, treat it as unique per template_id
+        # On conflict (fingerprint), update last_seen, evidence, and bump count
         update_dict = {
             'last_seen': stmt.excluded.last_seen,
             'evidence': stmt.excluded.evidence,
             'matched_at': stmt.excluded.matched_at,
             'cvss_score': stmt.excluded.cvss_score,
             'cve_id': stmt.excluded.cve_id,
-            # Do NOT update: first_seen, severity, name, template_id
+            'occurrence_count': Finding.occurrence_count + 1,
+            # Do NOT update: first_seen, severity, name, template_id, fingerprint
         }
 
         stmt = stmt.on_conflict_do_update(
-            index_elements=['asset_id', 'template_id', 'matcher_name'],
+            index_elements=['fingerprint'],
             set_=update_dict
         ).returning(Finding.id, Finding.first_seen)
 
@@ -303,7 +314,7 @@ class FindingRepository:
                 if 'status_notes' not in evidence:
                     evidence['status_notes'] = []
                 evidence['status_notes'].append({
-                    'timestamp': datetime.utcnow().isoformat(),
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
                     'status': status,
                     'notes': notes
                 })
@@ -338,7 +349,7 @@ class FindingRepository:
 
         # Apply time filter
         if days > 0:
-            cutoff = datetime.utcnow() - timedelta(days=days)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
             query = query.filter(Finding.first_seen >= cutoff)
 
         # Count by severity
@@ -400,7 +411,7 @@ class FindingRepository:
         Returns:
             List of new findings
         """
-        cutoff = datetime.utcnow() - timedelta(hours=since_hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
 
         findings = self.db.query(Finding).join(Asset).filter(
             and_(

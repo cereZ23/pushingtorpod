@@ -273,12 +273,6 @@ async def require_admin(
     return current_user
 
 
-# Rate limiting (placeholder for future implementation)
-async def rate_limit_dependency():
-    """
-    Rate limiting dependency
-
-    TODO: Implement actual rate limiting with Redis
-    For now, this is a placeholder
-    """
-    pass
+def escape_like(value: str) -> str:
+    """Escape special LIKE/ILIKE characters (%, _, \\) in user input."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

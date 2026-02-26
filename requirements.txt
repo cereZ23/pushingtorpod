@@ -19,7 +19,6 @@ minio==7.2.3
 
 # JWT and security
 pyjwt==2.8.0
-python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.1.2  # Pin bcrypt 4.x for passlib compatibility
 python-multipart==0.0.6
@@ -49,6 +48,18 @@ coverage[toml]==7.4.0
 python-dateutil==2.8.2
 tldextract==5.1.1  # Domain validation (Sprint 2 security fix)
 cryptography==41.0.7  # Secret encryption (Sprint 2 security fix)
+python-whois==0.9.4  # WHOIS/RDAP lookups for hidden asset discovery
+dnstwist==20240116  # Domain permutation / typosquatting detection
+
+# Visual Recon
+playwright>=1.40.0
+Pillow>=10.0.0
+
+# Report generation (PDF, DOCX, charts)
+weasyprint>=62.0
+python-docx>=1.1.0
+matplotlib>=3.9.0
+Jinja2>=3.1.0
 
 # Monitoring and Error Tracking
 sentry-sdk[celery,sqlalchemy]==1.40.0

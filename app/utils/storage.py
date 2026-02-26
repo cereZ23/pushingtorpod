@@ -1,6 +1,6 @@
 from minio import Minio
 from minio.error import S3Error
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import os
 import io
@@ -44,7 +44,7 @@ def store_raw_output(tenant_id: int, tool: str, data: any):
         ensure_bucket_exists(client, bucket_name)
 
         # Generate object name with timestamp
-        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
         object_name = f'{tool}/{timestamp}.json'
 
         # Convert data to JSON bytes

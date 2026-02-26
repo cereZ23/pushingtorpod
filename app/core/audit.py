@@ -15,7 +15,7 @@ OWASP References:
 
 import logging
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from enum import Enum
 
@@ -182,7 +182,7 @@ def log_audit_event(
 
     # Create audit log entry
     audit_entry = AuditLog(
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         event_type=event_type.value,
         user_id=user_id,
         tenant_id=tenant_id,

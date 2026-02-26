@@ -18,7 +18,7 @@ import secrets
 import hmac
 import hashlib
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, Tuple
 from pathlib import Path
 
@@ -242,7 +242,7 @@ def create_access_token(
     if expires_delta is None:
         expires_delta = timedelta(minutes=settings.jwt_access_token_expire_minutes)
 
-    expire = datetime.utcnow() + expires_delta
+    expire = datetime.now(timezone.utc) + expires_delta
     jti = secrets.token_urlsafe(32)  # JWT ID for revocation
 
     payload = {
@@ -251,8 +251,8 @@ def create_access_token(
         "roles": roles or ["user"],
         "scopes": scopes or [],
         "exp": expire,
-        "iat": datetime.utcnow(),
-        "nbf": datetime.utcnow(),  # Not before
+        "iat": datetime.now(timezone.utc),
+        "nbf": datetime.now(timezone.utc),  # Not before
         "type": "access",
         "jti": jti,
     }
@@ -308,15 +308,15 @@ def create_refresh_token(
     if expires_delta is None:
         expires_delta = timedelta(days=settings.jwt_refresh_token_expire_days)
 
-    expire = datetime.utcnow() + expires_delta
+    expire = datetime.now(timezone.utc) + expires_delta
     jti = secrets.token_urlsafe(32)
 
     payload = {
         "sub": str(subject),
         "tenant_id": tenant_id,
         "exp": expire,
-        "iat": datetime.utcnow(),
-        "nbf": datetime.utcnow(),
+        "iat": datetime.now(timezone.utc),
+        "nbf": datetime.now(timezone.utc),
         "type": "refresh",
         "jti": jti,
     }

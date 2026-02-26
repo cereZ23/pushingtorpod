@@ -13,7 +13,7 @@ import logging
 import json
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.utils.secure_executor import SecureToolExecutor, ToolExecutionError
 from app.config import settings
@@ -177,7 +177,7 @@ class TemplateManager:
                     return {
                         'success': False,
                         'error': stderr,
-                        'timestamp': datetime.utcnow().isoformat()
+                        'timestamp': datetime.now(timezone.utc).isoformat()
                     }
 
                 # Parse output for success indicators
@@ -188,7 +188,7 @@ class TemplateManager:
                 return {
                     'success': success,
                     'output': stdout,
-                    'timestamp': datetime.utcnow().isoformat()
+                    'timestamp': datetime.now(timezone.utc).isoformat()
                 }
 
         except ToolExecutionError as e:
@@ -196,7 +196,7 @@ class TemplateManager:
             return {
                 'success': False,
                 'error': str(e),
-                'timestamp': datetime.utcnow().isoformat()
+                'timestamp': datetime.now(timezone.utc).isoformat()
             }
 
     def get_template_info(self, template_id: str) -> Optional[Dict]:

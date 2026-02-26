@@ -12,7 +12,7 @@ Features:
 - OpenAPI documentation
 """
 
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -38,24 +38,20 @@ from app.api.routers import (
     projects_router,
     dashboard_router,
     graph_router,
-    exposure_router,
     issues_router,
     alert_policies_router,
     reports_router,
-    remediation_router,
     suppressions_router,
-    retest_router,
-    dnstwist_router,
     threat_intel_admin_router,
     threat_intel_tenant_router,
     tickets_router,
-    geomap_router,
 )
 
 logger = logging.getLogger(__name__)
 
 # Import shared rate limiter instance
 from app.rate_limiter import limiter
+from app.api.dependencies import get_current_user
 
 # Create FastAPI app with comprehensive metadata
 app = FastAPI(
@@ -259,15 +255,10 @@ def root(request: Request):
 @app.get("/health")
 def health_check():
     """
-    Health check endpoint with actual connection verification
+    Health check endpoint for load balancers.
 
-    Returns:
-        dict: Health status of all services
-
-    Note:
-        - Returns 200 if all services are healthy
-        - Returns 503 if any critical service is down
-        - Load balancers should route traffic based on this
+    Returns only healthy/unhealthy status per service.
+    Internal errors are logged server-side but never exposed to callers.
     """
     from app.database import engine
     import redis
@@ -283,18 +274,11 @@ def health_check():
     try:
         from sqlalchemy import text
         with engine.connect() as conn:
-            result = conn.execute(text("SELECT 1"))
-            result.fetchone()
-        health_status["services"]["database"] = {
-            "status": "connected",
-            "type": "postgresql"
-        }
+            conn.execute(text("SELECT 1")).fetchone()
+        health_status["services"]["database"] = "ok"
     except Exception as e:
         logger.error(f"Database health check failed: {e}")
-        health_status["services"]["database"] = {
-            "status": "error",
-            "error": str(e)
-        }
+        health_status["services"]["database"] = "error"
         health_status["status"] = "unhealthy"
 
     # Check Redis
@@ -302,15 +286,10 @@ def health_check():
         r = redis.from_url(settings.redis_url, socket_connect_timeout=2)
         r.ping()
         r.close()
-        health_status["services"]["redis"] = {
-            "status": "connected"
-        }
+        health_status["services"]["redis"] = "ok"
     except Exception as e:
         logger.error(f"Redis health check failed: {e}")
-        health_status["services"]["redis"] = {
-            "status": "error",
-            "error": str(e)
-        }
+        health_status["services"]["redis"] = "error"
         health_status["status"] = "unhealthy"
 
     # Check MinIO
@@ -321,30 +300,16 @@ def health_check():
             secret_key=settings.minio_secret_key,
             secure=settings.minio_secure
         )
-        # Try to list buckets to verify connection
         list(client.list_buckets())
-        health_status["services"]["minio"] = {
-            "status": "connected",
-            "endpoint": settings.minio_endpoint
-        }
-    except S3Error as e:
-        logger.error(f"MinIO health check failed: {e}")
-        health_status["services"]["minio"] = {
-            "status": "error",
-            "error": str(e)
-        }
-        health_status["status"] = "unhealthy"
+        health_status["services"]["minio"] = "ok"
     except Exception as e:
         logger.error(f"MinIO health check failed: {e}")
-        health_status["services"]["minio"] = {
-            "status": "error",
-            "error": str(e)
-        }
+        health_status["services"]["minio"] = "error"
         health_status["status"] = "unhealthy"
 
     # Return 503 if unhealthy so load balancers remove this instance
     if health_status["status"] == "unhealthy":
-        raise HTTPException(status_code=503, detail=health_status)
+        raise HTTPException(status_code=503, detail={"status": "unhealthy"})
 
     return health_status
 
@@ -361,18 +326,13 @@ app.include_router(scanning_router)
 app.include_router(projects_router)
 app.include_router(dashboard_router)
 app.include_router(graph_router)
-app.include_router(exposure_router)
 app.include_router(issues_router)
 app.include_router(alert_policies_router)
 app.include_router(reports_router)
-app.include_router(remediation_router)
 app.include_router(suppressions_router)
-app.include_router(retest_router)
-app.include_router(dnstwist_router)
 app.include_router(threat_intel_admin_router)
 app.include_router(threat_intel_tenant_router)
 app.include_router(tickets_router)
-app.include_router(geomap_router)
 
 
 # Startup and shutdown events
@@ -430,29 +390,16 @@ async def shutdown_event():
     logger.info("Shutdown complete")
 
 
-# API Statistics endpoint
+# API Statistics endpoint (requires authentication)
 @app.get("/api/v1/stats", tags=["System"])
-async def api_stats():
+async def api_stats(
+    current_user=Depends(get_current_user),
+):
     """
-    Get API statistics
-
-    Returns:
-        - Total routes
-        - Available endpoints
-        - System version
+    Get API statistics (authenticated).
     """
     return {
-        "version": "3.0.0",
-        "total_routes": len(app.routes),
-        "endpoints": {
-            "auth": "/api/v1/auth",
-            "tenants": "/api/v1/tenants",
-            "assets": "/api/v1/tenants/{tenant_id}/assets",
-            "services": "/api/v1/tenants/{tenant_id}/services",
-            "certificates": "/api/v1/tenants/{tenant_id}/certificates",
-            "endpoints": "/api/v1/tenants/{tenant_id}/endpoints",
-            "findings": "/api/v1/tenants/{tenant_id}/findings"
-        }
+        "version": settings.app_version,
     }
 
 

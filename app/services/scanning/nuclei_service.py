@@ -21,7 +21,7 @@ Architecture:
 import json
 import logging
 from typing import List, Dict, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from app.utils.secure_executor import SecureToolExecutor, ToolExecutionError
@@ -183,7 +183,7 @@ class NucleiService:
                     'severity': severity,
                     'findings': findings,
                     'stats': stats,
-                    'timestamp': datetime.utcnow().isoformat()
+                    'timestamp': datetime.now(timezone.utc).isoformat()
                 }
             )
 
@@ -447,7 +447,7 @@ class NucleiService:
                 'matched_at': matched_url,
                 'host': host,
                 'source': 'nuclei',
-                'discovered_at': datetime.utcnow()
+                'discovered_at': datetime.now(timezone.utc)
             }
 
             return finding

@@ -18,7 +18,7 @@ from celery import chain, group
 import logging
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -188,7 +188,7 @@ def get_enrichment_candidates(
     # Normal operation: Check TTL
     if priority:
         ttl_days = ttl_map.get(priority, 7)
-        cutoff = datetime.utcnow() - timedelta(days=ttl_days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=ttl_days)
 
         assets = db.query(Asset).filter(
             Asset.tenant_id == tenant_id,
@@ -203,7 +203,7 @@ def get_enrichment_candidates(
 
         priority_conditions = []
         for pri, days in ttl_map.items():
-            cutoff = datetime.utcnow() - timedelta(days=days)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
             priority_conditions.append(
                 and_(
                     Asset.priority == pri,
@@ -400,7 +400,7 @@ def run_httpx(tenant_id: int, asset_ids: List[int]):
                 # Update asset enrichment tracking
                 asset = db.query(Asset).filter_by(id=asset_id).first()
                 if asset:
-                    asset.last_enriched_at = datetime.utcnow()
+                    asset.last_enriched_at = datetime.now(timezone.utc)
                     asset.enrichment_status = 'enriched'
 
             db.commit()
@@ -482,7 +482,7 @@ def parse_httpx_result(result: Dict, tenant_logger) -> Optional[Dict]:
             'redirect_url': result.get('final_url'),
             'has_tls': parsed.scheme == 'https',
             'enrichment_source': 'httpx',
-            'enriched_at': datetime.utcnow()
+            'enriched_at': datetime.now(timezone.utc)
         }
 
         # Convert response_time_ms to int
@@ -668,7 +668,11 @@ def run_naabu(tenant_id: int, asset_ids: List[int], full_scan: bool = False):
             if full_scan:
                 args.extend(['-p', '-'])  # All ports
             else:
-                args.extend(['-top-ports', settings.naabu_default_ports or '1000'])
+                # Naabu expects: -tp 100, -tp 1000, or -tp full
+                top_ports = settings.naabu_default_ports or '1000'
+                # Strip "top-" prefix if present from legacy config
+                top_ports = top_ports.replace('top-', '')
+                args.extend(['-tp', top_ports])
 
             # Exclude blocked ports
             if settings.naabu_blocked_ports:
@@ -685,7 +689,8 @@ def run_naabu(tenant_id: int, asset_ids: List[int], full_scan: bool = False):
 
             if returncode != 0:
                 tenant_logger.warning(f"Naabu returned non-zero exit code: {returncode}")
-                tenant_logger.debug(f"Naabu stderr: {stderr}")
+                tenant_logger.warning(f"Naabu stderr: {stderr[:500]}")
+                tenant_logger.warning(f"Naabu args: {args}")
 
             # Parse JSON output
             services_data = []
@@ -708,17 +713,71 @@ def run_naabu(tenant_id: int, asset_ids: List[int], full_scan: bool = False):
                 tenant_logger.warning(f"Failed to store Naabu raw output: {e}")
 
             # Upsert services to database
-            # (Similar to HTTPx, group by asset and bulk upsert)
             service_repo = ServiceRepository(db)
             total_created = 0
             total_updated = 0
 
-            # TODO: Map hosts back to asset IDs
-            # For now, log the results
-            tenant_logger.info(f"Naabu discovered {len(services_data)} open ports")
+            # Map hosts back to asset IDs
+            # Build a lookup: host -> list of parsed results
+            host_results: Dict[str, List[Dict]] = {}
+            for svc in services_data:
+                host = svc.get('host')
+                if host:
+                    host_results.setdefault(host, []).append(svc)
+
+            # Query all matching assets in a single query (avoids N+1)
+            unique_hosts = list(host_results.keys())
+            if unique_hosts:
+                matched_assets = db.query(Asset).filter(
+                    Asset.tenant_id == tenant_id,
+                    Asset.identifier.in_(unique_hosts)
+                ).all()
+
+                # Build identifier -> asset mapping
+                asset_by_identifier: Dict[str, Asset] = {
+                    asset.identifier: asset for asset in matched_assets
+                }
+
+                # Group services by asset and deduplicate by port
+                services_by_asset: Dict[int, Dict[int, Dict]] = {}
+                for host, results in host_results.items():
+                    asset = asset_by_identifier.get(host)
+                    if not asset:
+                        tenant_logger.warning(f"No asset found for Naabu host: {host}")
+                        continue
+
+                    if asset.id not in services_by_asset:
+                        services_by_asset[asset.id] = {}
+
+                    for svc in results:
+                        port = svc.get('port')
+                        if port is not None:
+                            # Deduplicate by port - keep latest result
+                            services_by_asset[asset.id][port] = svc
+
+                # Bulk upsert for each asset
+                for asset_id, ports_dict in services_by_asset.items():
+                    asset_services = list(ports_dict.values())
+                    result = service_repo.bulk_upsert(asset_id, asset_services)
+                    total_created += result['created']
+                    total_updated += result['updated']
+
+                    # Update asset enrichment tracking
+                    asset = db.query(Asset).filter_by(id=asset_id).first()
+                    if asset:
+                        asset.last_enriched_at = datetime.now(timezone.utc)
+
+                db.commit()
+
+            tenant_logger.info(
+                f"Naabu complete: {total_created} new services, {total_updated} updated "
+                f"({len(services_data)} open ports on {len(hosts)} hosts, tenant {tenant_id})"
+            )
 
             return {
                 'ports_discovered': len(services_data),
+                'services_created': total_created,
+                'services_updated': total_updated,
                 'hosts_scanned': len(hosts)
             }
 
@@ -927,11 +986,71 @@ def run_tlsx(tenant_id: int, asset_ids: List[int]):
                 tenant_logger.warning(f"Failed to store TLSx raw output: {e}")
 
             # Upsert certificates to database
-            # (Similar pattern to HTTPx/Naabu)
             tenant_logger.info(f"TLSx discovered {len(certificates_data)} certificates")
+
+            cert_repo = CertificateRepository(db)
+            from app.repositories.service_repository import ServiceRepository
+            service_repo = ServiceRepository(db)
+            total_certs_created = 0
+            total_certs_updated = 0
+
+            # Map hosts back to assets for certificate upsert
+            cert_hosts = list({c['host'] for c in certificates_data if c.get('host')})
+            if cert_hosts:
+                matched_assets = db.query(Asset).filter(
+                    Asset.tenant_id == tenant_id,
+                    Asset.identifier.in_(cert_hosts)
+                ).all()
+
+                asset_by_host: Dict[str, Asset] = {
+                    asset.identifier: asset for asset in matched_assets
+                }
+
+                # Group certificates by asset
+                certs_by_asset: Dict[int, List[Dict]] = {}
+                for cert_data in certificates_data:
+                    cert_host = cert_data.get('host', '')
+                    asset = asset_by_host.get(cert_host)
+                    if not asset:
+                        tenant_logger.warning(f"No asset found for TLSx host: {cert_host}")
+                        continue
+                    certs_by_asset.setdefault(asset.id, []).append(cert_data)
+
+                for asset_id, asset_certs in certs_by_asset.items():
+                    # Bulk upsert certificates
+                    result = cert_repo.bulk_upsert(asset_id, asset_certs)
+                    total_certs_created += result['created']
+                    total_certs_updated += result['updated']
+
+                    # Also update Service records with TLS info
+                    for cert_data in asset_certs:
+                        port_str = cert_data.get('port', '443')
+                        try:
+                            port_num = int(port_str)
+                        except (ValueError, TypeError):
+                            port_num = 443
+
+                        tls_service_data = [{
+                            'port': port_num,
+                            'protocol': 'https',
+                            'has_tls': True,
+                            'tls_version': cert_data.get('tls_version', ''),
+                            'tls_fingerprint': cert_data.get('tls_fingerprint', ''),
+                            'enrichment_source': 'tlsx'
+                        }]
+                        service_repo.bulk_upsert(asset_id, tls_service_data)
+
+                db.commit()
+
+            tenant_logger.info(
+                f"TLSx complete: {total_certs_created} new certificates, "
+                f"{total_certs_updated} updated (tenant {tenant_id})"
+            )
 
             return {
                 'certificates_discovered': len(certificates_data),
+                'certificates_created': total_certs_created,
+                'certificates_updated': total_certs_updated,
                 'hosts_analyzed': len(hosts),
                 'private_key_detected': private_key_detected
             }
@@ -996,17 +1115,134 @@ def detect_and_redact_private_keys(text: str, tenant_logger) -> Tuple[bool, str]
 
 
 def parse_tlsx_result(result: Dict, tenant_logger) -> Optional[Dict]:
-    """Parse TLSx JSON output into certificate data"""
+    """
+    Parse TLSx JSON output into certificate data
+
+    Extracts all certificate fields from TLSx JSON output including:
+    - Identity: host, port, subject CN, issuer, serial
+    - Validity: not_before, not_after, days_until_expiry, is_expired
+    - SANs: subject alternative names
+    - Security: self-signed, wildcard, weak signature detection
+    - TLS config: version, cipher suite
+
+    Args:
+        result: TLSx JSON result dict
+        tenant_logger: Logger instance
+
+    Returns:
+        Certificate data dict or None if parsing fails
+    """
     try:
-        # TODO: Full implementation
-        # Extract certificate fields from TLSx JSON
-        return {
-            'host': result.get('host'),
-            'subject_cn': result.get('subject_cn'),
-            'issuer': result.get('issuer'),
-            'serial_number': result.get('serial'),
-            # ... more fields
+        host = result.get('host')
+        if not host:
+            return None
+
+        port = result.get('port', '443')
+        # Ensure port is a string for consistent handling
+        port = str(port) if port else '443'
+
+        # Extract TLS configuration
+        tls_version = result.get('tls_version', '')
+        cipher = result.get('cipher', '')
+
+        # Extract certificate identity
+        subject_cn = result.get('subject_cn', '')
+        serial_number = result.get('serial', '')
+
+        # Build issuer string from issuer_cn and issuer_org
+        issuer_cn = result.get('issuer_cn', '')
+        issuer_org = result.get('issuer_org', [])
+        if isinstance(issuer_org, list) and issuer_org:
+            issuer = f"{issuer_cn} ({', '.join(issuer_org)})" if issuer_cn else ', '.join(issuer_org)
+        else:
+            issuer = issuer_cn or ''
+
+        # Parse validity dates
+        not_before = None
+        not_after = None
+        not_before_str = result.get('not_before', '')
+        not_after_str = result.get('not_after', '')
+
+        for date_format in ('%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%d %H:%M:%S'):
+            if not_before_str and not not_before:
+                try:
+                    not_before = datetime.strptime(not_before_str.replace('+00:00', 'Z').rstrip('Z') + 'Z', '%Y-%m-%dT%H:%M:%SZ')
+                except ValueError:
+                    pass
+            if not_after_str and not not_after:
+                try:
+                    not_after = datetime.strptime(not_after_str.replace('+00:00', 'Z').rstrip('Z') + 'Z', '%Y-%m-%dT%H:%M:%SZ')
+                except ValueError:
+                    pass
+
+        # Calculate expiry status
+        days_until_expiry = None
+        is_expired = False
+        if not_after:
+            delta = not_after - datetime.now(timezone.utc)
+            days_until_expiry = delta.days
+            is_expired = days_until_expiry < 0
+
+        # Extract SANs from subject_an
+        san_domains = result.get('subject_an', [])
+        if not isinstance(san_domains, list):
+            san_domains = []
+
+        # Security checks
+        is_self_signed = result.get('self_signed', False)
+        is_wildcard = result.get('wildcard_certificate', False)
+
+        # If not explicitly flagged, check subject_cn and SANs for wildcard
+        if not is_wildcard:
+            all_names = [subject_cn] + san_domains
+            is_wildcard = any(name.startswith('*.') for name in all_names if name)
+
+        # Weak signature detection
+        # TLSx may include signature_algorithm; also check cipher for weak patterns
+        signature_algorithm = result.get('signature_algorithm', '')
+        has_weak_signature = False
+        weak_sig_patterns = ['md5', 'sha1', 'md2', 'md4']
+        sig_to_check = (signature_algorithm or '').lower()
+        if any(weak in sig_to_check for weak in weak_sig_patterns):
+            has_weak_signature = True
+
+        # Extract fingerprint hash
+        fingerprint_hash = result.get('fingerprint_hash', {})
+        tls_fingerprint = ''
+        if isinstance(fingerprint_hash, dict):
+            tls_fingerprint = fingerprint_hash.get('sha256', '')
+
+        # Extract certificate chain
+        chain_data = result.get('chain', [])
+        if not isinstance(chain_data, list):
+            chain_data = []
+
+        # Build the certificate data dict
+        cert_data = {
+            'host': host,
+            'port': port,
+            'tls_version': tls_version,
+            'cipher': cipher,
+            'subject_cn': subject_cn,
+            'issuer': issuer,
+            'serial_number': serial_number,
+            'not_before': not_before,
+            'not_after': not_after,
+            'days_until_expiry': days_until_expiry,
+            'is_expired': is_expired,
+            'san_domains': san_domains,
+            'signature_algorithm': signature_algorithm,
+            'is_self_signed': is_self_signed,
+            'is_wildcard': is_wildcard,
+            'has_weak_signature': has_weak_signature,
+            'tls_fingerprint': tls_fingerprint,
+            'cipher_suites': [cipher] if cipher else [],
+            'chain': chain_data,
+            'raw_data': result
         }
+
+        return cert_data
+
     except Exception as e:
         tenant_logger.warning(f"Failed to parse TLSx result: {e}")
         return None
@@ -1047,18 +1283,227 @@ def run_katana(tenant_id: int, asset_ids: List[int]):
 
     try:
         # Get assets with live HTTP services
-        # Katana depends on HTTPx results
+        # Katana depends on HTTPx results to know which hosts serve HTTP
+        from app.models.database import Service
+        from sqlalchemy import or_
+
         service_repo = ServiceRepository(db)
+        endpoint_repo = EndpointRepository(db)
 
-        # TODO: Implement getting live web services
-        # For now, placeholder
-        tenant_logger.info(f"Katana crawling not yet fully implemented (tenant {tenant_id})")
+        # Query assets that have live web services
+        # A service is considered live if it has an http_status or runs on common web ports
+        live_services = db.query(Service).join(Asset).filter(
+            Asset.id.in_(asset_ids),
+            Asset.tenant_id == tenant_id,
+            or_(
+                Service.http_status.isnot(None),
+                Service.port.in_([80, 443, 8080, 8443])
+            )
+        ).all()
 
-        return {
-            'endpoints_discovered': 0,
-            'status': 'not_implemented'
-        }
+        if not live_services:
+            tenant_logger.info(f"No live HTTP services found for Katana (tenant {tenant_id})")
+            return {'endpoints_discovered': 0, 'status': 'no_live_services'}
 
+        # Build URL list from live services
+        url_validator = URLValidator()
+        urls = []
+        url_to_asset_id: Dict[str, int] = {}
+
+        for service in live_services:
+            asset = db.query(Asset).filter_by(id=service.asset_id).first()
+            if not asset:
+                continue
+
+            # Determine scheme and build URL
+            scheme = 'https' if service.has_tls or service.port in (443, 8443) else 'http'
+            host = asset.identifier
+
+            if service.port in (80, 443):
+                url = f"{scheme}://{host}"
+            else:
+                url = f"{scheme}://{host}:{service.port}"
+
+            is_valid, _ = url_validator.validate_url(url)
+            if is_valid and url not in urls:
+                urls.append(url)
+                url_to_asset_id[url] = service.asset_id
+
+        if not urls:
+            tenant_logger.info(f"No valid URLs for Katana (tenant {tenant_id})")
+            return {'endpoints_discovered': 0, 'status': 'no_valid_urls'}
+
+        tenant_logger.info(f"Running Katana on {len(urls)} URLs (tenant {tenant_id})")
+
+        # Execute Katana with secure executor
+        with SecureToolExecutor(tenant_id) as executor:
+            urls_content = '\n'.join(urls)
+
+            max_depth = str(settings.katana_max_depth)
+            max_pages = str(settings.katana_max_pages)
+
+            args = [
+                '-json',
+                '-silent',
+                '-js-crawl',
+                '-d', max_depth,
+                '-ct', max_pages
+            ]
+
+            # Katana respects robots.txt by default.
+            # Only add -disable-redirects when we do NOT want to respect robots.
+            if not settings.katana_respect_robots:
+                args.append('-disable-redirects')
+
+            returncode, stdout, stderr = executor.execute(
+                'katana',
+                args,
+                timeout=settings.katana_timeout,
+                stdin_data=urls_content
+            )
+
+            if returncode != 0:
+                tenant_logger.warning(f"Katana returned non-zero exit code: {returncode}")
+                tenant_logger.debug(f"Katana stderr: {stderr}")
+
+            # Parse JSON output lines
+            endpoints_data: List[Dict] = []
+            for line in stdout.strip().split('\n'):
+                if not line:
+                    continue
+
+                try:
+                    result = json.loads(line)
+
+                    # Katana JSON output fields:
+                    # - endpoint: the discovered URL
+                    # - source: the URL where it was found
+                    # - tag: type of finding (form, js, etc.)
+                    endpoint_url = result.get('endpoint', '')
+                    source_url = result.get('source', '')
+                    tag = result.get('tag', '')
+
+                    if not endpoint_url:
+                        continue
+
+                    # Validate discovered endpoint URL
+                    is_valid, _ = url_validator.validate_url(endpoint_url)
+                    if not is_valid:
+                        continue
+
+                    # Parse the endpoint URL for path and classification
+                    parsed = urlparse(endpoint_url)
+                    path = parsed.path or '/'
+
+                    # Classify endpoint type based on tag and URL patterns
+                    endpoint_type = 'static'
+                    if tag == 'form':
+                        endpoint_type = 'form'
+                    elif tag == 'js':
+                        endpoint_type = 'static'
+                    elif any(p in path.lower() for p in ['/api/', '/v1/', '/v2/', '/graphql', '/rest/']):
+                        endpoint_type = 'api'
+                    elif parsed.path and parsed.path.split('.')[-1] in ('pdf', 'doc', 'docx', 'xls', 'xlsx', 'zip', 'csv'):
+                        endpoint_type = 'file'
+
+                    # Determine if the endpoint is external to the crawled domain
+                    is_external = False
+                    if parsed.hostname:
+                        # Check if the discovered endpoint belongs to any of the crawled URLs
+                        source_parsed = urlparse(source_url) if source_url else None
+                        if source_parsed and source_parsed.hostname:
+                            is_external = parsed.hostname.lower() != source_parsed.hostname.lower()
+
+                    # Detect API endpoints
+                    is_api = endpoint_type == 'api' or any(
+                        p in path.lower() for p in ['/api/', '/v1/', '/v2/', '/v3/', '/graphql', '/rest/', '/rpc/']
+                    )
+
+                    # Map this endpoint to the correct asset_id via the source URL
+                    # First try the source URL, then try the endpoint itself
+                    asset_id = None
+                    for candidate_url in [source_url, endpoint_url]:
+                        if candidate_url in url_to_asset_id:
+                            asset_id = url_to_asset_id[candidate_url]
+                            break
+                        # Try matching by origin (scheme://host:port)
+                        candidate_parsed = urlparse(candidate_url)
+                        if candidate_parsed.hostname:
+                            for mapped_url, mapped_id in url_to_asset_id.items():
+                                mapped_parsed = urlparse(mapped_url)
+                                if (candidate_parsed.hostname == mapped_parsed.hostname
+                                        and candidate_parsed.port == mapped_parsed.port):
+                                    asset_id = mapped_id
+                                    break
+                        if asset_id:
+                            break
+
+                    if not asset_id:
+                        continue
+
+                    # Extract query parameters
+                    query_params = {}
+                    if parsed.query:
+                        for param in parsed.query.split('&'):
+                            if '=' in param:
+                                key, _, value = param.partition('=')
+                                query_params[key] = value
+
+                    endpoint_data = {
+                        'url': endpoint_url,
+                        'path': path,
+                        'method': 'GET',
+                        'endpoint_type': endpoint_type,
+                        'is_external': is_external,
+                        'is_api': is_api,
+                        'source_url': source_url,
+                        'query_params': query_params if query_params else None,
+                        'raw_data': result,
+                        'asset_id': asset_id
+                    }
+
+                    endpoints_data.append(endpoint_data)
+
+                except json.JSONDecodeError:
+                    continue
+
+            # Store raw output to MinIO
+            try:
+                store_raw_output(tenant_id, 'katana', {'urls': urls, 'results_count': len(endpoints_data)})
+            except Exception as e:
+                tenant_logger.warning(f"Failed to store Katana raw output: {e}")
+
+            # Upsert endpoints grouped by asset
+            total_created = 0
+            total_updated = 0
+
+            endpoints_by_asset: Dict[int, List[Dict]] = {}
+            for ep in endpoints_data:
+                aid = ep.pop('asset_id')
+                endpoints_by_asset.setdefault(aid, []).append(ep)
+
+            for asset_id, asset_endpoints in endpoints_by_asset.items():
+                result = endpoint_repo.bulk_upsert(asset_id, asset_endpoints)
+                total_created += result['created']
+                total_updated += result['updated']
+
+            db.commit()
+
+            tenant_logger.info(
+                f"Katana complete: {total_created} new endpoints, {total_updated} updated "
+                f"(tenant {tenant_id})"
+            )
+
+            return {
+                'endpoints_discovered': total_created + total_updated,
+                'endpoints_created': total_created,
+                'endpoints_updated': total_updated,
+                'urls_crawled': len(urls)
+            }
+
+    except ToolExecutionError as e:
+        tenant_logger.error(f"Katana execution failed: {e}")
+        return {'error': str(e), 'endpoints_discovered': 0}
     except Exception as e:
         tenant_logger.error(f"Katana error: {e}", exc_info=True)
         return {'error': str(e), 'endpoints_discovered': 0}

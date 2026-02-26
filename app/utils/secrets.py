@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any
 from pathlib import Path
 import logging
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -155,7 +155,7 @@ class SecretManager:
             self._set_to_file(key, value)
 
         # Log audit event (without the actual secret)
-        logger.info(f"Secret {key} was updated at {datetime.utcnow().isoformat()}")
+        logger.info(f"Secret {key} was updated at {datetime.now(timezone.utc).isoformat()}")
 
     def _set_to_file(self, key: str, value: str):
         """Store secret in encrypted file"""
@@ -172,7 +172,7 @@ class SecretManager:
 
         # Update secret
         secrets_dict[key] = value
-        secrets_dict[f'{key}_updated'] = datetime.utcnow().isoformat()
+        secrets_dict[f'{key}_updated'] = datetime.now(timezone.utc).isoformat()
 
         # Encrypt and save
         encrypted_data = self._fernet.encrypt(json.dumps(secrets_dict).encode())
@@ -214,9 +214,9 @@ class SecretManager:
         self.set_secret(key, new_secret)
 
         # Store rotation metadata
-        self.set_secret(f'{key}_rotated_at', datetime.utcnow().isoformat())
+        self.set_secret(f'{key}_rotated_at', datetime.now(timezone.utc).isoformat())
 
-        logger.info(f"Secret {key} was rotated at {datetime.utcnow().isoformat()}")
+        logger.info(f"Secret {key} was rotated at {datetime.now(timezone.utc).isoformat()}")
 
         return new_secret
 
@@ -312,7 +312,7 @@ class SecretRotationScheduler:
             rotation_interval = self.rotation_schedule[key]
             next_rotation = rotated_at + rotation_interval
 
-            return datetime.utcnow() >= next_rotation
+            return datetime.now(timezone.utc) >= next_rotation
 
         except (ValueError, TypeError) as e:
             logger.error(f"Failed to parse rotation timestamp for {key}: {e}")

@@ -8,14 +8,15 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, func, select
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 
 from app.api.dependencies import (
     get_db,
     verify_tenant_access,
-    PaginationParams
+    PaginationParams,
+    escape_like,
 )
 from app.api.schemas.asset import (
     AssetResponse,
@@ -92,7 +93,8 @@ def list_assets(
         query = query.filter(Asset.is_active == is_active)
 
     if search:
-        query = query.filter(Asset.identifier.ilike(f"%{search}%"))
+        safe_search = escape_like(search)
+        query = query.filter(Asset.identifier.ilike(f"%{safe_search}%", escape="\\"))
 
     if min_risk_score is not None:
         query = query.filter(Asset.risk_score >= min_risk_score)
@@ -112,7 +114,14 @@ def list_assets(
     total = query.count()
 
     # Apply sorting
-    sort_column = getattr(Asset, sort_by, Asset.last_seen)
+    ALLOWED_SORT_COLUMNS = {
+        "identifier": Asset.identifier,
+        "type": Asset.type,
+        "first_seen": Asset.first_seen,
+        "last_seen": Asset.last_seen,
+        "risk_score": Asset.risk_score,
+    }
+    sort_column = ALLOWED_SORT_COLUMNS.get(sort_by, Asset.last_seen)
     if sort_order.lower() == "desc":
         query = query.order_by(sort_column.desc())
     else:
@@ -825,7 +834,7 @@ def update_asset(
     # Apply updates
     if updates.priority is not None:
         asset.priority = updates.priority
-        asset.priority_updated_at = datetime.utcnow()
+        asset.priority_updated_at = datetime.now(timezone.utc)
         asset.priority_auto_calculated = False
 
     if updates.is_active is not None:

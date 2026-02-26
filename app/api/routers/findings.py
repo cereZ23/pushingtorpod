@@ -8,10 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, and_
 from typing import Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 
-from app.api.dependencies import get_db, verify_tenant_access, PaginationParams
+from app.api.dependencies import get_db, verify_tenant_access, PaginationParams, escape_like
 from app.api.schemas.finding import (
     FindingResponse,
     FindingListRequest,
@@ -168,7 +168,7 @@ def get_severity_trends(
         Daily severity counts for the specified period
     """
     # Calculate date range
-    end_date = datetime.utcnow()
+    end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=days)
 
     # Single aggregated query instead of days * severities individual queries
@@ -309,11 +309,12 @@ def list_findings(
         query = query.filter(Finding.cvss_score >= min_cvss_score)
 
     if search:
+        safe_search = escape_like(search)
         query = query.filter(
             or_(
-                Finding.name.ilike(f"%{search}%"),
-                Finding.cve_id.ilike(f"%{search}%"),
-                Finding.template_id.ilike(f"%{search}%")
+                Finding.name.ilike(f"%{safe_search}%", escape="\\"),
+                Finding.cve_id.ilike(f"%{safe_search}%", escape="\\"),
+                Finding.template_id.ilike(f"%{safe_search}%", escape="\\"),
             )
         )
 
@@ -321,10 +322,16 @@ def list_findings(
     total = query.count()
 
     # Apply sorting
-    if sort_by == "asset_identifier":
-        sort_column = Asset.identifier
-    else:
-        sort_column = getattr(Finding, sort_by, Finding.last_seen)
+    ALLOWED_SORT_COLUMNS = {
+        "name": Finding.name,
+        "severity": Finding.severity,
+        "first_seen": Finding.first_seen,
+        "last_seen": Finding.last_seen,
+        "cvss_score": Finding.cvss_score,
+        "status": Finding.status,
+        "asset_identifier": Asset.identifier,
+    }
+    sort_column = ALLOWED_SORT_COLUMNS.get(sort_by, Finding.last_seen)
 
     if sort_order.lower() == "desc":
         query = query.order_by(sort_column.desc())

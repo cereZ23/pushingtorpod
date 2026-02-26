@@ -8,10 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 from typing import Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 
-from app.api.dependencies import get_db, verify_tenant_access, PaginationParams
+from app.api.dependencies import get_db, verify_tenant_access, PaginationParams, escape_like
 from app.api.schemas.certificate import (
     CertificateResponse,
     CertificateListRequest,
@@ -65,7 +65,7 @@ def list_certificates(
         query = query.filter(Certificate.is_expired == is_expired)
 
     if is_expiring_soon:
-        thirty_days = datetime.utcnow() + timedelta(days=30)
+        thirty_days = datetime.now(timezone.utc) + timedelta(days=30)
         query = query.filter(
             and_(
                 Certificate.is_expired == False,
@@ -83,18 +83,28 @@ def list_certificates(
         query = query.filter(Certificate.has_weak_signature == has_weak_signature)
 
     if issuer:
-        query = query.filter(Certificate.issuer.ilike(f"%{issuer}%"))
+        safe_issuer = escape_like(issuer)
+        query = query.filter(Certificate.issuer.ilike(f"%{safe_issuer}%", escape="\\"))
 
     if search:
+        safe_search = escape_like(search)
         query = query.filter(
-            Certificate.subject_cn.ilike(f"%{search}%")
+            Certificate.subject_cn.ilike(f"%{safe_search}%", escape="\\")
         )
 
     # Get total count
     total = query.count()
 
     # Apply sorting
-    sort_column = getattr(Certificate, sort_by, Certificate.not_after)
+    ALLOWED_SORT_COLUMNS = {
+        "subject_cn": Certificate.subject_cn,
+        "issuer": Certificate.issuer,
+        "not_before": Certificate.not_before,
+        "not_after": Certificate.not_after,
+        "is_expired": Certificate.is_expired,
+        "days_until_expiry": Certificate.days_until_expiry,
+    }
+    sort_column = ALLOWED_SORT_COLUMNS.get(sort_by, Certificate.not_after)
     if sort_order.lower() == "desc":
         query = query.order_by(sort_column.desc())
     else:
@@ -160,7 +170,7 @@ def get_expiring_certificates(
     Returns:
         Certificates expiring within specified days, sorted by expiry date
     """
-    expiry_threshold = datetime.utcnow() + timedelta(days=days)
+    expiry_threshold = datetime.now(timezone.utc) + timedelta(days=days)
 
     certificates = db.query(Certificate).join(Asset).filter(
         Asset.tenant_id == tenant_id,
@@ -201,7 +211,7 @@ def get_certificate_health(
     ).count()
 
     # Expiring soon (30 days)
-    thirty_days = datetime.utcnow() + timedelta(days=30)
+    thirty_days = datetime.now(timezone.utc) + timedelta(days=30)
     expiring_soon = db.query(Certificate).join(Asset).filter(
         Asset.tenant_id == tenant_id,
         Certificate.is_expired == False,

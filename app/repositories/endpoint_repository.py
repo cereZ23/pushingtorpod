@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import and_, or_, func
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.models.enrichment import Endpoint
 
@@ -269,7 +269,7 @@ class EndpointRepository:
 
         # Prepare records for upsert
         records = []
-        current_time = datetime.utcnow()
+        current_time = datetime.now(timezone.utc)
 
         for data in endpoints_data:
             # URL is required
@@ -425,7 +425,7 @@ class EndpointRepository:
         Returns:
             List of recent endpoints
         """
-        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
         return self.db.query(Endpoint).join(Endpoint.asset).filter(
             and_(

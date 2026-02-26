@@ -10,7 +10,7 @@ from sqlalchemy import func, or_
 from typing import Optional, List
 import logging
 
-from app.api.dependencies import get_db, verify_tenant_access, PaginationParams
+from app.api.dependencies import get_db, verify_tenant_access, PaginationParams, escape_like
 from app.api.schemas.endpoint import (
     EndpointResponse,
     EndpointListRequest,
@@ -80,10 +80,11 @@ def list_endpoints(
         query = query.filter(Endpoint.depth <= max_depth)
 
     if search:
+        safe_search = escape_like(search)
         query = query.filter(
             or_(
-                Endpoint.url.ilike(f"%{search}%"),
-                Endpoint.path.ilike(f"%{search}%")
+                Endpoint.url.ilike(f"%{safe_search}%", escape="\\"),
+                Endpoint.path.ilike(f"%{safe_search}%", escape="\\"),
             )
         )
 
@@ -91,7 +92,14 @@ def list_endpoints(
     total = query.count()
 
     # Apply sorting
-    sort_column = getattr(Endpoint, sort_by, Endpoint.last_seen)
+    ALLOWED_SORT_COLUMNS = {
+        "url": Endpoint.url,
+        "path": Endpoint.path,
+        "status_code": Endpoint.status_code,
+        "last_seen": Endpoint.last_seen,
+        "depth": Endpoint.depth,
+    }
+    sort_column = ALLOWED_SORT_COLUMNS.get(sort_by, Endpoint.last_seen)
     if sort_order.lower() == "desc":
         query = query.order_by(sort_column.desc())
     else:

@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import and_, or_
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 
 from app.models.database import Service
@@ -179,7 +179,7 @@ class ServiceRepository:
 
         # Prepare records for upsert
         records = []
-        current_time = datetime.utcnow()
+        current_time = datetime.now(timezone.utc)
 
         for data in services_data:
             # Port is required
@@ -300,7 +300,7 @@ class ServiceRepository:
         Returns:
             List of services not seen in the threshold period
         """
-        cutoff = datetime.utcnow() - timedelta(days=days_threshold)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days_threshold)
 
         return self.db.query(Service).join(Service.asset).filter(
             and_(

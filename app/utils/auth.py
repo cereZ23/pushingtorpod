@@ -4,11 +4,12 @@ Authentication utilities for JWT tokens and API key validation
 Provides secure token generation, validation, and user authentication.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 import secrets
 import hashlib
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import PyJWTError as JWTError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -42,9 +43,9 @@ def create_access_token(
         JWT token string
     """
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(
+        expire = datetime.now(timezone.utc) + timedelta(
             minutes=settings.jwt_access_token_expire_minutes
         )
 
@@ -52,7 +53,7 @@ def create_access_token(
         "sub": str(user_id),
         "email": email,
         "exp": expire,
-        "iat": datetime.utcnow(),
+        "iat": datetime.now(timezone.utc),
         "type": "access"
     }
 
@@ -75,13 +76,13 @@ def create_refresh_token(user_id: int, email: str) -> str:
     Returns:
         JWT refresh token string
     """
-    expire = datetime.utcnow() + timedelta(days=settings.jwt_refresh_token_expire_days)
+    expire = datetime.now(timezone.utc) + timedelta(days=settings.jwt_refresh_token_expire_days)
 
     to_encode = {
         "sub": str(user_id),
         "email": email,
         "exp": expire,
-        "iat": datetime.utcnow(),
+        "iat": datetime.now(timezone.utc),
         "type": "refresh"
     }
 
@@ -148,7 +149,7 @@ def get_current_user(db: Session, token: str) -> User:
             raise AuthenticationError("User not found or inactive")
 
         # Update last login
-        user.last_login = datetime.utcnow()
+        user.last_login = datetime.now(timezone.utc)
         db.commit()
 
         return user
@@ -212,7 +213,7 @@ def verify_api_key(db: Session, api_key: str) -> tuple[User, int]:
         raise AuthenticationError("API key expired")
 
     # Update last used timestamp
-    api_key_obj.last_used_at = datetime.utcnow()
+    api_key_obj.last_used_at = datetime.now(timezone.utc)
     db.commit()
 
     # Get associated user

@@ -14,7 +14,7 @@ Security Enhancement (Sprint 3):
 - Fallback to HS256 for development
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 import secrets
 import logging
@@ -139,7 +139,7 @@ class JWTManager:
         if expires_delta is None:
             expires_delta = timedelta(minutes=settings.jwt_access_token_expire_minutes)
 
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
         jti = secrets.token_urlsafe(32)  # JWT ID for revocation
 
         payload = {
@@ -147,7 +147,7 @@ class JWTManager:
             "tenant_id": tenant_id,
             "roles": roles or ["user"],
             "exp": expire,
-            "iat": datetime.utcnow(),
+            "iat": datetime.now(timezone.utc),
             "type": "access",
             "jti": jti,
         }
@@ -193,14 +193,14 @@ class JWTManager:
         if expires_delta is None:
             expires_delta = timedelta(days=settings.jwt_refresh_token_expire_days)
 
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
         jti = secrets.token_urlsafe(32)
 
         payload = {
             "sub": subject,
             "tenant_id": tenant_id,
             "exp": expire,
-            "iat": datetime.utcnow(),
+            "iat": datetime.now(timezone.utc),
             "type": "refresh",
             "jti": jti,
         }
