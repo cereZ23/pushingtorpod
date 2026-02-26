@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     redis_host: str = "localhost"
     redis_port: int = 16379
     redis_db: int = 0
-    redis_password: Optional[str] = None
+    redis_password: Optional[str] = "easm_redis_dev"
 
     @property
     def redis_url(self) -> str:
@@ -181,9 +181,32 @@ class Settings(BaseSettings):
     sentry_environment: Optional[str] = None
     sentry_traces_sample_rate: float = 0.1
 
+    # Visual Recon (Phase 7 - headless browser screenshots)
+    visual_recon_enabled: bool = True
+    visual_recon_max_screenshots: int = 200  # Max screenshots per pipeline run
+    visual_recon_batch_size: int = 10  # Concurrent browser pages
+    visual_recon_timeout_ms: int = 30000  # Navigation timeout per page in ms
+    visual_recon_viewport_width: int = 1920
+    visual_recon_viewport_height: int = 1080
+    visual_recon_thumb_width: int = 320
+    visual_recon_thumb_height: int = 240
+
+    # Alerting & Notifications
+    alert_cooldown_minutes: int = 60
+    alert_max_per_run: int = 50
+    slack_webhook_url: Optional[str] = None
+    smtp_host: Optional[str] = None
+    smtp_port: int = 587
+    smtp_from: Optional[str] = None
+    smtp_user: Optional[str] = None
+    smtp_password: Optional[str] = None
+    webhook_url: Optional[str] = None
+    webhook_secret: Optional[str] = None
+
     # Feature Flags
     feature_uncover_enabled: bool = True
     feature_nuclei_enabled: bool = True
+    feature_visual_recon_enabled: bool = True
     feature_notifications_enabled: bool = False
 
     @model_validator(mode='after')

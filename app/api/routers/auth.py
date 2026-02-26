@@ -4,12 +4,14 @@ Authentication Router
 Handles user authentication, token management, and user operations
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Any, Dict
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 import logging
 
-from app.api.dependencies import get_db, get_current_user, require_admin
+from app.api.dependencies import get_db, get_current_user, get_current_user_payload, require_admin
 from app.api.schemas.auth import (
     LoginRequest,
     LoginResponse,
@@ -28,9 +30,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 
+from app.rate_limiter import limiter
+
 
 @router.post("/login", response_model=LoginResponse)
+@limiter.limit("5/minute")
 def login(
+    request: Request,
     credentials: LoginRequest,
     db: Session = Depends(get_db)
 ):
@@ -148,20 +154,28 @@ def refresh_token(
 
 @router.post("/logout")
 def logout(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    payload: Dict[str, Any] = Depends(get_current_user_payload),
 ):
     """
-    Logout user (revoke tokens)
+    Logout user (revoke current access token)
 
     Note: Client should also discard tokens locally
 
     Returns:
         - Success message
     """
-    # In production, you might want to implement token blacklisting
-    # For now, tokens will expire naturally
+    jti = payload.get("jti")
+    token_type = payload.get("type", "access")
 
-    logger.info(f"User {current_user.email} logged out")
+    if jti:
+        try:
+            jwt_manager.revoke_token(jti, token_type)
+            logger.info(f"User {current_user.email} logged out, token {jti} revoked")
+        except Exception as e:
+            logger.error(f"Failed to revoke token on logout: {e}")
+    else:
+        logger.warning(f"User {current_user.email} logged out but token had no JTI")
 
     return {
         "success": True,

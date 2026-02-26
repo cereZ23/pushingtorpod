@@ -14,16 +14,13 @@ async function handleLogin() {
   isLoading.value = true
 
   try {
-    console.log('Attempting login with:', email.value)
     await authStore.login({
       email: email.value,
       password: password.value,
     })
-    console.log('Login successful!')
-  } catch (err: any) {
-    console.error('Login error:', err)
-    console.error('Error response:', err.response)
-    error.value = err.response?.data?.detail || err.message || 'Login failed'
+  } catch (err: unknown) {
+    const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
+    error.value = axiosErr.response?.data?.detail || axiosErr.message || 'Login failed'
   } finally {
     isLoading.value = false
   }
@@ -85,6 +82,12 @@ async function handleLogin() {
             <span v-else>Sign in</span>
           </button>
         </div>
+        <p class="text-center text-sm text-gray-600 dark:text-dark-text-secondary">
+          New organization?
+          <router-link to="/onboarding" class="font-medium text-primary-600 hover:text-primary-500">
+            Get started
+          </router-link>
+        </p>
       </form>
     </div>
   </div>

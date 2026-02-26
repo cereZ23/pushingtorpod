@@ -11,6 +11,12 @@ const router = createRouter({
       meta: { requiresAuth: false },
     },
     {
+      path: '/onboarding',
+      name: 'Onboarding',
+      component: () => import('@/views/onboarding/OnboardingView.vue'),
+      meta: { requiresAuth: false },
+    },
+    {
       path: '/',
       component: () => import('@/layouts/DashboardLayout.vue'),
       meta: { requiresAuth: true },
@@ -54,6 +60,61 @@ const router = createRouter({
           path: 'services',
           name: 'ServiceList',
           component: () => import('@/views/services/ServicesView.vue'),
+        },
+        {
+          path: 'scans',
+          name: 'Scans',
+          component: () => import('@/views/scans/ScanManagement.vue'),
+        },
+        {
+          path: 'scans/:runId',
+          name: 'ScanDetail',
+          component: () => import('@/views/scans/ScanDetail.vue'),
+        },
+        {
+          path: 'issues',
+          name: 'Issues',
+          component: () => import('@/views/issues/IssuesView.vue'),
+        },
+        {
+          path: 'issues/:id',
+          name: 'IssueDetail',
+          component: () => import('@/views/issues/IssueDetail.vue'),
+        },
+        {
+          path: 'geomap',
+          name: 'GeoMap',
+          component: () => import('@/views/geomap/GeoMapView.vue'),
+        },
+        {
+          path: 'graph',
+          name: 'SurfaceMap',
+          component: () => import('@/views/graph/SurfaceMap.vue'),
+        },
+        {
+          path: 'exposure',
+          name: 'Exposure',
+          component: () => import('@/views/exposure/ExposureView.vue'),
+        },
+        {
+          path: 'reports',
+          name: 'Reports',
+          component: () => import('@/views/reports/ReportsView.vue'),
+        },
+        {
+          path: 'alerts',
+          name: 'AlertPolicies',
+          component: () => import('@/views/alerts/AlertPolicies.vue'),
+        },
+        {
+          path: 'settings/scan-policies',
+          name: 'ScanPolicies',
+          component: () => import('@/views/settings/ScanPolicies.vue'),
+        },
+        {
+          path: 'settings/suppressions',
+          name: 'SuppressionRules',
+          component: () => import('@/views/settings/SuppressionRules.vue'),
         },
         {
           path: 'admin/onboard-customer',

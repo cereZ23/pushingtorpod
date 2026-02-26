@@ -100,40 +100,22 @@ def list_services(
 
     services = query.all()
 
+    # Build responses with asset info
+    items = []
+    for s in services:
+        resp = ServiceResponse.model_validate(s)
+        if s.asset:
+            resp.asset_identifier = s.asset.identifier
+            resp.asset_type = s.asset.type.value if hasattr(s.asset.type, 'value') else str(s.asset.type)
+        items.append(resp)
+
     return PaginatedResponse(
-        items=[ServiceResponse.model_validate(s) for s in services],
+        items=items,
         total=total,
         page=pagination.page,
         page_size=pagination.page_size,
         total_pages=(total + pagination.page_size - 1) // pagination.page_size
     )
-
-
-@router.get("/{service_id}", response_model=ServiceResponse)
-def get_service(
-    tenant_id: int,
-    service_id: int,
-    db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
-):
-    """
-    Get service by ID
-
-    Raises:
-        - 404: Service not found
-    """
-    service = db.query(Service).join(Asset).filter(
-        Service.id == service_id,
-        Asset.tenant_id == tenant_id
-    ).first()
-
-    if not service:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Service not found"
-        )
-
-    return ServiceResponse.model_validate(service)
 
 
 @router.get("/tech-stack", response_model=List[TechnologyStackResponse])
@@ -242,3 +224,30 @@ def get_port_distribution(
         )
         for data in sorted(port_dist.values(), key=lambda x: x['count'], reverse=True)[:50]
     ]
+
+
+@router.get("/{service_id}", response_model=ServiceResponse)
+def get_service(
+    tenant_id: int,
+    service_id: int,
+    db: Session = Depends(get_db),
+    membership = Depends(verify_tenant_access)
+):
+    """
+    Get service by ID
+
+    Raises:
+        - 404: Service not found
+    """
+    service = db.query(Service).join(Asset).filter(
+        Service.id == service_id,
+        Asset.tenant_id == tenant_id
+    ).first()
+
+    if not service:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Service not found"
+        )
+
+    return ServiceResponse.model_validate(service)

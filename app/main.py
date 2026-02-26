@@ -34,13 +34,28 @@ from app.api.routers import (
     endpoints_router,
     findings_router,
     onboarding_router,
-    scanning_router
+    scanning_router,
+    projects_router,
+    dashboard_router,
+    graph_router,
+    exposure_router,
+    issues_router,
+    alert_policies_router,
+    reports_router,
+    remediation_router,
+    suppressions_router,
+    retest_router,
+    dnstwist_router,
+    threat_intel_admin_router,
+    threat_intel_tenant_router,
+    tickets_router,
+    geomap_router,
 )
 
 logger = logging.getLogger(__name__)
 
-# Initialize rate limiter
-limiter = Limiter(key_func=get_remote_address)
+# Import shared rate limiter instance
+from app.rate_limiter import limiter
 
 # Create FastAPI app with comprehensive metadata
 app = FastAPI(
@@ -343,6 +358,21 @@ app.include_router(certificates_router)
 app.include_router(endpoints_router)
 app.include_router(findings_router)
 app.include_router(scanning_router)
+app.include_router(projects_router)
+app.include_router(dashboard_router)
+app.include_router(graph_router)
+app.include_router(exposure_router)
+app.include_router(issues_router)
+app.include_router(alert_policies_router)
+app.include_router(reports_router)
+app.include_router(remediation_router)
+app.include_router(suppressions_router)
+app.include_router(retest_router)
+app.include_router(dnstwist_router)
+app.include_router(threat_intel_admin_router)
+app.include_router(threat_intel_tenant_router)
+app.include_router(tickets_router)
+app.include_router(geomap_router)
 
 
 # Startup and shutdown events

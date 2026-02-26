@@ -2,12 +2,23 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (includes WeasyPrint/Cairo requirements)
 RUN apt-get update && apt-get install -y \
     gcc \
     postgresql-client \
     curl \
+    libcairo2 \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libgdk-pixbuf-2.0-0 \
+    libffi-dev \
+    shared-mime-info \
+    fonts-liberation \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
+
+# Use non-interactive Matplotlib backend
+ENV MPLBACKEND=Agg
 
 # Copy requirements
 COPY requirements.txt .
@@ -22,8 +33,18 @@ COPY alembic ./alembic
 # Copy application code
 COPY app /app/app
 
+# Create non-root user
+RUN groupadd --gid 1000 appuser && \
+    useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
+
 # Create directory for RSA keys (will be auto-generated if not exist)
-RUN mkdir -p /app/keys && chmod 700 /app/keys
+RUN mkdir -p /app/keys && chown appuser:appuser /app/keys && chmod 700 /app/keys
+
+# Set ownership of app directory
+RUN chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
 
 # Expose port
 EXPOSE 8000
@@ -32,5 +53,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run migrations and start API
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"]
+# Run migrations and start API (removed --reload for production)
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
