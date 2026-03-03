@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <style>{{ css }}</style>
+</head>
+<body>
+
+<!-- Running elements (positioned via CSS running()) -->
+<div class="running-header-left">
+    <div class="running-header-line">EASM Technical Report</div>
+</div>
+<div class="running-header-right">
+    <div class="running-header-line">{{ tenant_name }} &mdash; {{ generated_at }}</div>
+</div>
+<span class="report-date">{{ generated_at }}</span>
+
+<!-- ========================================================================
+     COVER PAGE
+     ======================================================================== -->
+<div class="cover">
+    <!-- Indigo vertical spine -- brand signature -->
+    <div class="cover-spine"></div>
+
+    <!-- Subtle circuit-board grid pattern -->
+    <svg class="cover-grid" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 800" preserveAspectRatio="xMidYMid slice">
+        <defs>
+            <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#6366F1" stroke-width="0.5"/>
+            </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#grid)"/>
+        <circle cx="120" cy="160" r="3" fill="#6366F1"/>
+        <circle cx="280" cy="80" r="2" fill="#6366F1"/>
+        <circle cx="400" cy="240" r="3" fill="#6366F1"/>
+        <circle cx="200" cy="400" r="2" fill="#6366F1"/>
+        <circle cx="480" cy="360" r="3" fill="#6366F1"/>
+        <circle cx="320" cy="560" r="2" fill="#6366F1"/>
+        <circle cx="160" cy="680" r="3" fill="#6366F1"/>
+        <circle cx="440" cy="640" r="2" fill="#6366F1"/>
+        <line x1="120" y1="160" x2="280" y2="80" stroke="#6366F1" stroke-width="0.5"/>
+        <line x1="280" y1="80" x2="400" y2="240" stroke="#6366F1" stroke-width="0.5"/>
+        <line x1="200" y1="400" x2="480" y2="360" stroke="#6366F1" stroke-width="0.5"/>
+        <line x1="320" y1="560" x2="440" y2="640" stroke="#6366F1" stroke-width="0.5"/>
+    </svg>
+
+    <!-- TLP banner -->
+    <div class="cover-tlp tlp-amber">TLP:AMBER &mdash; Limited Distribution</div>
+
+    <div class="cover-content">
+        <div class="cover-brand">PUSHINGTORPOD</div>
+        <h1>Technical<br>Assessment</h1>
+        <p class="cover-subtitle">Detailed Findings Report</p>
+        <div class="cover-divider"></div>
+
+        <div class="cover-risk-display">
+            <div class="cover-risk-score">{{ "%.0f"|format(risk_score) }}<span class="cover-grade-badge grade-{{ risk_grade|lower }}">{{ risk_grade }}</span></div>
+            <div class="cover-risk-label">Risk Score / 100</div>
+        </div>
+
+        <div class="cover-meta">
+            <div class="cover-meta-row">
+                <div class="cover-meta-item">
+                    <span class="meta-key">Organization</span>
+                    <span class="meta-val">{{ tenant_name }}</span>
+                </div>
+                <div class="cover-meta-item">
+                    <span class="meta-key">Date</span>
+                    <span class="meta-val">{{ generated_at }}</span>
+                </div>
+                <div class="cover-meta-item">
+                    <span class="meta-key">Report ID</span>
+                    <span class="meta-val">{{ report_id }}</span>
+                </div>
+                <div class="cover-meta-item">
+                    <span class="meta-key">Total Findings</span>
+                    <span class="meta-val">{{ findings|length }}</span>
+                </div>
+            </div>
+
+            <div class="cover-classification">
+                <span class="cover-classification-badge">Confidential</span>
+                <span class="cover-classification-line"></span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ========================================================================
+     TABLE OF CONTENTS
+     ======================================================================== -->
+<div class="toc">
+    <div class="toc-header">Contents</div>
+    <div class="toc-header-line"></div>
+    <div class="toc-list">
+        <div class="toc-item"><a href="#executive-summary">1. Executive Summary</a></div>
+        <div class="toc-item"><a href="#risk-overview">2. Risk Overview</a></div>
+        <div class="toc-item toc-sub"><a href="#risk-overview">2.1 Risk Score and Severity Breakdown</a></div>
+        <div class="toc-item toc-sub"><a href="#asset-distribution">2.2 Asset Distribution and Trend</a></div>
+        <div class="toc-item"><a href="#top-issues">3. Top Issues</a></div>
+        <div class="toc-item"><a href="#recommendations">4. Recommendations</a></div>
+        <div class="toc-item"><a href="#detailed-findings">5. Detailed Findings</a></div>
+        {% for sev in severity_order %}
+        {% if grouped_findings.get(sev) %}
+        <div class="toc-item toc-sub"><a href="#findings-{{ sev }}">5.{{ loop.index }} {{ sev|capitalize }} Severity ({{ grouped_findings[sev]|length }})</a></div>
+        {% endif %}
+        {% endfor %}
+    </div>
+</div>
+
+<!-- ========================================================================
+     1. EXECUTIVE SUMMARY
+     ======================================================================== -->
+<h2 id="executive-summary"><span class="section-number">1</span> Executive Summary</h2>
+<div class="section-rule"></div>
+
+<div class="kpi-grid">
+    <div class="kpi-card accent-risk">
+        <div class="kpi-label">Risk Score</div>
+        <div class="kpi-value">{{ "%.0f"|format(risk_score) }}</div>
+        <div class="kpi-sub">out of 100</div>
+    </div>
+    <div class="kpi-card accent-grade">
+        <div class="kpi-label">Security Grade</div>
+        <div class="kpi-value grade-{{ risk_grade|lower }}">{{ risk_grade }}</div>
+        <div class="kpi-sub">overall rating</div>
+    </div>
+    <div class="kpi-card accent-assets">
+        <div class="kpi-label">Total Assets</div>
+        <div class="kpi-value">{{ total_assets }}</div>
+        <div class="kpi-sub">monitored</div>
+    </div>
+    <div class="kpi-card accent-open">
+        <div class="kpi-label">Open Findings</div>
+        <div class="kpi-value">{{ open_findings }}</div>
+        <div class="kpi-sub">of {{ total_findings }} total</div>
+    </div>
+</div>
+
+<p class="section-intro">
+    This report provides a comprehensive technical analysis of the external attack surface
+    for <strong>{{ tenant_name }}</strong>. The platform monitors
+    <strong>{{ total_assets }}</strong> assets and has identified
+    <strong>{{ open_findings }}</strong> open finding{{ "s" if open_findings != 1 else "" }}
+    across <strong>{{ total_findings }}</strong> total detections.
+    The composite risk score is <strong>{{ "%.0f"|format(risk_score) }}/100</strong>
+    (Grade <strong>{{ risk_grade }}</strong>).
+    This technical report includes <strong>{{ findings|length }}</strong> detailed finding records
+    with full evidence and remediation guidance.
+</p>
+
+{% if severity_counts.get("critical", 0) > 0 %}
+<div class="callout-box callout-danger no-break">
+    <div class="callout-title">Immediate Attention Required</div>
+    <div class="callout-text">
+        {{ severity_counts.get("critical", 0) }} critical-severity finding{{ "s" if severity_counts.get("critical", 0) != 1 else "" }}
+        {{ "have" if severity_counts.get("critical", 0) != 1 else "has" }} been identified.
+        Review the detailed findings in Section 5 for evidence and recommended remediation steps.
+    </div>
+</div>
+{% endif %}
+
+<!-- ========================================================================
+     2. RISK OVERVIEW
+     ======================================================================== -->
+<h2 id="risk-overview"><span class="section-number">2</span> Risk Overview</h2>
+<div class="section-rule"></div>
+
+<div class="chart-row">
+    <div class="chart-box">
+        <div class="chart-title">Risk Score Gauge</div>
+        <img src="{{ gauge_chart }}" alt="Risk gauge">
+    </div>
+    <div class="chart-box">
+        <div class="chart-title">Findings by Severity</div>
+        <img src="{{ severity_chart }}" alt="Severity distribution">
+    </div>
+</div>
+
+<h3 id="asset-distribution"><span class="subsection-number">2.2</span> Asset Distribution and Trend</h3>
+
+<div class="chart-row">
+    <div class="chart-box">
+        <div class="chart-title">Asset Distribution by Type</div>
+        <img src="{{ asset_chart }}" alt="Asset types">
+    </div>
+    {% if trend_chart %}
+    <div class="chart-box">
+        <div class="chart-title">Risk Score Trend (30 Days)</div>
+        <img src="{{ trend_chart }}" alt="Risk trend">
+    </div>
+    {% endif %}
+</div>
+
+<!-- Severity breakdown table -->
+<h3>Severity Breakdown</h3>
+
+<table>
+    <thead>
+        <tr>
+            <th>Severity</th>
+            <th class="text-right" style="width: 18%">Count</th>
+            <th class="text-right" style="width: 18%">% of Total</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for sev in ["critical", "high", "medium", "low", "info"] %}
+        <tr>
+            <td><span class="badge badge-{{ sev }}">{{ sev|upper }}</span></td>
+            <td class="text-right" style="font-weight: 600">{{ severity_counts.get(sev, 0) }}</td>
+            <td class="text-right">
+                {% if total_findings > 0 %}
+                {{ "%.1f"|format(severity_counts.get(sev, 0) / total_findings * 100) }}%
+                {% else %}
+                0.0%
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        <tr class="table-total">
+            <td>Total</td>
+            <td class="text-right">{{ total_findings }}</td>
+            <td class="text-right">100%</td>
+        </tr>
+    </tbody>
+</table>
+
+<!-- ========================================================================
+     3. TOP ISSUES
+     ======================================================================== -->
+<h2 id="top-issues"><span class="section-number">3</span> Top Issues</h2>
+<div class="section-rule"></div>
+
+{% if top_issues %}
+<p class="section-intro">
+    The following table lists the highest-priority findings ranked by severity and CVSS score.
+</p>
+
+<table>
+    <thead>
+        <tr>
+            <th style="width: 4%; text-align: center">#</th>
+            <th style="width: 26%">Finding</th>
+            <th style="width: 10%">Severity</th>
+            <th style="width: 12%">CVE</th>
+            <th style="width: 7%" class="text-right">CVSS</th>
+            <th style="width: 27%">Affected Asset</th>
+            <th style="width: 14%">First Seen</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for issue in top_issues %}
+        <tr>
+            <td class="rank-cell" style="text-align: center">{{ loop.index }}</td>
+            <td style="font-weight: 600; color: #1E293B">{{ issue.name }}</td>
+            <td><span class="badge badge-{{ issue.severity }}">{{ issue.severity|upper }}</span></td>
+            <td style="font-size: 8pt; font-weight: 700; color: #991B1B">{{ issue.cve_id if issue.cve_id else "&mdash;" }}</td>
+            <td class="text-right" style="font-weight: 700; color: #475569">{{ "%.1f"|format(issue.cvss_score) if issue.cvss_score else "&mdash;" }}</td>
+            <td class="asset-cell">{{ issue.asset_identifier }}</td>
+            <td style="font-size: 8pt; color: #64748B">{{ issue.first_seen }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="callout-box callout-info no-break">
+    <div class="callout-title">No Open Issues</div>
+    <div class="callout-text">No open findings were detected.</div>
+</div>
+{% endif %}
+
+<!-- ========================================================================
+     4. RECOMMENDATIONS
+     ======================================================================== -->
+<h2 id="recommendations"><span class="section-number">4</span> Recommendations</h2>
+<div class="section-rule"></div>
+
+<p class="section-intro">
+    Prioritized remediation recommendations based on current findings.
+</p>
+
+<div class="rec-list">
+{% for rec in recommendations %}
+<div class="recommendation">
+    <div class="rec-priority-badge">{{ rec.priority }}</div>
+    <div class="rec-body">
+        <div class="rec-title">{{ rec.title }}</div>
+        <div class="rec-desc">{{ rec.description }}</div>
+    </div>
+</div>
+{% endfor %}
+</div>
+
+<!-- ========================================================================
+     5. DETAILED FINDINGS
+     ======================================================================== -->
+<div class="page-break"></div>
+<h2 id="detailed-findings"><span class="section-number">5</span> Detailed Findings ({{ findings|length }})</h2>
+<div class="section-rule"></div>
+
+{% if findings %}
+
+<p class="section-intro">
+    Each finding below includes metadata, evidence, and remediation guidance.
+    Findings are grouped by severity level and presented in descending order of risk.
+</p>
+
+{% for sev in severity_order %}
+{% set sev_findings = grouped_findings.get(sev, []) %}
+{% if sev_findings %}
+
+<div class="severity-group">
+    <div class="severity-group-header sev-{{ sev }}" id="findings-{{ sev }}">
+        <span>{{ sev|capitalize }} Severity</span>
+        <span class="sev-count">&mdash; {{ sev_findings|length }} finding{{ "s" if sev_findings|length != 1 else "" }}</span>
+    </div>
+</div>
+
+{% for f in sev_findings %}
+<div class="finding-card sev-{{ f.severity }}">
+    <div class="finding-card-body">
+
+        <!-- Header row: title + badge + CVSS -->
+        <div class="finding-header">
+            <span class="finding-title">{{ f.name }}</span>
+            <span class="badge badge-{{ f.severity }}">{{ f.severity|upper }}</span>
+            {% if f.cvss_score %}
+            <span class="finding-cvss {% if f.cvss_score >= 9.0 %}cvss-critical{% elif f.cvss_score >= 7.0 %}cvss-high{% elif f.cvss_score >= 4.0 %}cvss-medium{% elif f.cvss_score > 0 %}cvss-low{% else %}cvss-none{% endif %}">CVSS {{ "%.1f"|format(f.cvss_score) }}</span>
+            {% endif %}
+        </div>
+
+        <!-- Structured metadata grid -->
+        <div class="finding-meta">
+            <div class="meta-item">
+                <span class="meta-label">Asset</span>
+                <span class="meta-value">{{ f.asset_identifier }}</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Asset Type</span>
+                <span class="meta-value">{{ f.asset_type }}</span>
+            </div>
+            {% if f.cve_id %}
+            <div class="meta-item">
+                <span class="meta-label">CVE</span>
+                <span class="meta-value" style="font-weight: 700; color: #991B1B">{{ f.cve_id }}</span>
+            </div>
+            {% endif %}
+            {% if f.template_id %}
+            <div class="meta-item">
+                <span class="meta-label">Template</span>
+                <span class="meta-value" style="font-family: 'Liberation Mono', 'DejaVu Sans Mono', monospace; font-size: 7.5pt">{{ f.template_id }}</span>
+            </div>
+            {% endif %}
+            <div class="meta-item">
+                <span class="meta-label">Source</span>
+                <span class="meta-value">{{ f.source }}</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Status</span>
+                <span class="meta-value"><span class="badge badge-{{ f.status }}">{{ f.status|upper }}</span></span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">First Seen</span>
+                <span class="meta-value">{{ f.first_seen }}</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Last Seen</span>
+                <span class="meta-value">{{ f.last_seen }}</span>
+            </div>
+            {% if f.occurrence_count and f.occurrence_count > 1 %}
+            <div class="meta-item">
+                <span class="meta-label">Occurrences</span>
+                <span class="meta-value" style="font-weight: 700">{{ f.occurrence_count }}</span>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Evidence block -->
+        {% if f.evidence %}
+        <div class="finding-section">
+            <div class="section-label">Evidence</div>
+            <div class="evidence-block">{{ f.evidence_text }}</div>
+        </div>
+        {% endif %}
+
+        <!-- Remediation block -->
+        {% if f.remediation %}
+        <div class="finding-section">
+            <div class="section-label">Remediation</div>
+            <div class="remediation-block">
+                <p class="remediation-text">{{ f.remediation }}</p>
+            </div>
+        </div>
+        {% endif %}
+
+    </div>
+</div>
+{% endfor %}
+
+{% endif %}
+{% endfor %}
+
+{% else %}
+<div class="callout-box callout-info no-break">
+    <div class="callout-title">No Findings</div>
+    <div class="callout-text">No findings match the current report filters.</div>
+</div>
+{% endif %}
+
+<!-- ========================================================================
+     FOOTER / DISCLAIMER
+     ======================================================================== -->
+<div class="report-footer">
+    <strong>Disclaimer:</strong> This report is generated automatically by the EASM platform
+    and reflects the state of the external attack surface at the time of generation.
+    Findings are based on automated scanning and may require manual validation.
+    Evidence snippets may be truncated for readability; full evidence is available in the platform.
+    This document is classified as <strong>Confidential</strong> and is intended
+    solely for authorized recipients within {{ tenant_name }}.
+</div>
+
+</body>
+</html>

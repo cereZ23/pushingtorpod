@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useTenantStore } from '@/stores/tenant'
 import { serviceApi } from '@/api/services'
 import type { Service, PaginatedResponse } from '@/api/types'
+import { formatDate } from '@/utils/formatters'
+import { useWindowedPagination } from '@/composables/usePagination'
 
 const tenantStore = useTenantStore()
 
@@ -21,12 +23,18 @@ const hasTlsFilter = ref('')
 
 const currentTenantId = computed(() => tenantStore.currentTenantId)
 
+// AbortController for cancelling in-flight API requests on navigation
+let abortController: AbortController | null = null
+
+const { pages: paginationPages } = useWindowedPagination(currentPage, totalPages)
+
 onMounted(async () => {
   await loadServices()
 })
 
-watch(currentTenantId, () => {
-  if (currentTenantId.value) {
+watch(currentTenantId, (newId, oldId) => {
+  if (newId && oldId && newId !== oldId) {
+    currentPage.value = 1
     loadServices()
   }
 })
@@ -37,6 +45,9 @@ async function loadServices() {
     isLoading.value = false
     return
   }
+
+  abortController?.abort()
+  abortController = new AbortController()
 
   isLoading.value = true
   error.value = ''
@@ -55,12 +66,17 @@ async function loadServices() {
     totalItems.value = response.meta.total
     totalPages.value = response.meta.total_pages
   } catch (err: unknown) {
+    if (err instanceof Error && (err.name === 'CanceledError' || err.name === 'AbortError')) return
     const axiosErr = err as { message?: string }
     error.value = axiosErr.message || 'Failed to load services'
   } finally {
     isLoading.value = false
   }
 }
+
+onUnmounted(() => {
+  abortController?.abort()
+})
 
 function handleSearch() {
   currentPage.value = 1
@@ -70,11 +86,6 @@ function handleSearch() {
 function goToPage(page: number) {
   currentPage.value = page
   loadServices()
-}
-
-function formatDate(dateString: string): string {
-  const date = new Date(dateString)
-  return date.toLocaleDateString()
 }
 
 function getPortColor(port: number): string {
@@ -159,12 +170,12 @@ function getPortColor(port: number): string {
     </div>
 
     <!-- Loading State -->
-    <div v-if="isLoading" class="flex items-center justify-center h-64">
+    <div v-if="isLoading" role="status" class="flex items-center justify-center h-64">
       <div class="text-gray-600 dark:text-dark-text-secondary">Loading services...</div>
     </div>
 
     <!-- Error State -->
-    <div v-else-if="error" class="bg-red-50 dark:bg-red-900/20 p-4 rounded-md">
+    <div v-else-if="error" role="alert" class="bg-red-50 dark:bg-red-900/20 p-4 rounded-md">
       <p class="text-red-800 dark:text-red-200">{{ error }}</p>
     </div>
 
@@ -174,25 +185,25 @@ function getPortColor(port: number): string {
         <table class="min-w-full divide-y divide-gray-200 dark:divide-dark-border">
           <thead class="bg-gray-50 dark:bg-dark-bg-tertiary">
             <tr>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 Asset
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 Port
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 Protocol
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 Product
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 HTTP Info
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 TLS
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 First Seen
               </th>
             </tr>
@@ -267,7 +278,7 @@ function getPortColor(port: number): string {
 
       <!-- Empty State -->
       <div v-if="services.length === 0" class="flex flex-col items-center justify-center py-16 px-4">
-        <svg class="w-16 h-16 text-gray-300 dark:text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+        <svg aria-hidden="true" class="w-16 h-16 text-gray-300 dark:text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
           <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z" />
         </svg>
         <h3 class="text-lg font-semibold text-gray-900 dark:text-dark-text-primary mb-1">No services detected yet</h3>
@@ -278,7 +289,7 @@ function getPortColor(port: number): string {
           to="/scans"
           class="inline-flex items-center px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-md hover:bg-primary-700 transition-colors"
         >
-          <svg class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <svg aria-hidden="true" class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
           </svg>
           Go to Scans
@@ -295,27 +306,33 @@ function getPortColor(port: number): string {
             <button
               @click="goToPage(currentPage - 1)"
               :disabled="currentPage === 1"
-              class="px-3 py-1 border border-gray-300 dark:border-dark-border rounded-md text-sm text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary disabled:opacity-50 disabled:cursor-not-allowed"
+              class="px-3 py-1 border border-gray-300 dark:border-dark-border rounded-md text-sm text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
               Previous
             </button>
-            <button
-              v-for="page in Math.min(5, totalPages)"
-              :key="page"
-              @click="goToPage(page)"
-              :class="[
-                'px-3 py-1 border rounded-md text-sm',
-                page === currentPage
-                  ? 'bg-primary-600 text-white border-primary-600'
-                  : 'border-gray-300 dark:border-dark-border text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary'
-              ]"
-            >
-              {{ page }}
-            </button>
+            <template v-for="pg in paginationPages" :key="pg.value">
+              <span
+                v-if="pg.type === 'ellipsis'"
+                class="px-3 py-1 text-sm text-gray-500 dark:text-dark-text-secondary"
+              >...</span>
+              <button
+                v-else
+                @click="goToPage(pg.value)"
+                :aria-current="pg.value === currentPage ? 'page' : undefined"
+                :class="[
+                  'px-3 py-1 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500',
+                  pg.value === currentPage
+                    ? 'bg-primary-600 text-white border-primary-600'
+                    : 'border-gray-300 dark:border-dark-border text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary'
+                ]"
+              >
+                {{ pg.value }}
+              </button>
+            </template>
             <button
               @click="goToPage(currentPage + 1)"
               :disabled="currentPage === totalPages"
-              class="px-3 py-1 border border-gray-300 dark:border-dark-border rounded-md text-sm text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary disabled:opacity-50 disabled:cursor-not-allowed"
+              class="px-3 py-1 border border-gray-300 dark:border-dark-border rounded-md text-sm text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
               Next
             </button>

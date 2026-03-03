@@ -1,9 +1,19 @@
+# =============================================================================
+# EASM Platform - Docker Compose
+# =============================================================================
+# IMPORTANT: Default passwords below are for LOCAL DEVELOPMENT ONLY.
+# In production, create a .env file and override ALL credentials.
+# See .env.example for the full list of configurable variables.
+# =============================================================================
+
 services:
   postgres:
     image: postgres:15-alpine
     container_name: easm-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_DB: easm
+      # DEV-ONLY defaults -- override via .env in production
       POSTGRES_USER: easm
       POSTGRES_PASSWORD: ${DB_PASSWORD:-easm_password}
     volumes:
@@ -16,13 +26,27 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - easm-network
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     container_name: easm-redis
-    command: redis-server --requirepass ${REDIS_PASSWORD:-easm_redis_dev}
+    restart: unless-stopped
+    # DEV-ONLY default password -- override REDIS_PASSWORD via .env in production
+    command: redis-server --requirepass ${REDIS_PASSWORD:-easm_redis_dev} --maxmemory 200mb --maxmemory-policy allkeys-lru
     ports:
       - "127.0.0.1:16379:6379"
     volumes:
@@ -32,14 +56,29 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - easm-network
 
   minio:
-    image: minio/minio:latest
+    # Pin to a release tag; check https://hub.docker.com/r/minio/minio/tags for updates
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
     container_name: easm-minio
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
+      # DEV-ONLY defaults -- override MINIO_USER and MINIO_PASSWORD via .env in production
       MINIO_ROOT_USER: ${MINIO_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-minioadmin123}
     ports:
@@ -52,6 +91,18 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - easm-network
 
@@ -60,6 +111,7 @@ services:
       context: .
       dockerfile: Dockerfile.api
     container_name: easm-api
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -72,6 +124,7 @@ services:
       POSTGRES_PORT: 5432
       POSTGRES_DB: easm
       POSTGRES_USER: easm
+      # DEV-ONLY defaults -- override via .env in production
       POSTGRES_PASSWORD: ${DB_PASSWORD:-easm_password}
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -79,13 +132,30 @@ services:
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_USER:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_PASSWORD:-minioadmin123}
+      # CRITICAL: override JWT_SECRET_KEY in production via .env
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-this-secret-key-in-production}
       CORS_ORIGINS: '["http://localhost:3000","http://localhost:13000"]'
+      API_WORKERS: ${API_WORKERS:-1}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "18000:8000"
     volumes:
       - ./app:/app/app
+      - ./alembic:/app/alembic
       - jwt-keys:/app/keys
+      - ./data:/app/data  # Mount data dir (GeoLite2 .mmdb, resolvers, wordlists)
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+        reservations:
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - easm-network
 
@@ -95,6 +165,7 @@ services:
       dockerfile: Dockerfile
       target: development
     container_name: easm-ui
+    restart: unless-stopped
     depends_on:
       api:
         condition: service_healthy
@@ -105,6 +176,18 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - easm-network
 
@@ -113,6 +196,7 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     container_name: easm-worker
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -125,6 +209,7 @@ services:
       POSTGRES_PORT: 5432
       POSTGRES_DB: easm
       POSTGRES_USER: easm
+      # DEV-ONLY defaults -- override via .env in production
       POSTGRES_PASSWORD: ${DB_PASSWORD:-easm_password}
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -135,6 +220,19 @@ services:
     volumes:
       - ./app:/app/app
       - ./nuclei-templates:/home/appuser/nuclei-templates
+      - ./data:/app/data  # Mount data dir (GeoLite2 .mmdb, resolvers, wordlists)
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: '2.0'
+        reservations:
+          memory: 1G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - easm-network
 
@@ -143,6 +241,7 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     container_name: easm-beat
+    restart: unless-stopped
     command: celery -A app.celery_app beat --loglevel=info
     depends_on:
       - redis
@@ -152,6 +251,7 @@ services:
       POSTGRES_PORT: 5432
       POSTGRES_DB: easm
       POSTGRES_USER: easm
+      # DEV-ONLY defaults -- override via .env in production
       POSTGRES_PASSWORD: ${DB_PASSWORD:-easm_password}
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -161,6 +261,18 @@ services:
       MINIO_SECRET_KEY: ${MINIO_PASSWORD:-minioadmin123}
     volumes:
       - ./app:/app/app
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+        reservations:
+          memory: 64M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - easm-network
 

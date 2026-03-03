@@ -6,6 +6,8 @@ import { findingApi } from '@/api/findings'
 import { assetApi } from '@/api/assets'
 import type { Finding, Asset } from '@/api/types'
 import { ArrowLeftIcon } from '@heroicons/vue/24/outline'
+import { getSeverityBadgeClass, getFindingStatusBadgeClass } from '@/utils/severity'
+import { formatDate } from '@/utils/formatters'
 
 const route = useRoute()
 const router = useRouter()
@@ -15,7 +17,48 @@ const findingId = computed(() => parseInt(route.params.id as string))
 const finding = ref<Finding | null>(null)
 const asset = ref<Asset | null>(null)
 const isLoading = ref(true)
+const isUpdatingStatus = ref(false)
+const statusError = ref('')
 const error = ref('')
+
+type FindingStatus = 'open' | 'suppressed' | 'fixed'
+
+const statusTransitions = computed((): { label: string; status: FindingStatus; cls: string }[] => {
+  if (!finding.value) return []
+  const current = finding.value.status as FindingStatus
+  const transitions: { label: string; status: FindingStatus; cls: string }[] = []
+
+  if (current === 'open') {
+    transitions.push(
+      { label: 'Suppress', status: 'suppressed', cls: 'bg-yellow-50 text-yellow-700 border-yellow-200 hover:bg-yellow-100 dark:bg-yellow-900/10 dark:text-yellow-400 dark:border-yellow-800' },
+      { label: 'Mark Fixed', status: 'fixed', cls: 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100 dark:bg-green-900/10 dark:text-green-400 dark:border-green-800' },
+    )
+  } else if (current === 'suppressed') {
+    transitions.push(
+      { label: 'Reopen', status: 'open', cls: 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100 dark:bg-red-900/10 dark:text-red-400 dark:border-red-800' },
+      { label: 'Mark Fixed', status: 'fixed', cls: 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100 dark:bg-green-900/10 dark:text-green-400 dark:border-green-800' },
+    )
+  } else if (current === 'fixed') {
+    transitions.push(
+      { label: 'Reopen', status: 'open', cls: 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100 dark:bg-red-900/10 dark:text-red-400 dark:border-red-800' },
+    )
+  }
+  return transitions
+})
+
+async function updateFindingStatus(newStatus: FindingStatus): Promise<void> {
+  if (!finding.value || !tenantStore.currentTenantId) return
+  isUpdatingStatus.value = true
+  statusError.value = ''
+  try {
+    finding.value = await findingApi.update(tenantStore.currentTenantId, finding.value.id, { status: newStatus })
+  } catch (err: unknown) {
+    const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
+    statusError.value = axiosErr.response?.data?.detail || axiosErr.message || 'Failed to update status'
+  } finally {
+    isUpdatingStatus.value = false
+  }
+}
 
 async function loadFindingDetails() {
   try {
@@ -58,27 +101,11 @@ async function loadFindingDetails() {
 }
 
 function getSeverityColor(severity: string): string {
-  const colors: Record<string, string> = {
-    critical: 'bg-severity-critical text-white',
-    high: 'bg-severity-high text-white',
-    medium: 'bg-severity-medium text-white',
-    low: 'bg-severity-low text-white',
-    info: 'bg-severity-info text-white',
-  }
-  return colors[severity.toLowerCase()] || 'bg-gray-500 text-white'
+  return getSeverityBadgeClass(severity)
 }
 
 function getStatusColor(status: string): string {
-  const colors: Record<string, string> = {
-    open: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
-    suppressed: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300',
-    fixed: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
-  }
-  return colors[status.toLowerCase()] || 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300'
-}
-
-function formatDate(dateString: string): string {
-  return new Date(dateString).toLocaleString()
+  return getFindingStatusBadgeClass(status)
 }
 
 // Threat intelligence helpers
@@ -147,12 +174,12 @@ onMounted(() => {
     </div>
 
     <!-- Error State -->
-    <div v-if="error" class="rounded-md bg-red-50 dark:bg-red-900/20 p-4 mb-6">
+    <div v-if="error" role="alert" class="rounded-md bg-red-50 dark:bg-red-900/20 p-4 mb-6">
       <p class="text-sm text-red-800 dark:text-red-200">{{ error }}</p>
     </div>
 
     <!-- Loading State -->
-    <div v-if="isLoading" class="bg-white dark:bg-dark-bg-secondary shadow rounded-lg p-8">
+    <div v-if="isLoading" role="status" class="bg-white dark:bg-dark-bg-secondary shadow rounded-lg p-8">
       <div class="animate-pulse space-y-4">
         <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-full"></div>
         <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4"></div>
@@ -202,6 +229,31 @@ onMounted(() => {
               CVSS: {{ finding.cvss_score }}
             </span>
           </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="flex items-center gap-2 flex-wrap mt-4 mb-4">
+          <button
+            v-for="transition in statusTransitions"
+            :key="transition.status"
+            @click="updateFindingStatus(transition.status)"
+            :disabled="isUpdatingStatus"
+            class="inline-flex items-center px-3 py-1.5 text-sm font-medium border rounded-md transition-colors disabled:opacity-50"
+            :class="transition.cls"
+          >
+            {{ transition.label }}
+          </button>
+          <router-link
+            to="/issues"
+            class="inline-flex items-center px-3 py-1.5 text-sm font-medium border border-gray-300 dark:border-dark-border rounded-md text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary"
+          >
+            View Issues
+          </router-link>
+        </div>
+
+        <!-- Status Update Error -->
+        <div v-if="statusError" class="rounded-md bg-red-50 dark:bg-red-900/20 p-3 mb-4">
+          <p class="text-sm text-red-800 dark:text-red-200">{{ statusError }}</p>
         </div>
 
         <h2 class="text-xl font-semibold text-gray-900 dark:text-dark-text-primary mb-4">

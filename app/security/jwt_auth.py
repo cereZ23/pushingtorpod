@@ -85,7 +85,10 @@ class JWTManager:
                 host=settings.redis_host,
                 port=settings.redis_port,
                 db=settings.redis_db,
-                decode_responses=True
+                password=settings.redis_password,
+                decode_responses=True,
+                socket_connect_timeout=2,
+                socket_timeout=2,
             )
 
         self.bearer = HTTPBearer()

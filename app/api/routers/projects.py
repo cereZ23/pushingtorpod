@@ -1239,6 +1239,54 @@ def get_scan_run_progress_by_id(
     )
 
 
+@router.delete("/scans/{run_id}", response_model=SuccessResponse)
+def delete_scan_run_by_id(
+    tenant_id: int,
+    run_id: int,
+    db: Session = Depends(get_db),
+    membership=Depends(verify_tenant_access),
+):
+    """Delete a scan run and its phase results (scoped to tenant).
+
+    Only completed, failed, or cancelled scans can be deleted.
+    Running/pending scans must be cancelled first.
+    """
+    if not membership.has_permission("admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin permission required",
+        )
+
+    scan_run = db.query(ScanRun).filter(
+        ScanRun.id == run_id,
+        ScanRun.tenant_id == tenant_id,
+    ).first()
+    if not scan_run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Scan run not found",
+        )
+
+    if scan_run.status in (ScanRunStatus.PENDING, ScanRunStatus.RUNNING):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete a running or pending scan. Cancel it first.",
+        )
+
+    # Delete phase results first (FK constraint)
+    db.query(PhaseResult).filter(PhaseResult.scan_run_id == run_id).delete()
+    db.query(Observation).filter(Observation.scan_run_id == run_id).delete()
+    db.delete(scan_run)
+    db.commit()
+
+    logger.info(f"Deleted scan run {run_id} (tenant {tenant_id})")
+
+    return SuccessResponse(
+        success=True,
+        message=f"Scan run {run_id} deleted",
+    )
+
+
 @router.post("/scans/{run_id}/cancel", response_model=SuccessResponse)
 def cancel_scan_run_by_id(
     tenant_id: int,

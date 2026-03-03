@@ -1,296 +1,435 @@
-# EASM Platform - External Attack Surface Management
+# PushingTorPod — External Attack Surface Management
 
-Multi-tenant EASM platform built around ProjectDiscovery tools for continuous security reconnaissance.
+Self-hosted EASM platform for continuous discovery, enrichment, and vulnerability scanning of your external attack surface. Built on [ProjectDiscovery](https://projectdiscovery.io/) open-source tools with a multi-tenant architecture.
 
-## Sprint 1 Status: Core Infrastructure & Discovery Pipeline ✅
+## What It Does
 
-### Completed Features
+PushingTorPod continuously monitors your internet-facing assets:
 
-- ✅ Docker Compose environment (PostgreSQL, Redis, MinIO, API, Worker, Beat)
-- ✅ Complete database schema with multi-tenant isolation
-- ✅ Celery task queue with scheduler (Beat)
-- ✅ Discovery pipeline: Uncover → Subfinder + Amass (parallel) → DNSX
-- ✅ MinIO storage for raw tool outputs
-- ✅ Asset persistence with event tracking
-- ✅ Database migrations (Alembic)
+1. **Discovery** — Finds subdomains, IPs, and services using Subfinder, Amass, DNSX, Uncover
+2. **Enrichment** — Probes HTTP (HTTPX), scans ports (Naabu), inspects TLS (TLSX), crawls pages (Katana), fingerprints services (fingerprintx), takes screenshots (Playwright)
+3. **Intelligence** — WHOIS lookups, GeoIP (MaxMind), CDN/WAF detection, DNS permutation (dnstwist)
+4. **Vulnerability Scanning** — Nuclei with 3000+ templates, severity gating, adaptive rate limiting
+5. **Risk Scoring** — 3-level scoring engine (CVSS, EPSS, KEV enrichment)
+6. **Alerting** — Slack/Email/Webhook notifications for new assets and critical findings
 
-## Quick Start
+### Key Features
 
-### Prerequisites
-
-- Docker & Docker Compose
-- 8GB+ RAM recommended
-- Ports 5432, 6379, 8000, 9000, 9001 available
-
-### Installation
-
-1. **Clone and setup**
-   ```bash
-   cd easm
-   cp .env.example .env
-   # Edit .env with your credentials
-   ```
-
-2. **Start services**
-   ```bash
-   docker-compose up -d
-   ```
-
-3. **Check status**
-   ```bash
-   docker-compose ps
-   docker-compose logs -f
-   ```
-
-4. **Access services**
-   - API: http://localhost:8000
-   - API Docs: http://localhost:8000/docs
-   - MinIO Console: http://localhost:9001 (minioadmin/minioadmin123)
-
-### Running Discovery
-
-The discovery pipeline runs automatically via Celery Beat:
-- **Daily full discovery**: 2 AM UTC
-- **Critical asset watch**: Every 30 minutes
-
-To manually trigger discovery for a tenant:
-
-```bash
-# Enter worker container
-docker-compose exec worker bash
-
-# Run Python shell
-python
-
-# Trigger discovery
-from app.tasks.discovery import run_full_discovery
-run_full_discovery.apply_async()
-```
-
-### Database Access
-
-```bash
-# Connect to PostgreSQL
-docker-compose exec postgres psql -U easm -d easm
-
-# Check tenants
-SELECT * FROM tenants;
-
-# Check assets
-SELECT id, type, identifier, risk_score FROM assets LIMIT 10;
-
-# Check recent events
-SELECT * FROM events ORDER BY created_at DESC LIMIT 10;
-```
-
-### Adding Seeds
-
-Seeds are the starting points for discovery (domains, ASNs, keywords).
-
-```bash
-# Enter PostgreSQL
-docker-compose exec postgres psql -U easm -d easm
-
-# Add domain seed
-INSERT INTO seeds (tenant_id, type, value, enabled, created_at)
-VALUES (1, 'domain', 'yourdomain.com', true, NOW());
-
-# Add keyword for OSINT (requires API keys in .env)
-INSERT INTO seeds (tenant_id, type, value, enabled, created_at)
-VALUES (1, 'keyword', 'Your Company Name', true, NOW());
-```
-
-### Monitoring Tasks
-
-```bash
-# View Celery workers
-docker-compose exec worker celery -A app.celery_app inspect active
-
-# View scheduled tasks
-docker-compose exec beat celery -A app.celery_app inspect scheduled
-
-# View task results
-docker-compose exec worker celery -A app.celery_app result <task-id>
-```
-
-### MinIO Storage
-
-Raw tool outputs are stored in MinIO:
-
-1. Open MinIO Console: http://localhost:9001
-2. Login: minioadmin / minioadmin123
-3. Browse buckets: `tenant-1`, `tenant-2`, etc.
-4. View raw outputs: `subfinder/`, `dnsx/`, `httpx/`, etc.
+- **16-phase scan pipeline** with adaptive throttling (auto-detects HTTP 429)
+- **Multi-tenant** with full data isolation per tenant
+- **Issue management** — 9-state workflow, SLA tracking, finding correlation
+- **RBAC** — Owner, Admin, Analyst, Viewer roles per tenant
+- **SSO/SAML** authentication + TOTP MFA
+- **Reports** — PDF (4 templates: Executive, Technical, SOC2, ISO27001) and DOCX export
+- **Scheduled reports** — Automated delivery via email (Celery Beat)
+- **Ticketing integration** — Jira, ServiceNow
+- **SIEM export** — Splunk HEC, Azure Sentinel
+- **Audit trail** — Full action logging
+- **Visual recon** — Automated screenshots of discovered web assets
 
 ## Architecture
 
 ```
-Seeds (domains, ASNs, keywords)
-    ↓
-Uncover (OSINT discovery)
-    ↓
-Subfinder + Amass (parallel subdomain enumeration)
-    ↓
-Merge & Deduplicate (30-50% more coverage)
-    ↓
-DNSX (DNS resolution)
-    ↓
-Database (assets, events)
-    ↓
-MinIO (raw outputs)
+                        ┌──────────────┐
+                        │   Vue.js UI  │ :13000
+                        └──────┬───────┘
+                               │
+                        ┌──────▼───────┐
+                        │  FastAPI API  │ :18000
+                        └──┬────┬──┬───┘
+                           │    │  │
+              ┌────────────┘    │  └────────────┐
+              │                 │                │
+       ┌──────▼──────┐  ┌──────▼──────┐  ┌──────▼──────┐
+       │  PostgreSQL  │  │    Redis    │  │    MinIO    │
+       │  (metadata)  │  │ (queue/cache)│  │ (raw output)│
+       └─────────────┘  └──────┬──────┘  └─────────────┘
+                               │
+                        ┌──────▼───────┐
+                        │Celery Workers│ (PD tools)
+                        └──────────────┘
 ```
 
-## Testing
+**Scan Pipeline (16 phases):**
+
+```
+Seeds → Uncover → Subfinder+Amass → DNSX → AlterX+PureDNS
+  → Naabu (ports) → HTTPX (web) → TLSX (certs) → fingerprintx
+  → Visual Recon (screenshots) → Sensitive Paths → Misconfig Checks
+  → Katana (crawl) → Nuclei (vulns) → Risk Scoring → Diff/Alert
+```
+
+## Requirements
+
+- **Docker** and **Docker Compose** (v2+)
+- **8 GB RAM** minimum (16 GB recommended — Nuclei + Playwright are memory-hungry)
+- ~10 GB disk space for Docker images (worker image includes Go tools)
+
+### Optional
+
+- **MaxMind GeoLite2** databases (`GeoLite2-City.mmdb`, `GeoLite2-ASN.mmdb`) for IP geolocation — free account at [maxmind.com](https://www.maxmind.com/en/geolite2/signup)
+- **OSINT API keys** (Shodan, Censys, VirusTotal, SecurityTrails) for enhanced discovery via Uncover
+
+## Installation
+
+### 1. Clone the repository
 
 ```bash
-# Run tests
-docker-compose exec worker pytest
-
-# Run specific test
-docker-compose exec worker pytest tests/test_discovery.py
-
-# Run with coverage
-docker-compose exec worker pytest --cov=app tests/
+git clone https://github.com/cereZ23/pushingtorpod.git
+cd pushingtorpod
 ```
+
+### 2. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and change at minimum:
+
+```bash
+# CRITICAL — change these
+JWT_SECRET_KEY=<generate-with: python3 -c "import secrets; print(secrets.token_urlsafe(64))">
+DB_PASSWORD=<strong-password>
+REDIS_PASSWORD=<strong-password>
+MINIO_USER=<access-key>
+MINIO_PASSWORD=<secret-key>
+```
+
+For local development/testing, you can skip `.env` — Docker Compose uses safe defaults that bind only to `127.0.0.1`.
+
+### 3. (Optional) Add GeoLite2 databases
+
+```bash
+mkdir -p data/geoip
+# Download from https://www.maxmind.com/en/accounts/current/geoip/downloads
+# Place GeoLite2-City.mmdb and GeoLite2-ASN.mmdb in data/geoip/
+```
+
+### 4. Build and start
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+First build takes 10-15 minutes (the worker image compiles 15 Go binaries).
+
+### 5. Verify services are running
+
+```bash
+docker compose ps
+```
+
+All 6 services should be `healthy` or `running`:
+
+| Service | Port | Description |
+|---------|------|-------------|
+| `easm-api` | `localhost:18000` | FastAPI backend |
+| `easm-ui` | `localhost:13000` | Vue.js frontend |
+| `easm-postgres` | `localhost:15432` | PostgreSQL 15 |
+| `easm-redis` | `localhost:16379` | Redis 7 |
+| `easm-minio` | `localhost:9000` | MinIO (S3-compatible storage) |
+| `easm-minio` | `localhost:9001` | MinIO web console |
+| `easm-worker` | — | Celery worker (scan pipeline) |
+| `easm-beat` | — | Celery Beat (scheduler) |
+
+### 6. Create admin user
+
+```bash
+docker compose exec api python -c "
+from app.models.database import SessionLocal
+from app.models.auth import User, Tenant, TenantMembership
+from passlib.hash import bcrypt
+
+db = SessionLocal()
+
+# Create tenant
+tenant = Tenant(name='My Organization', slug='my-org')
+db.add(tenant)
+db.flush()
+
+# Create admin user
+user = User(
+    email='admin@example.com',
+    hashed_password=bcrypt.hash('YourSecurePassword123'),
+    full_name='Admin',
+    is_superuser=True,
+    is_active=True,
+)
+db.add(user)
+db.flush()
+
+# Add user to tenant as owner
+membership = TenantMembership(
+    user_id=user.id,
+    tenant_id=tenant.id,
+    role='owner',
+)
+db.add(membership)
+db.commit()
+print(f'Created tenant {tenant.id} and admin user {user.id}')
+"
+```
+
+### 7. Log in
+
+Open http://localhost:13000 and log in with the credentials you just created.
+
+## Usage
+
+### Adding scan targets
+
+1. Go to **Dashboard** → select your tenant
+2. Navigate to the **Onboarding** page
+3. Add root domains (e.g., `example.com`) as seeds
+4. The scan pipeline will automatically pick them up on the next scheduled run
+
+### Running a manual scan
+
+```bash
+# Trigger a full scan for tenant ID 1
+curl -X POST http://localhost:18000/api/v1/tenants/1/scans \
+  -H "Authorization: Bearer <your-jwt-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"scan_type": "full"}'
+```
+
+### Viewing results
+
+- **Dashboard** — Risk score, asset counts, severity breakdown, 24h delta
+- **Assets** — All discovered domains, subdomains, IPs with enrichment data
+- **Findings** — Vulnerabilities from Nuclei, sensitive paths, misconfigurations
+- **Issues** — Correlated findings grouped by pattern, with SLA tracking
+- **Certificates** — TLS certificate inventory with expiry monitoring
+- **Services** — Port/service/version inventory across all assets
+- **Reports** — Generate PDF or DOCX reports (Executive, Technical, SOC2, ISO27001)
+
+### API documentation
+
+Interactive Swagger docs are available at: http://localhost:18000/docs
+
+Key endpoints:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/auth/login` | Login (returns JWT) |
+| `GET` | `/api/v1/tenants/{id}/assets` | List assets (paginated, filterable) |
+| `GET` | `/api/v1/tenants/{id}/findings` | List findings |
+| `GET` | `/api/v1/tenants/{id}/issues` | List correlated issues |
+| `GET` | `/api/v1/tenants/{id}/dashboard/summary` | Dashboard KPIs |
+| `POST` | `/api/v1/tenants/{id}/scans` | Trigger scan |
+| `GET` | `/api/v1/tenants/{id}/reports/export/pdf` | Generate PDF report |
+| `GET` | `/api/v1/tenants/{id}/reports/export/docx` | Generate DOCX report |
+| `GET` | `/api/v1/tenants/{id}/exposure/changes` | Scan diff / delta |
+
+## Configuration
+
+### Scan pipeline tuning
+
+The pipeline uses a 3-tier system for scan intensity:
+
+| Tier | Description | Use case |
+|------|-------------|----------|
+| 1 | Conservative | Default — safe for most targets |
+| 2 | Moderate | More aggressive port scanning and enumeration |
+| 3 | Aggressive | Full scan with fuzzing, OOB testing |
+
+### Adaptive throttling
+
+The pipeline automatically detects HTTP 429 (Too Many Requests) responses and reduces scan rates. When the target stops rate-limiting, rates gradually recover. No manual configuration needed.
+
+### Scheduled scans
+
+Celery Beat runs scans on a schedule (configurable). Default:
+- **Full discovery**: Daily at 2 AM UTC
+- **Critical asset watch**: Every 30 minutes
+
+### Environment variables
+
+See `.env.example` for the full list. Key variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JWT_SECRET_KEY` | `change-this-...` | JWT signing key (MUST change in prod) |
+| `DB_PASSWORD` | `easm_password` | PostgreSQL password |
+| `REDIS_PASSWORD` | `easm_redis_dev` | Redis password |
+| `MINIO_USER` / `MINIO_PASSWORD` | `minioadmin` / `minioadmin123` | MinIO credentials |
+| `API_WORKERS` | `1` | Uvicorn worker count |
+| `LOG_LEVEL` | `info` | Logging level |
+| `CORS_ORIGINS` | `localhost:3000,13000` | Allowed CORS origins |
 
 ## Development
 
-### Project Structure
+### Project structure
 
 ```
-easm/
 ├── app/
-│   ├── models/         # Database models
-│   ├── tasks/          # Celery tasks
-│   ├── routers/        # API routers (Sprint 2)
-│   ├── utils/          # Utilities
-│   ├── main.py         # FastAPI app
-│   ├── database.py     # DB connection
-│   └── celery_app.py   # Celery config
-├── alembic/            # Database migrations
-├── tests/              # Unit tests
-├── docker-compose.yml  # Services orchestration
-├── Dockerfile.api      # API container
-├── Dockerfile.worker   # Worker container
-└── requirements.txt    # Python dependencies
+│   ├── api/routers/          # FastAPI route handlers
+│   ├── api/schemas/          # Pydantic request/response models
+│   ├── models/               # SQLAlchemy ORM models
+│   ├── repositories/         # Database query layer
+│   ├── services/             # Business logic
+│   │   ├── scanning/         # Nuclei service
+│   │   ├── ticketing/        # Jira/ServiceNow integration
+│   │   ├── adaptive_throttle.py
+│   │   ├── chart_generator.py
+│   │   ├── report_generator.py
+│   │   ├── risk_engine.py
+│   │   └── ...
+│   ├── tasks/                # Celery tasks (scan pipeline phases)
+│   ├── templates/            # Jinja2 templates (emails, PDF reports)
+│   ├── utils/                # Validators, storage, secure executor
+│   ├── main.py               # FastAPI app factory
+│   ├── celery_app.py         # Celery configuration
+│   └── config.py             # Settings (pydantic-settings)
+├── frontend/
+│   ├── src/
+│   │   ├── views/            # Vue page components
+│   │   ├── stores/           # Pinia state management
+│   │   ├── components/       # Reusable UI components
+│   │   ├── composables/      # Vue composables
+│   │   ├── utils/            # Shared utilities
+│   │   ├── api/              # API client (Axios)
+│   │   └── router/           # Vue Router config
+│   ├── Dockerfile            # Multi-stage (dev/build/prod)
+│   └── package.json
+├── alembic/                  # Database migrations
+├── tests/                    # Python tests (pytest)
+├── data/                     # GeoLite2 databases, DNS wordlists (not in git)
+├── docker-compose.yml        # Service orchestration
+├── Dockerfile.api            # API container (Python + WeasyPrint)
+├── Dockerfile.worker         # Worker container (Python + Go tools)
+├── .env.example              # Environment template
+└── requirements.txt          # Python dependencies
 ```
 
-### Making Database Changes
+### Hot reload
+
+Both API and frontend support hot reload in development:
+
+- **API**: Python files are volume-mounted (`./app:/app/app`). Changes take effect immediately for existing files. New files require `docker compose restart api`.
+- **Frontend**: Source is volume-mounted. Vite HMR works out of the box.
+- **Worker**: Python files are volume-mounted. Restart with `docker compose restart worker` after changes.
+
+### Database migrations
 
 ```bash
-# Create new migration
-docker-compose exec api alembic revision --autogenerate -m "description"
+# Create a new migration
+docker compose exec api alembic revision --autogenerate -m "description"
 
-# Apply migration
-docker-compose exec api alembic upgrade head
+# Apply migrations (also runs automatically on API startup)
+docker compose exec api alembic upgrade head
 
-# Rollback
-docker-compose exec api alembic downgrade -1
+# Rollback last migration
+docker compose exec api alembic downgrade -1
 ```
 
-### Viewing Logs
+### Running tests
 
 ```bash
-# All services
-docker-compose logs -f
+# Python tests
+docker compose exec api pytest tests/
 
-# Specific service
-docker-compose logs -f worker
-docker-compose logs -f api
-docker-compose logs -f beat
+# Frontend unit tests
+cd frontend && npm run test
 
-# Last 100 lines
-docker-compose logs --tail=100 worker
+# Frontend E2E tests (requires Playwright)
+cd frontend && npx playwright test
 ```
+
+### Rebuilding after dependency changes
+
+```bash
+# After modifying requirements.txt
+docker compose build api worker
+
+# After modifying frontend/package.json
+docker compose build ui
+
+# Full rebuild
+docker compose build --no-cache
+```
+
+## Tech Stack
+
+**Backend:**
+- Python 3.11, FastAPI, SQLAlchemy, Pydantic v2
+- Celery + Redis (task queue and scheduling)
+- PostgreSQL 15 (data store)
+- MinIO (S3-compatible artifact storage)
+- WeasyPrint (PDF generation), python-docx (DOCX), Matplotlib (charts)
+
+**Frontend:**
+- Vue 3 (Composition API) + TypeScript
+- Pinia (state management)
+- Tailwind CSS
+- Chart.js + D3.js (visualizations)
+- Leaflet (geographic map)
+- Axios (HTTP client)
+
+**Security tools (in worker container):**
+- Subfinder, Amass — subdomain enumeration
+- DNSX — DNS resolution and records
+- HTTPX — HTTP probing and tech detection
+- Naabu — port scanning
+- TLSX — TLS certificate analysis
+- Katana — web crawling
+- Nuclei — vulnerability scanning (3000+ templates)
+- Uncover — OSINT search (Shodan, Censys, etc.)
+- AlterX + PureDNS — DNS permutation bruteforce
+- fingerprintx — service fingerprinting
+- cdncheck — CDN/WAF detection
+- dnstwist — domain typosquatting detection
+- Playwright + Chromium — visual reconnaissance screenshots
 
 ## Troubleshooting
 
-### Worker not picking up tasks
+### Worker OOM (Out of Memory)
+
+If Nuclei or Playwright get killed (exit code -9), increase worker memory in `docker-compose.yml`:
+
+```yaml
+worker:
+  deploy:
+    resources:
+      limits:
+        memory: 8G  # Increase as needed
+```
+
+### Scans returning 0 results
+
+Check if your IP is being rate-limited/blocked by the target. The pipeline logs HTTP 429 counts — look for `Adaptive throttle` messages:
 
 ```bash
-# Restart worker
-docker-compose restart worker
-
-# Check Redis connection
-docker-compose exec worker python -c "import redis; r=redis.from_url('redis://redis:6379/0'); print(r.ping())"
+docker compose logs worker | grep -i "throttle\|429"
 ```
 
-### Database connection issues
+### API not starting
+
+Check migration status:
 
 ```bash
-# Check PostgreSQL status
-docker-compose exec postgres pg_isready
-
-# Restart database
-docker-compose restart postgres
-
-# Reset database (WARNING: deletes all data)
-docker-compose down -v
-docker-compose up -d
+docker compose logs api | grep -i "migration\|error"
+docker compose exec api alembic current
 ```
 
-### MinIO not accessible
+### Frontend can't reach API
+
+Ensure `VITE_API_BASE_URL` matches your API port:
 
 ```bash
-# Restart MinIO
-docker-compose restart minio
-
-# Check MinIO logs
-docker-compose logs minio
+# In docker-compose.yml, ui service
+VITE_API_BASE_URL: http://localhost:18000
 ```
 
-### ProjectDiscovery tools not found
+### Rebuilding a single service
 
 ```bash
-# Enter worker container
-docker-compose exec worker bash
-
-# Check tool versions
-subfinder -version
-dnsx -version
-httpx -version
-nuclei -version
-
-# Rebuild worker if needed
-docker-compose build --no-cache worker
+docker compose build api && docker compose up -d api
+docker compose build worker && docker compose up -d worker
 ```
-
-## Multi-Tenant Usage
-
-Each tenant is completely isolated:
-
-1. **Database**: All queries filtered by `tenant_id`
-2. **Storage**: Separate MinIO buckets (`tenant-1`, `tenant-2`)
-3. **API Keys**: Per-tenant OSINT provider keys
-4. **Schedules**: Independent scan schedules per tenant
-
-### Creating a New Tenant
-
-```sql
-INSERT INTO tenants (name, slug, contact_policy, created_at, updated_at)
-VALUES ('Acme Corp', 'acme', 'security@acme.com', NOW(), NOW());
-```
-
-## Next Steps (Sprint 2)
-
-- [ ] HTTP enrichment (httpx)
-- [ ] Port scanning (naabu)
-- [ ] TLS intelligence (tlsx)
-- [ ] Web crawling (katana)
-- [ ] FastAPI authentication (JWT)
-- [ ] Multi-tenant API endpoints
-- [ ] Asset and service REST APIs
-
-## Documentation
-
-- [CLAUDE.md](CLAUDE.md) - AI assistant guidance
-- [SPRINTS.md](SPRINTS.md) - Detailed sprint plans
-- [easm.md](easm.md) - Original architecture design (Italian)
 
 ## License
 
-Proprietary - Internal Use Only
-
-## Support
-
-For issues and questions, create an issue in the repository.
+Proprietary — All Rights Reserved.

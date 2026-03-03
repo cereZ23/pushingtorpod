@@ -1145,15 +1145,15 @@ _MIN_CONTENT_LENGTH = 10
 # Maximum snippet size stored in evidence
 _MAX_SNIPPET_LENGTH = 200
 
-# Concurrency limits - very conservative to avoid 429 rate limiting.
+# Concurrency limits — balanced for speed without hammering targets.
 # Each host is scanned sequentially (1 request at a time per host),
 # but multiple hosts can be scanned in parallel.
-_MAX_CONNECTIONS_PER_HOST = 1
-_MAX_CONNECTIONS_TOTAL = 5
-_REQUEST_TIMEOUT_SECONDS = 5.0
-_DELAY_BETWEEN_REQUESTS = 0.5  # 500ms delay between requests to same host
+_MAX_CONNECTIONS_PER_HOST = 2
+_MAX_CONNECTIONS_TOTAL = 20
+_REQUEST_TIMEOUT_SECONDS = 3.0
+_DELAY_BETWEEN_REQUESTS = 0.15  # 150ms delay between requests to same host
 _MAX_CONSECUTIVE_429S = 3  # Skip host after N consecutive 429s
-_MAX_HOSTS_TO_SCAN = 10  # Limit number of unique hosts per scan
+_MAX_HOSTS_TO_SCAN = 50  # Scan up to 50 unique hosts per run
 
 # Common soft-404 body patterns (case-insensitive)
 _SOFT_404_PATTERNS = [
@@ -1298,10 +1298,13 @@ async def _scan_host(
     paths: list[dict[str, Any]],
     host_semaphore: asyncio.Semaphore,
     global_semaphore: asyncio.Semaphore,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     """Scan sensitive paths on a single host SEQUENTIALLY to respect rate limits.
 
-    Stops scanning a host after _MAX_CONSECUTIVE_429S consecutive 429 responses.
+    Adaptive backoff: on 429, doubles delay up to 10s. After clean responses
+    delay gradually recovers. Stops scanning after _MAX_CONSECUTIVE_429S.
+
+    Returns dict with 'findings' list and 'http_429_count' int.
     """
     async with host_semaphore:
         transport = httpx.AsyncHTTPTransport(retries=0)
@@ -1311,6 +1314,8 @@ async def _scan_host(
         )
         findings = []
         consecutive_429s = 0
+        total_429s = 0
+        current_delay = _DELAY_BETWEEN_REQUESTS
 
         async with httpx.AsyncClient(
             transport=transport,
@@ -1322,26 +1327,36 @@ async def _scan_host(
             for entry in paths:
                 # Skip host if too many 429s
                 if consecutive_429s >= _MAX_CONSECUTIVE_429S:
-                    logger.debug(
-                        f"Skipping remaining paths on {base_url} "
-                        f"after {consecutive_429s} consecutive 429s"
+                    logger.info(
+                        "Adaptive backoff: skipping %s after %d consecutive 429s "
+                        "(total: %d, delay was %.1fs)",
+                        base_url, consecutive_429s, total_429s, current_delay,
                     )
                     break
 
                 async with global_semaphore:
-                    await asyncio.sleep(_DELAY_BETWEEN_REQUESTS)
+                    await asyncio.sleep(current_delay)
                     try:
                         url = f"{base_url}{entry['path']}"
                         head_resp = await client.head(url, follow_redirects=False)
 
                         if head_resp.status_code == 429:
                             consecutive_429s += 1
-                            retry_after = int(head_resp.headers.get("retry-after", "5"))
-                            await asyncio.sleep(min(retry_after, 10))
+                            total_429s += 1
+                            # Adaptive backoff: double delay, respect Retry-After
+                            retry_after = int(head_resp.headers.get("retry-after", "0"))
+                            current_delay = min(max(current_delay * 2, retry_after), 10.0)
+                            logger.debug(
+                                "429 on %s (consecutive=%d), delay -> %.1fs",
+                                base_url, consecutive_429s, current_delay,
+                            )
+                            await asyncio.sleep(current_delay)
                             continue
 
-                        # Reset 429 counter on non-429 response
+                        # Reset consecutive counter, gradually recover delay
                         consecutive_429s = 0
+                        if current_delay > _DELAY_BETWEEN_REQUESTS:
+                            current_delay = max(current_delay * 0.8, _DELAY_BETWEEN_REQUESTS)
 
                         if head_resp.status_code != 200:
                             continue
@@ -1356,11 +1371,11 @@ async def _scan_host(
                     except Exception:
                         continue
 
-        return findings
+        return {'findings': findings, 'http_429_count': total_429s}
 
 
 # Global timeout for the entire sensitive path scan (seconds)
-_GLOBAL_SCAN_TIMEOUT = 300  # 5 minutes max
+_GLOBAL_SCAN_TIMEOUT = 180  # 3 minutes max (higher concurrency = faster)
 
 # Only scan critical+high severity paths for efficiency (covers ~60% of paths)
 # Set to None to scan all paths
@@ -1414,12 +1429,23 @@ async def _run_scan_async(
         )
         results = []
 
+    total_429s = 0
     for asset_id, result in zip(asset_index, results):
-        if isinstance(result, list):
+        if isinstance(result, dict):
+            # New format: {findings: [...], http_429_count: N}
+            host_findings = result.get('findings', [])
+            total_429s += result.get('http_429_count', 0)
+            existing = asset_findings.get(asset_id, [])
+            existing.extend(host_findings)
+            asset_findings[asset_id] = existing
+        elif isinstance(result, list):
+            # Legacy format fallback
             existing = asset_findings.get(asset_id, [])
             existing.extend(result)
             asset_findings[asset_id] = existing
 
+    # Attach 429 count to the result dict for pipeline throttle reporting
+    asset_findings['_http_429_count'] = total_429s  # type: ignore[assignment]
     return asset_findings
 
 
@@ -1525,6 +1551,12 @@ def run_sensitive_path_scan(
         except RuntimeError:
             # No event loop exists
             asset_findings = asyncio.run(_run_scan_async(targets))
+
+        # Extract 429 count from scan results
+        total_429s = asset_findings.pop('_http_429_count', 0)
+        if total_429s:
+            stats['http_429_count'] = total_429s
+            tenant_logger.warning("Sensitive paths: %d HTTP 429 responses received", total_429s)
 
         # Build asset_id -> identifier lookup for fingerprinting
         asset_id_to_identifier = {a.id: a.identifier for a in assets}

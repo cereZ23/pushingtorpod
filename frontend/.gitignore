@@ -26,3 +26,9 @@ dist-ssr
 # Environment variables
 .env.local
 .env.*.local
+
+# Playwright
+e2e/.auth/
+playwright-report/
+test-results/
+blob-report/

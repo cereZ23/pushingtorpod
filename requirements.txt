@@ -24,6 +24,8 @@ bcrypt==4.1.2  # Pin bcrypt 4.x for passlib compatibility
 python-multipart==0.0.6
 slowapi==0.1.9  # Rate limiting for FastAPI
 python3-saml>=1.16.0  # SAML2 SSO authentication
+pyotp>=2.9.0  # TOTP MFA
+qrcode[pil]>=7.4  # QR code generation for MFA setup
 
 # HTTP client
 httpx==0.26.0
@@ -50,6 +52,7 @@ python-dateutil==2.8.2
 tldextract==5.1.1  # Domain validation (Sprint 2 security fix)
 cryptography==41.0.7  # Secret encryption (Sprint 2 security fix)
 python-whois==0.9.4  # WHOIS/RDAP lookups for hidden asset discovery
+geoip2>=4.8.0  # MaxMind GeoLite2 local database lookups (City + ASN)
 dnstwist==20240116  # Domain permutation / typosquatting detection
 
 # Visual Recon
@@ -63,4 +66,5 @@ matplotlib>=3.9.0
 Jinja2>=3.1.0
 
 # Monitoring and Error Tracking
+prometheus-client>=0.21.0
 sentry-sdk[celery,sqlalchemy]==1.40.0

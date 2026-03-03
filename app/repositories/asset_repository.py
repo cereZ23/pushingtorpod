@@ -233,6 +233,9 @@ class AssetRepository:
         for row in returned_rows:
             # If first_seen is very recent, it's likely a new insert
             asset_id, first_seen = row
+            if first_seen:
+                if first_seen.tzinfo is None:
+                    first_seen = first_seen.replace(tzinfo=timezone.utc)
             if first_seen and (current_time - first_seen).total_seconds() < 2:
                 created += 1
 

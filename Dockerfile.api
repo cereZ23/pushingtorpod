@@ -1,12 +1,22 @@
-FROM python:3.11-slim
+FROM python:3.11-slim AS base
+
+LABEL maintainer="EASM Platform" \
+      description="EASM API server with FastAPI"
 
 WORKDIR /app
 
 # Install system dependencies (includes WeasyPrint/Cairo requirements)
-RUN apt-get update && apt-get install -y \
+# gcc: needed for C extensions during pip install
+# postgresql-client: for pg_isready and migration tooling
+# curl: for healthcheck probes
+# libcairo2, libpango*, libgdk*: WeasyPrint PDF rendering
+# tini: lightweight init for proper signal handling (PID 1)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    python3-dev \
     postgresql-client \
     curl \
+    tini \
     libcairo2 \
     libpango-1.0-0 \
     libpangocairo-1.0-0 \
@@ -15,12 +25,17 @@ RUN apt-get update && apt-get install -y \
     shared-mime-info \
     fonts-liberation \
     fonts-dejavu-core \
+    fonts-inter \
     && rm -rf /var/lib/apt/lists/*
 
 # Use non-interactive Matplotlib backend
 ENV MPLBACKEND=Agg
 
-# Copy requirements
+# Prevent Python from writing .pyc files and enable unbuffered output
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Copy requirements first (layer caching optimization)
 COPY requirements.txt .
 
 # Install Python dependencies
@@ -33,6 +48,9 @@ COPY alembic ./alembic
 # Copy application code
 COPY app /app/app
 
+# Copy entrypoint script
+COPY entrypoint.sh /app/entrypoint.sh
+
 # Create non-root user
 RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
@@ -40,8 +58,13 @@ RUN groupadd --gid 1000 appuser && \
 # Create directory for RSA keys (will be auto-generated if not exist)
 RUN mkdir -p /app/keys && chown appuser:appuser /app/keys && chmod 700 /app/keys
 
-# Set ownership of app directory
-RUN chown -R appuser:appuser /app
+# Create directory for GeoLite2 databases (mount or copy .mmdb files here)
+# Download from https://www.maxmind.com/en/geoip-databases
+RUN mkdir -p /app/data && chown appuser:appuser /app/data
+
+# Set ownership of app directory and ensure entrypoint is executable
+RUN chown -R appuser:appuser /app && \
+    chmod +x /app/entrypoint.sh
 
 # Switch to non-root user
 USER appuser
@@ -49,9 +72,12 @@ USER appuser
 # Expose port
 EXPOSE 8000
 
-# Health check endpoint
+# Use tini as init process for proper signal forwarding and zombie reaping
+ENTRYPOINT ["tini", "--"]
+
+# Health check: verify the API responds on /health
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run migrations and start API (removed --reload for production)
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# Run migrations then start the API via entrypoint script
+CMD ["/app/entrypoint.sh"]

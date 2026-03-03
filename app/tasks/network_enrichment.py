@@ -5,8 +5,9 @@ Enriches assets with WHOIS, reverse DNS, ASN, GeoIP, CDN, WAF,
 and cloud provider data using the NetworkIntel service.
 
 Rate limiting:
-- ip-api.com: max 45 requests per minute (handled in network_intel module)
+- WHOIS lookups may be throttled by registrars
 - Batches of 10 assets with 2-second sleep between batches
+- GeoIP uses local MaxMind GeoLite2 databases (no rate limits)
 
 Storage:
 - Enrichment data is merged into asset.raw_metadata under structured keys
@@ -17,6 +18,7 @@ Storage:
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -27,8 +29,10 @@ from app.utils.logger import TenantLoggerAdapter
 logger = logging.getLogger(__name__)
 
 # Batch settings
-BATCH_SIZE = 10
-BATCH_SLEEP_SECONDS = 2.0
+BATCH_SIZE = 20
+BATCH_SLEEP_SECONDS = 0.5
+# Max parallel WHOIS/GeoIP lookups (I/O bound)
+MAX_WORKERS = 10
 
 
 def _merge_headers_for_asset(asset_id: int, db) -> dict:
@@ -90,6 +94,9 @@ def _parse_raw_metadata(asset: Asset) -> dict:
     bind=True,
     max_retries=2,
     default_retry_delay=60,
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
     soft_time_limit=1800,
     time_limit=1860,
 )
@@ -105,7 +112,7 @@ def run_network_enrichment(
     1. Resolve IP if domain/subdomain (use existing ip_address or DNS)
     2. WHOIS lookup on domain
     3. Reverse DNS on IP
-    4. GeoIP + ASN lookup on IP (ip-api.com)
+    4. GeoIP + ASN lookup on IP (MaxMind GeoLite2)
     5. CDN / WAF detection from service response headers
     6. Cloud provider detection from ASN + headers
     7. Store everything in asset.raw_metadata under structured keys
@@ -161,7 +168,7 @@ def run_network_enrichment(
         enriched_count = 0
         failed_count = 0
 
-        # Process in batches to respect ip-api.com rate limits
+        # Process in batches to respect WHOIS rate limits
         for batch_start in range(0, len(assets), BATCH_SIZE):
             batch = assets[batch_start : batch_start + BATCH_SIZE]
             batch_num = batch_start // BATCH_SIZE + 1
@@ -174,20 +181,41 @@ def run_network_enrichment(
                 len(batch),
             )
 
+            # Pre-collect headers for batch (DB queries, must be on main thread)
+            batch_headers = {}
             for asset in batch:
+                batch_headers[asset.id] = _merge_headers_for_asset(asset.id, db)
+
+            # Parallel enrichment (I/O bound: WHOIS, DNS, GeoIP)
+            def _enrich_one(asset):
+                return asset.id, enrich_asset_network(
+                    identifier=asset.identifier,
+                    asset_type=asset.type.value,
+                    ip_address=None,
+                    service_headers=batch_headers.get(asset.id, {}),
+                )
+
+            results = {}
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+                futures = {pool.submit(_enrich_one, a): a for a in batch}
+                for future in as_completed(futures):
+                    asset = futures[future]
+                    try:
+                        asset_id, enrichment = future.result()
+                        results[asset_id] = enrichment
+                    except Exception as exc:
+                        tenant_logger.warning(
+                            "Network enrichment failed for asset %s (id=%d): %s",
+                            asset.identifier, asset.id, exc,
+                        )
+                        failed_count += 1
+
+            # Apply results back to ORM objects (main thread)
+            for asset in batch:
+                if asset.id not in results:
+                    continue
                 try:
-                    # Collect existing service headers for this asset
-                    headers = _merge_headers_for_asset(asset.id, db)
-
-                    # Run enrichment
-                    enrichment = enrich_asset_network(
-                        identifier=asset.identifier,
-                        asset_type=asset.type.value,
-                        ip_address=None,  # let the service resolve it
-                        service_headers=headers,
-                    )
-
-                    # Merge into raw_metadata (preserve existing keys)
+                    enrichment = results[asset.id]
                     metadata = _parse_raw_metadata(asset)
                     metadata["whois"] = enrichment.get("whois", {})
                     metadata["network"] = enrichment.get("network", {})
@@ -198,15 +226,11 @@ def run_network_enrichment(
 
                     asset.raw_metadata = json.dumps(metadata, default=str)
                     asset.last_enriched_at = datetime.now(timezone.utc)
-
                     enriched_count += 1
-
                 except Exception as exc:
                     tenant_logger.warning(
-                        "Network enrichment failed for asset %s (id=%d): %s",
-                        asset.identifier,
-                        asset.id,
-                        exc,
+                        "Failed to apply enrichment for asset %s (id=%d): %s",
+                        asset.identifier, asset.id, exc,
                     )
                     failed_count += 1
 
@@ -245,13 +269,11 @@ def run_network_enrichment(
         tenant_logger.error(
             "Network enrichment task failed: %s", exc, exc_info=True
         )
-        return {
-            "tenant_id": tenant_id,
-            "assets_enriched": 0,
-            "assets_failed": 0,
-            "error": str(exc),
-            "status": "failed",
-        }
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise self.retry(exc=exc)
     finally:
         db.close()
 
@@ -326,27 +348,65 @@ def phase_1c_network_enrichment(
         return {"assets_discovered": 0, "assets_enriched": 0, "assets_failed": 0}
 
     tenant_logger.info(
-        "Phase 1c: enriching %d assets with WHOIS/GeoIP/CDN/WAF", len(assets)
+        "Phase 1c: enriching %d assets with WHOIS/GeoIP/CDN/WAF (%d workers)",
+        len(assets),
+        MAX_WORKERS,
     )
+
+    # Pre-collect headers in main thread (DB access is not thread-safe)
+    asset_headers: dict[int, dict] = {}
+    asset_metadata: dict[int, dict] = {}
+    for asset in assets:
+        asset_headers[asset.id] = _merge_headers_for_asset(asset.id, db)
+        asset_metadata[asset.id] = _parse_raw_metadata(asset)
+
+    def _enrich_one(asset_id: int, identifier: str, asset_type: str) -> tuple[int, dict | None, str | None]:
+        """Run enrichment for a single asset (thread-safe, no DB access)."""
+        try:
+            enrichment = enrich_asset_network(
+                identifier=identifier,
+                asset_type=asset_type,
+                ip_address=None,
+                service_headers=asset_headers.get(asset_id, {}),
+            )
+            return asset_id, enrichment, None
+        except Exception as exc:
+            return asset_id, None, str(exc)
 
     enriched_count = 0
     failed_count = 0
+    asset_by_id = {a.id: a for a in assets}
 
+    # Process in batches with parallel enrichment within each batch
     for batch_start in range(0, len(assets), BATCH_SIZE):
         batch = assets[batch_start : batch_start + BATCH_SIZE]
+        batch_num = batch_start // BATCH_SIZE + 1
+        total_batches = (len(assets) + BATCH_SIZE - 1) // BATCH_SIZE
 
-        for asset in batch:
-            try:
-                headers = _merge_headers_for_asset(asset.id, db)
+        # Run enrichment in parallel threads
+        results: list[tuple[int, dict | None, str | None]] = []
+        with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(batch))) as executor:
+            futures = {
+                executor.submit(
+                    _enrich_one, asset.id, asset.identifier, asset.type.value
+                ): asset.id
+                for asset in batch
+            }
+            for future in as_completed(futures):
+                results.append(future.result())
 
-                enrichment = enrich_asset_network(
-                    identifier=asset.identifier,
-                    asset_type=asset.type.value,
-                    ip_address=None,
-                    service_headers=headers,
+        # Apply results in main thread (DB writes)
+        for asset_id, enrichment, error in results:
+            asset = asset_by_id[asset_id]
+            if error:
+                tenant_logger.warning(
+                    "Phase 1c enrichment failed for %s: %s",
+                    asset.identifier,
+                    error,
                 )
-
-                metadata = _parse_raw_metadata(asset)
+                failed_count += 1
+            else:
+                metadata = asset_metadata[asset_id]
                 metadata["whois"] = enrichment.get("whois", {})
                 metadata["network"] = enrichment.get("network", {})
                 metadata["cdn"] = enrichment.get("cdn")
@@ -358,22 +418,19 @@ def phase_1c_network_enrichment(
                 asset.last_enriched_at = datetime.now(timezone.utc)
                 enriched_count += 1
 
-            except Exception as exc:
-                tenant_logger.warning(
-                    "Phase 1c enrichment failed for %s: %s",
-                    asset.identifier,
-                    exc,
-                )
-                failed_count += 1
-
         # Commit per batch
         try:
             db.commit()
         except Exception as exc:
-            tenant_logger.error("Phase 1c batch commit failed: %s", exc)
+            tenant_logger.error("Phase 1c batch %d/%d commit failed: %s", batch_num, total_batches, exc)
             db.rollback()
 
-        # Rate limit pause between batches
+        tenant_logger.info(
+            "Phase 1c batch %d/%d done (%d ok, %d fail)",
+            batch_num, total_batches, enriched_count, failed_count,
+        )
+
+        # Brief pause between batches for WHOIS rate limits
         if batch_start + BATCH_SIZE < len(assets):
             time.sleep(BATCH_SLEEP_SECONDS)
 

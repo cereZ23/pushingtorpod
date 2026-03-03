@@ -34,6 +34,7 @@ from app.api.schemas.envelope import PaginatedEnvelope, PaginationMeta
 from app.models.database import Asset, AssetType, Seed, Service, Finding
 from app.models.enrichment import Certificate, Endpoint
 from app.repositories.asset_repository import AssetRepository
+from app.core.audit import log_data_modification, log_audit_event, AuditEventType
 
 logger = logging.getLogger(__name__)
 
@@ -638,6 +639,7 @@ def _build_dns_info(asset: Asset) -> dict:
         'reverse_dns': None,
         'whois_summary': None,
         'asn_info': None,
+        'geo_info': None,
         'cloud_provider': None,
     }
 
@@ -660,18 +662,48 @@ def _build_dns_info(asset: Asset) -> dict:
                 resolved_ips.append(s.product.split(':', 1)[1].strip())
     dns_info['resolved_ips'] = list(set(resolved_ips))
 
-    # Reverse DNS from raw_metadata
-    dns_info['reverse_dns'] = raw_meta.get('rdns') or raw_meta.get('reverse_dns') or raw_meta.get('ptr')
+    # Network enrichment data (GeoIP, rDNS, ASN — from Phase 1c)
+    network = raw_meta.get('network') or {}
+
+    # Reverse DNS from network enrichment or legacy keys
+    dns_info['reverse_dns'] = (
+        network.get('reverse_dns')
+        or raw_meta.get('rdns')
+        or raw_meta.get('reverse_dns')
+        or raw_meta.get('ptr')
+    )
+
+    # Resolved IPs: also use network.ip if available
+    if not dns_info['resolved_ips'] and network.get('ip'):
+        dns_info['resolved_ips'] = [network['ip']]
 
     # WHOIS summary
     whois = raw_meta.get('whois') or raw_meta.get('whois_summary')
     if whois:
         dns_info['whois_summary'] = whois
 
-    # ASN info
+    # ASN info (from network enrichment or legacy keys)
     asn = raw_meta.get('asn') or raw_meta.get('asn_info')
+    if not asn and network.get('asn'):
+        asn = {
+            'asn': network.get('asn'),
+            'org': network.get('asn_org'),
+            'country': network.get('country'),
+        }
     if asn:
         dns_info['asn_info'] = asn
+
+    # GeoIP info (country, city, lat/lon, ISP — from MaxMind GeoLite2)
+    if network.get('country') or network.get('lat'):
+        dns_info['geo_info'] = {
+            'country': network.get('country'),
+            'country_code': network.get('country_code'),
+            'region': network.get('region'),
+            'city': network.get('city'),
+            'lat': network.get('lat'),
+            'lon': network.get('lon'),
+            'isp': network.get('isp'),
+        }
 
     # Cloud provider detection from raw_metadata or heuristic on IPs
     cloud = raw_meta.get('cloud_provider') or raw_meta.get('cdn')
@@ -794,6 +826,12 @@ def create_asset(
     db.commit()
     db.refresh(asset)
 
+    log_data_modification(
+        action="create", resource="asset", resource_id=str(asset.id),
+        user_id=membership.user_id, tenant_id=tenant_id,
+        details={"identifier": asset.identifier, "type": asset.type.value if hasattr(asset.type, 'value') else str(asset.type)},
+    )
+
     logger.info(f"Created asset {asset.identifier} for tenant {tenant_id}")
 
     return AssetResponse.model_validate(asset)
@@ -846,6 +884,11 @@ def update_asset(
     db.commit()
     db.refresh(asset)
 
+    log_data_modification(
+        action="update", resource="asset", resource_id=str(asset_id),
+        user_id=membership.user_id, tenant_id=tenant_id,
+    )
+
     logger.info(f"Updated asset {asset.identifier}")
 
     return AssetResponse.model_validate(asset)
@@ -886,6 +929,11 @@ def delete_asset(
     # Soft delete
     asset.is_active = False
     db.commit()
+
+    log_data_modification(
+        action="delete", resource="asset", resource_id=str(asset_id),
+        user_id=membership.user_id, tenant_id=tenant_id,
+    )
 
     logger.info(f"Deleted asset {asset.identifier}")
 
@@ -1058,6 +1106,12 @@ def create_seed(
     db.commit()
     db.refresh(seed)
 
+    log_data_modification(
+        action="create", resource="seed", resource_id=str(seed.id),
+        user_id=membership.user_id, tenant_id=tenant_id,
+        details={"value": seed_data.value, "type": seed_data.type},
+    )
+
     logger.info(f"Created seed {seed.value} for tenant {tenant_id}")
 
     return SeedResponse.model_validate(seed)
@@ -1217,6 +1271,60 @@ def trigger_asset_screenshot(
         'status': 'queued',
         'asset_id': asset_id,
     }
+
+
+@router.get("/{asset_id}/screenshots/{screenshot_type}/{filename}")
+def proxy_screenshot(
+    tenant_id: int,
+    asset_id: int,
+    screenshot_type: str,
+    filename: str,
+    db: Session = Depends(get_db),
+    membership=Depends(verify_tenant_access),
+):
+    """
+    Proxy screenshot images from MinIO to the frontend.
+
+    Avoids exposing internal MinIO URLs (minio:9000) to the browser.
+    """
+    from fastapi.responses import StreamingResponse
+    from app.utils.storage import get_minio_client
+
+    if screenshot_type not in ("full", "thumb"):
+        raise HTTPException(status_code=400, detail="Invalid screenshot type")
+
+    # Verify asset belongs to tenant
+    asset = db.query(Asset.id).filter(
+        Asset.id == asset_id,
+        Asset.tenant_id == tenant_id,
+    ).first()
+
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    bucket_name = f"tenant-{tenant_id}"
+    object_path = f"screenshots/{asset_id}/{filename}"
+
+    try:
+        client = get_minio_client()
+        response = client.get_object(bucket_name, object_path)
+        data = response.read()
+        response.close()
+        response.release_conn()
+
+        # Detect content type from filename
+        media_type = "image/png"
+        if filename.endswith(".jpg") or filename.endswith(".jpeg"):
+            media_type = "image/jpeg"
+
+        return StreamingResponse(
+            iter([data]),
+            media_type=media_type,
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+    except Exception as exc:
+        logger.warning("Screenshot proxy failed: bucket=%s path=%s error=%s", bucket_name, object_path, exc)
+        raise HTTPException(status_code=404, detail="Screenshot not found")
 
 
 def _build_asset_node(asset: Asset, db: Session) -> dict:

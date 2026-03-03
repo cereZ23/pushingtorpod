@@ -1,9 +1,14 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTenantStore } from '@/stores/tenant'
 import { assetApi } from '@/api/assets'
+import apiClient from '@/api/client'
 import type { Asset, PaginatedResponse } from '@/api/types'
+import { getAssetTypeBadgeClass, getPriorityBadgeClass } from '@/utils/severity'
+import { formatDate } from '@/utils/formatters'
+import { useWindowedPagination } from '@/composables/usePagination'
+import SkeletonLoader from '@/components/SkeletonLoader.vue'
 
 const router = useRouter()
 const tenantStore = useTenantStore()
@@ -22,6 +27,11 @@ const selectedType = ref('')
 const selectedPriority = ref('')
 
 const currentTenantId = computed(() => tenantStore.currentTenantId)
+
+// AbortController for cancelling in-flight API requests on navigation
+let abortController: AbortController | null = null
+
+const { pages: paginationPages } = useWindowedPagination(currentPage, totalPages)
 
 onMounted(async () => {
   // Wait for tenant to be loaded
@@ -47,6 +57,9 @@ async function loadAssets() {
     return
   }
 
+  abortController?.abort()
+  abortController = new AbortController()
+
   isLoading.value = true
   error.value = ''
 
@@ -64,12 +77,17 @@ async function loadAssets() {
     totalItems.value = response.meta.total
     totalPages.value = response.meta.total_pages
   } catch (err: unknown) {
+    if (err instanceof Error && (err.name === 'CanceledError' || err.name === 'AbortError')) return
     const axiosErr = err as { message?: string }
     error.value = axiosErr.message || 'Failed to load assets'
   } finally {
     isLoading.value = false
   }
 }
+
+onUnmounted(() => {
+  abortController?.abort()
+})
 
 function handleSearch() {
   currentPage.value = 1
@@ -85,30 +103,24 @@ function viewAsset(assetId: number) {
   router.push({ name: 'AssetDetail', params: { id: assetId } })
 }
 
-function getTypeColor(type: string): string {
-  const colors: Record<string, string> = {
-    domain: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
-    subdomain: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
-    ip: 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400',
-    url: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
-    service: 'bg-pink-100 text-pink-800 dark:bg-pink-900/20 dark:text-pink-400',
-  }
-  return colors[type] || 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
-}
+async function exportCsv() {
+  const tid = currentTenantId.value
+  if (!tid) return
 
-function getPriorityColor(priority: string): string {
-  const colors: Record<string, string> = {
-    critical: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400',
-    high: 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400',
-    medium: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
-    low: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
+  try {
+    const response = await apiClient.get(
+      `/api/v1/tenants/${tid}/reports/export/assets-csv`,
+      { responseType: 'blob' }
+    )
+    const url = URL.createObjectURL(response.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'assets_export.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    error.value = 'Failed to export CSV'
   }
-  return colors[priority] || 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
-}
-
-function formatDate(dateString: string): string {
-  const date = new Date(dateString)
-  return date.toLocaleDateString()
 }
 </script>
 
@@ -117,13 +129,21 @@ function formatDate(dateString: string): string {
     <!-- Header -->
     <div class="flex justify-between items-center">
       <h2 class="text-2xl font-bold text-gray-900 dark:text-dark-text-primary">Assets</h2>
-      <button
-        @click="loadAssets"
-        :disabled="isLoading"
-        class="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50"
-      >
-        Refresh
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          @click="exportCsv"
+          class="px-4 py-2 border border-gray-300 dark:border-dark-border text-gray-700 dark:text-dark-text-secondary rounded-md hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary text-sm font-medium"
+        >
+          Export CSV
+        </button>
+        <button
+          @click="loadAssets"
+          :disabled="isLoading"
+          class="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50"
+        >
+          Refresh
+        </button>
+      </div>
     </div>
 
     <!-- Filters -->
@@ -182,13 +202,13 @@ function formatDate(dateString: string): string {
       </div>
     </div>
 
-    <!-- Loading State -->
-    <div v-if="isLoading" class="flex items-center justify-center h-64">
-      <div class="text-gray-600 dark:text-dark-text-secondary">Loading assets...</div>
+    <!-- Loading State (Skeleton) -->
+    <div v-if="isLoading" role="status" class="bg-white dark:bg-dark-bg-secondary rounded-lg border border-gray-200 dark:border-dark-border overflow-hidden">
+      <SkeletonLoader variant="table-row" :rows="10" />
     </div>
 
     <!-- Error State -->
-    <div v-else-if="error" class="bg-red-50 dark:bg-red-900/20 p-4 rounded-md">
+    <div v-else-if="error" role="alert" class="bg-red-50 dark:bg-red-900/20 p-4 rounded-md">
       <p class="text-red-800 dark:text-red-200">{{ error }}</p>
     </div>
 
@@ -198,22 +218,22 @@ function formatDate(dateString: string): string {
         <table class="min-w-full divide-y divide-gray-200 dark:divide-dark-border">
           <thead class="bg-gray-50 dark:bg-dark-bg-tertiary">
             <tr>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 Identifier
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 Type
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 Priority
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 Risk Score
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 First Seen
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 Actions
               </th>
             </tr>
@@ -225,12 +245,12 @@ function formatDate(dateString: string): string {
                 <div v-if="asset.ip_address" class="text-xs text-gray-500 dark:text-dark-text-secondary">{{ asset.ip_address }}</div>
               </td>
               <td class="px-6 py-4 whitespace-nowrap">
-                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full" :class="getTypeColor(asset.type)">
+                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full" :class="getAssetTypeBadgeClass(asset.type)">
                   {{ asset.type }}
                 </span>
               </td>
               <td class="px-6 py-4 whitespace-nowrap">
-                <span v-if="asset.priority" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full" :class="getPriorityColor(asset.priority)">
+                <span v-if="asset.priority" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full" :class="getPriorityBadgeClass(asset.priority)">
                   {{ asset.priority }}
                 </span>
                 <span v-else class="text-sm text-gray-500 dark:text-dark-text-secondary">-</span>
@@ -256,7 +276,7 @@ function formatDate(dateString: string): string {
 
       <!-- Empty State -->
       <div v-if="assets.length === 0" class="flex flex-col items-center justify-center py-16 px-4">
-        <svg class="w-16 h-16 text-gray-300 dark:text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+        <svg aria-hidden="true" class="w-16 h-16 text-gray-300 dark:text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418" />
         </svg>
         <h3 class="text-lg font-semibold text-gray-900 dark:text-dark-text-primary mb-1">No assets discovered yet</h3>
@@ -267,7 +287,7 @@ function formatDate(dateString: string): string {
           to="/scans"
           class="inline-flex items-center px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-md hover:bg-primary-700 transition-colors"
         >
-          <svg class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <svg aria-hidden="true" class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
           </svg>
           Start a Scan
@@ -284,27 +304,33 @@ function formatDate(dateString: string): string {
             <button
               @click="goToPage(currentPage - 1)"
               :disabled="currentPage === 1"
-              class="px-3 py-1 border border-gray-300 dark:border-dark-border rounded-md text-sm text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary disabled:opacity-50 disabled:cursor-not-allowed"
+              class="px-3 py-1 border border-gray-300 dark:border-dark-border rounded-md text-sm text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
               Previous
             </button>
-            <button
-              v-for="page in Math.min(5, totalPages)"
-              :key="page"
-              @click="goToPage(page)"
-              :class="[
-                'px-3 py-1 border rounded-md text-sm',
-                page === currentPage
-                  ? 'bg-primary-600 text-white border-primary-600'
-                  : 'border-gray-300 dark:border-dark-border text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary'
-              ]"
-            >
-              {{ page }}
-            </button>
+            <template v-for="pg in paginationPages" :key="pg.value">
+              <span
+                v-if="pg.type === 'ellipsis'"
+                class="px-3 py-1 text-sm text-gray-500 dark:text-dark-text-secondary"
+              >...</span>
+              <button
+                v-else
+                @click="goToPage(pg.value)"
+                :aria-current="pg.value === currentPage ? 'page' : undefined"
+                :class="[
+                  'px-3 py-1 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500',
+                  pg.value === currentPage
+                    ? 'bg-primary-600 text-white border-primary-600'
+                    : 'border-gray-300 dark:border-dark-border text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary'
+                ]"
+              >
+                {{ pg.value }}
+              </button>
+            </template>
             <button
               @click="goToPage(currentPage + 1)"
               :disabled="currentPage === totalPages"
-              class="px-3 py-1 border border-gray-300 dark:border-dark-border rounded-md text-sm text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary disabled:opacity-50 disabled:cursor-not-allowed"
+              class="px-3 py-1 border border-gray-300 dark:border-dark-border rounded-md text-sm text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
               Next
             </button>

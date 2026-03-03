@@ -327,7 +327,7 @@ def run_httpx(tenant_id: int, asset_ids: List[int]):
                     '-max-redirects', '3',      # Limit redirects
                     '-no-color',                # Disable colors
                     '-silent',                  # Minimal output
-                    '-threads', '10',           # Use 10 threads for better performance
+                    '-threads', '10',           # Thread count
                     '-timeout', str(settings.httpx_timeout),
                     '-rate-limit', str(settings.httpx_rate_limit)
                 ],
@@ -580,7 +580,7 @@ def sanitize_html(text: str) -> str:
 # =============================================================================
 
 @celery.task(name='app.tasks.enrichment.run_naabu')
-def run_naabu(tenant_id: int, asset_ids: List[int], full_scan: bool = False):
+def run_naabu(tenant_id: int, asset_ids: List[int], full_scan: bool = False, rate: int = 0):
     """
     Run Naabu for port scanning
 
@@ -661,7 +661,7 @@ def run_naabu(tenant_id: int, asset_ids: List[int], full_scan: bool = False):
             args = [
                 '-json',
                 '-silent',
-                '-rate', str(settings.naabu_rate_limit or 1000)
+                '-rate', str(rate or settings.naabu_rate_limit or 1000)
             ]
 
             # Port selection
@@ -924,6 +924,8 @@ def run_tlsx(tenant_id: int, asset_ids: List[int]):
             hosts_content = '\n'.join(hosts)
 
             # Execute TLSx with stdin
+            # Note: tlsx -san/-cn flags cannot be combined with -cipher/-tls-version/-hash
+            # (mutually exclusive probe categories). Use -san/-cn for certificate identity.
             returncode, stdout, stderr = executor.execute(
                 'tlsx',
                 [
@@ -931,9 +933,6 @@ def run_tlsx(tenant_id: int, asset_ids: List[int]):
                     '-silent',
                     '-san',               # Include SANs
                     '-cn',                # Include CN
-                    '-cipher',            # Include cipher suites
-                    '-tls-version',       # Include TLS version
-                    '-hash', 'sha256'     # Certificate hash
                 ],
                 timeout=settings.tlsx_timeout,
                 stdin_data=hosts_content
@@ -941,7 +940,7 @@ def run_tlsx(tenant_id: int, asset_ids: List[int]):
 
             if returncode != 0:
                 tenant_logger.warning(f"TLSx returned non-zero exit code: {returncode}")
-                tenant_logger.debug(f"TLSx stderr: {stderr}")
+                tenant_logger.warning(f"TLSx stderr: {stderr}")
 
             # CRITICAL: Detect private keys in output
             private_key_detected, sanitized_stdout = detect_and_redact_private_keys(

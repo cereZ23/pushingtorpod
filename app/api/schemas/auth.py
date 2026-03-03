@@ -108,6 +108,8 @@ class UserResponse(BaseModel):
     full_name: Optional[str] = Field(None, description="Full name")
     is_active: bool = Field(..., description="Active status")
     is_superuser: bool = Field(..., description="Superuser status")
+    mfa_enabled: bool = Field(default=False, description="MFA enabled")
+    tenant_roles: dict[int, str] = Field(default_factory=dict, description="Role per tenant")
     created_at: datetime = Field(..., description="Account creation date")
     last_login: Optional[datetime] = Field(None, description="Last login date")
 
@@ -168,6 +170,55 @@ class ChangePasswordRequest(BaseModel):
             }
         }
     )
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Request password reset"""
+
+    email: EmailStr = Field(..., description="Email address")
+
+
+class ResetPasswordRequest(BaseModel):
+    """Reset password with token"""
+
+    token: str = Field(..., description="Password reset token")
+    new_password: str = Field(..., min_length=8, description="New password")
+
+
+class InviteAcceptRequest(BaseModel):
+    """Accept an invitation"""
+
+    token: str = Field(..., description="Invitation token")
+    username: str = Field(..., min_length=3, max_length=50, description="Username")
+    password: str = Field(..., min_length=8, description="Password")
+    full_name: Optional[str] = Field(None, description="Full name")
+
+
+class MfaSetupResponse(BaseModel):
+    """MFA setup response with provisioning URI"""
+
+    secret: str = Field(..., description="TOTP secret")
+    provisioning_uri: str = Field(..., description="URI for QR code")
+    qr_code_base64: Optional[str] = Field(None, description="Base64-encoded QR code image")
+
+
+class MfaVerifyRequest(BaseModel):
+    """Verify MFA code"""
+
+    code: str = Field(..., min_length=6, max_length=6, description="TOTP code")
+
+
+class MfaLoginRequest(BaseModel):
+    """Second step of MFA login"""
+
+    mfa_token: str = Field(..., description="Temporary MFA token from first login step")
+    code: str = Field(..., min_length=6, max_length=6, description="TOTP code")
+
+
+class MfaDisableRequest(BaseModel):
+    """Disable MFA"""
+
+    password: str = Field(..., description="Current password for confirmation")
 
 
 # Rebuild models to resolve forward references

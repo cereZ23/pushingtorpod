@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <style>{{ css }}</style>
+</head>
+<body>
+
+<!-- Running elements (positioned via CSS running()) -->
+<div class="running-header-left">
+    <div class="running-header-line">EASM SOC 2 Compliance Report</div>
+</div>
+<div class="running-header-right">
+    <div class="running-header-line">{{ tenant_name }} &mdash; {{ generated_at }}</div>
+</div>
+<span class="report-date">{{ generated_at }}</span>
+
+<!-- ========================================================================
+     COVER PAGE
+     ======================================================================== -->
+<div class="cover">
+    <!-- Indigo vertical spine -- brand signature -->
+    <div class="cover-spine"></div>
+
+    <!-- Subtle circuit-board grid pattern -->
+    <svg class="cover-grid" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 800" preserveAspectRatio="xMidYMid slice">
+        <defs>
+            <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#6366F1" stroke-width="0.5"/>
+            </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#grid)"/>
+        <circle cx="120" cy="160" r="3" fill="#6366F1"/>
+        <circle cx="280" cy="80" r="2" fill="#6366F1"/>
+        <circle cx="400" cy="240" r="3" fill="#6366F1"/>
+        <circle cx="200" cy="400" r="2" fill="#6366F1"/>
+        <circle cx="480" cy="360" r="3" fill="#6366F1"/>
+        <circle cx="320" cy="560" r="2" fill="#6366F1"/>
+        <circle cx="160" cy="680" r="3" fill="#6366F1"/>
+        <circle cx="440" cy="640" r="2" fill="#6366F1"/>
+        <line x1="120" y1="160" x2="280" y2="80" stroke="#6366F1" stroke-width="0.5"/>
+        <line x1="280" y1="80" x2="400" y2="240" stroke="#6366F1" stroke-width="0.5"/>
+        <line x1="200" y1="400" x2="480" y2="360" stroke="#6366F1" stroke-width="0.5"/>
+        <line x1="320" y1="560" x2="440" y2="640" stroke="#6366F1" stroke-width="0.5"/>
+    </svg>
+
+    <!-- TLP banner -->
+    <div class="cover-tlp tlp-red">TLP:RED &mdash; Restricted Distribution</div>
+
+    <div class="cover-content">
+        <div class="cover-brand">PUSHINGTORPOD</div>
+        <h1>SOC 2<br>Compliance</h1>
+        <p class="cover-subtitle">Trust Service Criteria Assessment</p>
+        <div class="cover-divider"></div>
+
+        <div class="cover-risk-display">
+            <div class="cover-risk-score">{{ "%.0f"|format(risk_score) }}<span class="cover-grade-badge grade-{{ risk_grade|lower }}">{{ risk_grade }}</span></div>
+            <div class="cover-risk-label">Risk Score / 100</div>
+        </div>
+
+        <div class="cover-meta">
+            <div class="cover-meta-row">
+                <div class="cover-meta-item">
+                    <span class="meta-key">Organization</span>
+                    <span class="meta-val">{{ tenant_name }}</span>
+                </div>
+                <div class="cover-meta-item">
+                    <span class="meta-key">Date</span>
+                    <span class="meta-val">{{ generated_at }}</span>
+                </div>
+                <div class="cover-meta-item">
+                    <span class="meta-key">Report ID</span>
+                    <span class="meta-val">{{ report_id }}</span>
+                </div>
+                <div class="cover-meta-item">
+                    <span class="meta-key">Framework</span>
+                    <span class="meta-val">AICPA SOC 2 Type II</span>
+                </div>
+            </div>
+
+            <div class="cover-classification">
+                <span class="cover-classification-badge">Confidential</span>
+                <span class="cover-classification-line"></span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ========================================================================
+     TABLE OF CONTENTS
+     ======================================================================== -->
+<div class="toc">
+    <div class="toc-header">Contents</div>
+    <div class="toc-header-line"></div>
+    <div class="toc-list">
+        <div class="toc-item"><a href="#executive-summary">1. Executive Summary</a></div>
+        <div class="toc-item"><a href="#control-mapping">2. Control Mapping Overview</a></div>
+        <div class="toc-item toc-sub"><a href="#control-summary-table">2.1 TSC Control Summary</a></div>
+        <div class="toc-item"><a href="#gap-analysis">3. Gap Analysis</a></div>
+        <div class="toc-item toc-sub"><a href="#gap-analysis">3.1 Control Failures (Critical)</a></div>
+        <div class="toc-item toc-sub"><a href="#gap-analysis">3.2 Control Weaknesses (High)</a></div>
+        <div class="toc-item toc-sub"><a href="#gap-analysis">3.3 Observations (Medium)</a></div>
+        <div class="toc-item"><a href="#findings-by-tsc">4. Findings by TSC Category</a></div>
+        {% for cat in tsc_categories %}
+        {% if compliance_map.get(cat.id, {}).get("findings") %}
+        <div class="toc-item toc-sub"><a href="#tsc-{{ cat.id }}">4.{{ loop.index }} {{ cat.id }}: {{ cat.name }} ({{ compliance_map[cat.id]["findings"]|length }})</a></div>
+        {% endif %}
+        {% endfor %}
+        <div class="toc-item"><a href="#remediation-timeline">5. Remediation Timeline</a></div>
+        <div class="toc-item"><a href="#recommendations">6. Recommendations</a></div>
+    </div>
+</div>
+
+<!-- ========================================================================
+     1. EXECUTIVE SUMMARY
+     ======================================================================== -->
+<h2 id="executive-summary"><span class="section-number">1</span> Executive Summary</h2>
+<div class="section-rule"></div>
+
+<div class="kpi-grid">
+    <div class="kpi-card accent-risk">
+        <div class="kpi-label">Risk Score</div>
+        <div class="kpi-value">{{ "%.0f"|format(risk_score) }}</div>
+        <div class="kpi-sub">out of 100</div>
+    </div>
+    <div class="kpi-card accent-grade">
+        <div class="kpi-label">Security Grade</div>
+        <div class="kpi-value grade-{{ risk_grade|lower }}">{{ risk_grade }}</div>
+        <div class="kpi-sub">overall rating</div>
+    </div>
+    <div class="kpi-card accent-assets">
+        <div class="kpi-label">TSC Controls Assessed</div>
+        <div class="kpi-value">{{ tsc_total_controls }}</div>
+        <div class="kpi-sub">trust service criteria</div>
+    </div>
+    <div class="kpi-card accent-open">
+        <div class="kpi-label">Control Gaps</div>
+        <div class="kpi-value">{{ tsc_gap_count }}</div>
+        <div class="kpi-sub">requiring attention</div>
+    </div>
+</div>
+
+<p class="section-intro">
+    This report presents a SOC 2 Trust Service Criteria (TSC) compliance assessment for
+    <strong>{{ tenant_name }}</strong> based on findings from the External Attack Surface Management platform.
+    As of <strong>{{ generated_at }}</strong>, the platform monitors <strong>{{ total_assets }}</strong> assets
+    and has identified <strong>{{ open_findings }}</strong> open finding{{ "s" if open_findings != 1 else "" }}
+    that have been mapped to the applicable SOC 2 trust service criteria.
+</p>
+
+<p class="section-intro">
+    The assessment evaluates the organization's external attack surface against AICPA SOC 2 Type II
+    controls, with particular focus on <strong>CC6</strong> (Logical and Physical Access Controls),
+    <strong>CC7</strong> (System Operations), <strong>CC8</strong> (Change Management), and
+    <strong>CC3</strong> (Risk Assessment). Findings are classified as <strong>control failures</strong>
+    (critical severity), <strong>control weaknesses</strong> (high severity), or
+    <strong>observations</strong> (medium severity and below).
+</p>
+
+{% if severity_counts.get("critical", 0) > 0 %}
+<div class="callout-box callout-danger no-break">
+    <div class="callout-title">Control Failures Identified</div>
+    <div class="callout-text">
+        {{ severity_counts.get("critical", 0) }} critical-severity finding{{ "s" if severity_counts.get("critical", 0) != 1 else "" }}
+        have been classified as <strong>control failures</strong> under the SOC 2 framework.
+        These represent material gaps in controls that may impact the SOC 2 Type II opinion
+        and require immediate remediation.
+    </div>
+</div>
+{% endif %}
+
+<!-- ========================================================================
+     2. CONTROL MAPPING OVERVIEW
+     ======================================================================== -->
+<h2 id="control-mapping"><span class="section-number">2</span> Control Mapping Overview</h2>
+<div class="section-rule"></div>
+
+<p class="section-intro">
+    The following table maps EASM findings to SOC 2 Trust Service Criteria categories.
+    Each category shows the number of associated findings, their severity distribution,
+    and the overall control health status.
+</p>
+
+<h3 id="control-summary-table"><span class="subsection-number">2.1</span> TSC Control Summary</h3>
+
+<table>
+    <thead>
+        <tr>
+            <th style="width: 10%">TSC ID</th>
+            <th style="width: 28%">Trust Service Criteria</th>
+            <th style="text-align: center; width: 8%">Findings</th>
+            <th style="text-align: center; width: 10%">Critical</th>
+            <th style="text-align: center; width: 10%">High</th>
+            <th style="text-align: center; width: 10%">Medium</th>
+            <th style="width: 24%">Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for cat in tsc_categories %}
+        {% set cat_data = compliance_map.get(cat.id, {}) %}
+        {% set cat_findings = cat_data.get("findings", []) %}
+        {% set cat_critical = cat_findings|selectattr("severity", "equalto", "critical")|list|length %}
+        {% set cat_high = cat_findings|selectattr("severity", "equalto", "high")|list|length %}
+        {% set cat_medium = cat_findings|selectattr("severity", "equalto", "medium")|list|length %}
+        <tr>
+            <td style="font-weight: 700; color: #4F46E5">{{ cat.id }}</td>
+            <td style="font-weight: 600">{{ cat.name }}</td>
+            <td style="text-align: center; font-weight: 700">{{ cat_findings|length }}</td>
+            <td style="text-align: center">
+                {% if cat_critical > 0 %}
+                <span class="badge badge-critical">{{ cat_critical }}</span>
+                {% else %}&mdash;{% endif %}
+            </td>
+            <td style="text-align: center">
+                {% if cat_high > 0 %}
+                <span class="badge badge-high">{{ cat_high }}</span>
+                {% else %}&mdash;{% endif %}
+            </td>
+            <td style="text-align: center">
+                {% if cat_medium > 0 %}
+                <span class="badge badge-medium">{{ cat_medium }}</span>
+                {% else %}&mdash;{% endif %}
+            </td>
+            <td>
+                {% if cat_critical > 0 %}
+                <span class="badge badge-critical">CONTROL FAILURE</span>
+                {% elif cat_high > 0 %}
+                <span class="badge badge-high">WEAKNESS</span>
+                {% elif cat_medium > 0 %}
+                <span class="badge badge-medium">OBSERVATION</span>
+                {% elif cat_findings|length > 0 %}
+                <span class="badge badge-low">MINOR</span>
+                {% else %}
+                <span class="badge badge-fixed">NO ISSUES</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<!-- Charts -->
+<div class="chart-row">
+    <div class="chart-box">
+        <div class="chart-title">Risk Score Gauge</div>
+        <img src="{{ gauge_chart }}" alt="Risk gauge">
+    </div>
+    <div class="chart-box">
+        <div class="chart-title">Findings by Severity</div>
+        <img src="{{ severity_chart }}" alt="Severity distribution">
+    </div>
+</div>
+
+<!-- ========================================================================
+     3. GAP ANALYSIS
+     ======================================================================== -->
+<div class="page-break"></div>
+<h2 id="gap-analysis"><span class="section-number">3</span> Gap Analysis</h2>
+<div class="section-rule"></div>
+
+<p class="section-intro">
+    This section categorizes findings by their impact on SOC 2 control effectiveness.
+    The classification uses the following severity-to-impact mapping:
+</p>
+
+<table>
+    <thead>
+        <tr>
+            <th style="width: 20%">Finding Severity</th>
+            <th style="width: 25%">SOC 2 Classification</th>
+            <th style="width: 55%">Implication</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td><span class="badge badge-critical">CRITICAL</span></td>
+            <td style="font-weight: 700; color: #991B1B">Control Failure</td>
+            <td>The control is not operating effectively. Material weakness that may impact the SOC 2 opinion. Requires immediate remediation.</td>
+        </tr>
+        <tr>
+            <td><span class="badge badge-high">HIGH</span></td>
+            <td style="font-weight: 700; color: #9A3412">Control Weakness</td>
+            <td>The control exists but has significant deficiencies. Should be remediated within the SLA to prevent escalation to a control failure.</td>
+        </tr>
+        <tr>
+            <td><span class="badge badge-medium">MEDIUM</span></td>
+            <td style="font-weight: 700; color: #854D0E">Observation</td>
+            <td>The control is generally effective but has room for improvement. Should be addressed during normal remediation cycles.</td>
+        </tr>
+        <tr>
+            <td><span class="badge badge-low">LOW</span> / <span class="badge badge-info">INFO</span></td>
+            <td style="font-weight: 600; color: #475569">Informational</td>
+            <td>Minor items noted for awareness. No significant control impact. Address as part of continuous improvement.</td>
+        </tr>
+    </tbody>
+</table>
+
+<!-- Control Failures -->
+{% set control_failures = gap_analysis.get("control_failures", []) %}
+{% if control_failures %}
+<h3><span class="subsection-number">3.1</span> Control Failures ({{ control_failures|length }})</h3>
+
+<div class="callout-box callout-danger no-break">
+    <div class="callout-title">Material Control Deficiencies</div>
+    <div class="callout-text">
+        The following {{ control_failures|length }} critical finding{{ "s" if control_failures|length != 1 else "" }}
+        represent{{ "" if control_failures|length != 1 else "s" }} material control failures that could affect
+        the SOC 2 Type II audit opinion. Immediate remediation is required.
+    </div>
+</div>
+
+<table>
+    <thead>
+        <tr>
+            <th style="width: 5%; text-align: center">#</th>
+            <th style="width: 28%">Finding</th>
+            <th style="width: 10%">TSC</th>
+            <th style="width: 8%" class="text-right">CVSS</th>
+            <th style="width: 30%">Affected Asset</th>
+            <th style="width: 19%">First Seen</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for f in control_failures %}
+        <tr>
+            <td class="rank-cell" style="text-align: center">{{ loop.index }}</td>
+            <td style="font-weight: 600; color: #1E293B">{{ f.name }}</td>
+            <td><span class="badge badge-critical">{{ f.tsc_id }}</span></td>
+            <td class="text-right" style="font-weight: 700">{{ "%.1f"|format(f.cvss_score) if f.cvss_score else "&mdash;" }}</td>
+            <td class="asset-cell">{{ f.asset_identifier }}</td>
+            <td style="font-size: 8pt; color: #64748B">{{ f.first_seen }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<h3><span class="subsection-number">3.1</span> Control Failures</h3>
+<div class="callout-box callout-info no-break">
+    <div class="callout-title">No Control Failures</div>
+    <div class="callout-text">
+        No critical-severity findings were detected. No material control failures identified at this time.
+    </div>
+</div>
+{% endif %}
+
+<!-- Control Weaknesses -->
+{% set control_weaknesses = gap_analysis.get("control_weaknesses", []) %}
+{% if control_weaknesses %}
+<h3><span class="subsection-number">3.2</span> Control Weaknesses ({{ control_weaknesses|length }})</h3>
+
+<table>
+    <thead>
+        <tr>
+            <th style="width: 5%; text-align: center">#</th>
+            <th style="width: 28%">Finding</th>
+            <th style="width: 10%">TSC</th>
+            <th style="width: 8%" class="text-right">CVSS</th>
+            <th style="width: 30%">Affected Asset</th>
+            <th style="width: 19%">First Seen</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for f in control_weaknesses %}
+        <tr>
+            <td class="rank-cell" style="text-align: center">{{ loop.index }}</td>
+            <td style="font-weight: 600; color: #1E293B">{{ f.name }}</td>
+            <td><span class="badge badge-high">{{ f.tsc_id }}</span></td>
+            <td class="text-right" style="font-weight: 700">{{ "%.1f"|format(f.cvss_score) if f.cvss_score else "&mdash;" }}</td>
+            <td class="asset-cell">{{ f.asset_identifier }}</td>
+            <td style="font-size: 8pt; color: #64748B">{{ f.first_seen }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<h3><span class="subsection-number">3.2</span> Control Weaknesses</h3>
+<div class="callout-box callout-info no-break">
+    <div class="callout-title">No Control Weaknesses</div>
+    <div class="callout-text">No high-severity findings mapped to control weaknesses.</div>
+</div>
+{% endif %}
+
+<!-- Observations -->
+{% set observations = gap_analysis.get("observations", []) %}
+{% if observations %}
+<h3><span class="subsection-number">3.3</span> Observations ({{ observations|length }})</h3>
+
+<table>
+    <thead>
+        <tr>
+            <th style="width: 5%; text-align: center">#</th>
+            <th style="width: 28%">Finding</th>
+            <th style="width: 10%">TSC</th>
+            <th style="width: 8%" class="text-right">CVSS</th>
+            <th style="width: 30%">Affected Asset</th>
+            <th style="width: 19%">First Seen</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for f in observations %}
+        <tr>
+            <td class="rank-cell" style="text-align: center">{{ loop.index }}</td>
+            <td style="font-weight: 600; color: #1E293B">{{ f.name }}</td>
+            <td><span class="badge badge-medium">{{ f.tsc_id }}</span></td>
+            <td class="text-right" style="font-weight: 700">{{ "%.1f"|format(f.cvss_score) if f.cvss_score else "&mdash;" }}</td>
+            <td class="asset-cell">{{ f.asset_identifier }}</td>
+            <td style="font-size: 8pt; color: #64748B">{{ f.first_seen }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<h3><span class="subsection-number">3.3</span> Observations</h3>
+<div class="callout-box callout-info no-break">
+    <div class="callout-title">No Observations</div>
+    <div class="callout-text">No medium-severity findings mapped to observations.</div>
+</div>
+{% endif %}
+
+<!-- ========================================================================
+     4. FINDINGS BY TSC CATEGORY
+     ======================================================================== -->
+<div class="page-break"></div>
+<h2 id="findings-by-tsc"><span class="section-number">4</span> Findings by TSC Category</h2>
+<div class="section-rule"></div>
+
+<p class="section-intro">
+    This section presents all mapped findings organized by their Trust Service Criteria category.
+    Each finding includes the affected asset, severity classification, and the rationale for its
+    TSC mapping.
+</p>
+
+{% for cat in tsc_categories %}
+{% set cat_data = compliance_map.get(cat.id, {}) %}
+{% set cat_findings = cat_data.get("findings", []) %}
+{% if cat_findings %}
+
+<div class="severity-group">
+    <div class="severity-group-header sev-{% if cat_findings|selectattr('severity', 'equalto', 'critical')|list|length > 0 %}critical{% elif cat_findings|selectattr('severity', 'equalto', 'high')|list|length > 0 %}high{% elif cat_findings|selectattr('severity', 'equalto', 'medium')|list|length > 0 %}medium{% else %}low{% endif %}" id="tsc-{{ cat.id }}">
+        <span>{{ cat.id }}: {{ cat.name }}</span>
+        <span class="sev-count">&mdash; {{ cat_findings|length }} finding{{ "s" if cat_findings|length != 1 else "" }}</span>
+    </div>
+</div>
+
+<p class="section-intro" style="margin-top: 0; font-size: 8.5pt; color: #64748B;">
+    {{ cat.description }}
+</p>
+
+{% for f in cat_findings %}
+<div class="finding-card sev-{{ f.severity }}">
+    <div class="finding-card-body">
+        <div class="finding-header">
+            <span class="finding-title">{{ f.name }}</span>
+            <span class="badge badge-{{ f.severity }}">{{ f.severity|upper }}</span>
+            {% if f.cvss_score %}
+            <span class="finding-cvss {% if f.cvss_score >= 9.0 %}cvss-critical{% elif f.cvss_score >= 7.0 %}cvss-high{% elif f.cvss_score >= 4.0 %}cvss-medium{% elif f.cvss_score > 0 %}cvss-low{% else %}cvss-none{% endif %}">CVSS {{ "%.1f"|format(f.cvss_score) }}</span>
+            {% endif %}
+        </div>
+
+        <div class="finding-meta">
+            <div class="meta-item">
+                <span class="meta-label">Asset</span>
+                <span class="meta-value">{{ f.asset_identifier }}</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">TSC Control</span>
+                <span class="meta-value" style="font-weight: 700; color: #4F46E5">{{ f.tsc_id }}</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">SOC 2 Impact</span>
+                <span class="meta-value">
+                    {% if f.severity == "critical" %}Control Failure
+                    {% elif f.severity == "high" %}Control Weakness
+                    {% elif f.severity == "medium" %}Observation
+                    {% else %}Informational{% endif %}
+                </span>
+            </div>
+            {% if f.template_id %}
+            <div class="meta-item">
+                <span class="meta-label">Template</span>
+                <span class="meta-value" style="font-family: monospace; font-size: 7.5pt">{{ f.template_id }}</span>
+            </div>
+            {% endif %}
+            <div class="meta-item">
+                <span class="meta-label">First Seen</span>
+                <span class="meta-value">{{ f.first_seen }}</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Status</span>
+                <span class="meta-value"><span class="badge badge-{{ f.status }}">{{ f.status|upper }}</span></span>
+            </div>
+        </div>
+
+        {% if f.remediation %}
+        <div class="finding-section">
+            <div class="section-label">Remediation</div>
+            <div class="remediation-block">
+                <p class="remediation-text">{{ f.remediation }}</p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+
+{% endif %}
+{% endfor %}
+
+<!-- ========================================================================
+     5. REMEDIATION TIMELINE
+     ======================================================================== -->
+<div class="page-break"></div>
+<h2 id="remediation-timeline"><span class="section-number">5</span> Remediation Timeline</h2>
+<div class="section-rule"></div>
+
+<p class="section-intro">
+    The following remediation timeline aligns with SOC 2 audit expectations and
+    industry-standard SLAs for vulnerability management.
+</p>
+
+<table>
+    <thead>
+        <tr>
+            <th style="width: 20%">Priority</th>
+            <th style="width: 20%">SOC 2 Impact</th>
+            <th style="width: 15%">SLA Target</th>
+            <th style="text-align: center; width: 15%">Count</th>
+            <th style="width: 30%">Action Required</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td><span class="badge badge-critical">IMMEDIATE</span></td>
+            <td style="font-weight: 700; color: #991B1B">Control Failure</td>
+            <td style="font-weight: 700">24 hours</td>
+            <td style="text-align: center; font-weight: 700; font-size: 12pt">{{ severity_counts.get("critical", 0) }}</td>
+            <td>Emergency patch or compensating control required before next audit evidence collection.</td>
+        </tr>
+        <tr>
+            <td><span class="badge badge-high">URGENT</span></td>
+            <td style="font-weight: 700; color: #9A3412">Control Weakness</td>
+            <td style="font-weight: 700">7 days</td>
+            <td style="text-align: center; font-weight: 700; font-size: 12pt">{{ severity_counts.get("high", 0) }}</td>
+            <td>Schedule remediation sprint. Document compensating controls if fix is delayed.</td>
+        </tr>
+        <tr>
+            <td><span class="badge badge-medium">PLANNED</span></td>
+            <td style="font-weight: 700; color: #854D0E">Observation</td>
+            <td style="font-weight: 700">30 days</td>
+            <td style="text-align: center; font-weight: 700; font-size: 12pt">{{ severity_counts.get("medium", 0) }}</td>
+            <td>Include in next maintenance cycle. Track in remediation backlog.</td>
+        </tr>
+        <tr>
+            <td><span class="badge badge-low">BACKLOG</span></td>
+            <td style="font-weight: 600; color: #475569">Informational</td>
+            <td style="font-weight: 600">90 days</td>
+            <td style="text-align: center; font-weight: 700; font-size: 12pt">{{ severity_counts.get("low", 0) + severity_counts.get("info", 0) }}</td>
+            <td>Address as part of continuous improvement. Monitor for escalation.</td>
+        </tr>
+    </tbody>
+</table>
+
+<!-- ========================================================================
+     6. RECOMMENDATIONS
+     ======================================================================== -->
+<h2 id="recommendations"><span class="section-number">6</span> Recommendations</h2>
+<div class="section-rule"></div>
+
+<p class="section-intro">
+    The following recommendations are prioritized to address SOC 2 compliance gaps and
+    strengthen the organization's control environment.
+</p>
+
+<div class="rec-list">
+{% for rec in recommendations %}
+<div class="recommendation">
+    <div class="rec-priority-badge">{{ rec.priority }}</div>
+    <div class="rec-body">
+        <div class="rec-title">{{ rec.title }}</div>
+        <div class="rec-desc">{{ rec.description }}</div>
+    </div>
+</div>
+{% endfor %}
+</div>
+
+<!-- ========================================================================
+     FOOTER / DISCLAIMER
+     ======================================================================== -->
+<div class="report-footer">
+    <strong>Disclaimer:</strong> This SOC 2 compliance report is generated automatically by the
+    EASM platform and provides a best-effort mapping of external attack surface findings to
+    AICPA Trust Service Criteria. This report does not constitute a formal SOC 2 audit opinion
+    and should be used as supplementary evidence for compliance assessments. Findings are based
+    on automated scanning and may require manual validation by qualified auditors.
+    This document is classified as <strong>Confidential</strong> and is intended
+    solely for authorized recipients within {{ tenant_name }}.
+</div>
+
+</body>
+</html>

@@ -180,6 +180,7 @@ class SecureToolExecutor:
             'PATH': '/usr/local/pd-tools:/usr/local/bin:/usr/bin:/bin',
             'HOME': str(self.temp_dir) if self.temp_dir else '/tmp',
             'LANG': 'C.UTF-8',
+            'NUCLEI_TEMPLATES': '/home/appuser/nuclei-templates',
         }
 
         timeout = timeout or self.timeout

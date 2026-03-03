@@ -6,6 +6,7 @@ import { certificateApi } from '@/api/certificates'
 import { assetApi } from '@/api/assets'
 import type { Certificate, Asset } from '@/api/types'
 import { ArrowLeftIcon } from '@heroicons/vue/24/outline'
+import { formatDate } from '@/utils/formatters'
 
 const route = useRoute()
 const router = useRouter()
@@ -62,10 +63,6 @@ function getExpiryColor(cert: Certificate): string {
   return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
 }
 
-function formatDate(dateString: string): string {
-  return new Date(dateString).toLocaleString()
-}
-
 onMounted(() => {
   loadCertificateDetails()
 })
@@ -92,12 +89,12 @@ onMounted(() => {
     </div>
 
     <!-- Error State -->
-    <div v-if="error" class="rounded-md bg-red-50 dark:bg-red-900/20 p-4 mb-6">
+    <div v-if="error" role="alert" class="rounded-md bg-red-50 dark:bg-red-900/20 p-4 mb-6">
       <p class="text-sm text-red-800 dark:text-red-200">{{ error }}</p>
     </div>
 
     <!-- Loading State -->
-    <div v-if="isLoading" class="bg-white dark:bg-dark-bg-secondary shadow rounded-lg p-8">
+    <div v-if="isLoading" role="status" class="bg-white dark:bg-dark-bg-secondary shadow rounded-lg p-8">
       <div class="animate-pulse space-y-4">
         <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-full"></div>
         <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4"></div>

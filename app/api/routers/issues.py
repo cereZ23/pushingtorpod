@@ -38,6 +38,7 @@ from app.api.schemas.finding import FindingResponse
 from app.models.auth import User
 from app.models.database import Asset, Finding, FindingStatus
 from app.models.issues import Issue, IssueActivity, IssueFinding, IssueStatus
+from app.core.audit import log_data_modification
 
 logger = logging.getLogger(__name__)
 
@@ -275,7 +276,7 @@ def list_issues(
         "status": Issue.status,
         "created_at": Issue.created_at,
         "updated_at": Issue.updated_at,
-        "sla_deadline": Issue.sla_deadline,
+        "sla_deadline": Issue.sla_due_at,
         "risk_score": Issue.risk_score,
     }
     sort_column = ALLOWED_SORT_COLUMNS.get(sort_by, Issue.created_at)
@@ -539,6 +540,15 @@ def update_issue(
     db.commit()
     db.refresh(issue)
 
+    log_data_modification(
+        action="update",
+        resource="issue",
+        resource_id=str(issue.id),
+        user_id=current_user.id,
+        tenant_id=tenant_id,
+        details={"status": issue.status.value},
+    )
+
     logger.info(
         "Updated issue %d (tenant %d) by user %d: status=%s",
         issue.id,
@@ -594,6 +604,15 @@ def add_comment(
 
     db.commit()
     db.refresh(activity)
+
+    log_data_modification(
+        action="update",
+        resource="issue",
+        resource_id=str(issue.id),
+        user_id=current_user.id,
+        tenant_id=tenant_id,
+        details={"action": "comment_added"},
+    )
 
     logger.info(
         "Comment added to issue %d (tenant %d) by user %d",
@@ -692,6 +711,15 @@ def assign_issue(
 
     db.commit()
     db.refresh(issue)
+
+    log_data_modification(
+        action="update",
+        resource="issue",
+        resource_id=str(issue.id),
+        user_id=current_user.id,
+        tenant_id=tenant_id,
+        details={"assigned_to": body.assigned_to},
+    )
 
     logger.info(
         "Issue %d (tenant %d) assigned to user %d by user %d",

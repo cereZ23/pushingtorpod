@@ -6,8 +6,15 @@ export interface User {
   full_name?: string
   is_active: boolean
   is_superuser: boolean
+  mfa_enabled?: boolean
+  tenant_roles?: Record<number, string>
   created_at: string
   last_login?: string
+}
+
+export interface LoginMfaResponse {
+  mfa_required: true
+  mfa_token: string
 }
 
 export interface LoginRequest {
@@ -122,8 +129,12 @@ export interface Asset {
   certificate_count?: number
   endpoint_count?: number
   finding_count?: number
-  metadata?: Record<string, any>
-  raw_metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
+  raw_metadata?: Record<string, unknown>
+  // CDN/WAF/Cloud detection (Phase 5b: cdncheck)
+  cdn_name?: string
+  waf_name?: string
+  cloud_provider?: string
   // New enriched fields
   summary?: AssetSummary
   dns_info?: AssetDnsInfo
@@ -150,8 +161,21 @@ export interface AssetEvent {
   id: number
   asset_id: number
   kind: string
-  payload?: Record<string, any>
+  payload?: Record<string, unknown>
   created_at: string
+}
+
+// Threat intel enrichment embedded in finding evidence
+export interface FindingThreatIntel {
+  epss_score?: number
+  is_kev?: boolean
+  kev_date_added?: string
+  kev_due_date?: string
+}
+
+export interface FindingEvidence {
+  threat_intel?: FindingThreatIntel
+  [key: string]: unknown
 }
 
 // Finding types
@@ -164,7 +188,7 @@ export interface Finding {
   severity: 'critical' | 'high' | 'medium' | 'low' | 'info'
   cvss_score?: number
   cve_id?: string
-  evidence?: Record<string, any>
+  evidence?: FindingEvidence
   first_seen: string
   last_seen: string
   status: 'open' | 'suppressed' | 'fixed'
@@ -247,14 +271,23 @@ export interface RecentActivity {
   type: string
   description: string
   timestamp: string
-  metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
+}
+
+export interface TrendingAsset {
+  id: number
+  identifier: string
+  type: string
+  risk_score: number
+  finding_count: number
+  last_seen?: string
 }
 
 export interface DashboardStats {
   tenant: Tenant
   stats: TenantStats
   recent_activity: RecentActivity[]
-  trending_assets: any[]
+  trending_assets: TrendingAsset[]
   risk_distribution: Record<string, number>
 }
 

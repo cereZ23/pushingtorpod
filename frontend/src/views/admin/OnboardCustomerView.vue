@@ -1,9 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useAuthStore } from '@/stores/auth'
-import axios from 'axios'
-
-const authStore = useAuthStore()
+import apiClient from '@/api/client'
 
 // Form state
 const isLoading = ref(false)
@@ -134,18 +131,13 @@ const submitOnboarding = async () => {
     // Filter out empty domains
     const cleanDomains = formData.value.domains.filter(d => d.trim())
 
-    const response = await axios.post(
-      'http://localhost:18000/api/v1/onboarding/register',
+    const response = await apiClient.post(
+      '/api/v1/onboarding/register',
       {
         company_name: formData.value.companyName,
         email: formData.value.email,
         password: formData.value.password,
         domains: cleanDomains
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${authStore.accessToken}`
-        }
       }
     )
 
@@ -159,12 +151,12 @@ const submitOnboarding = async () => {
       showForm.value = true
     }, 3000)
 
-  } catch (err: any) {
-    console.error('Onboarding error:', err)
-    if (err.response?.status === 403) {
+  } catch (err: unknown) {
+    const axiosErr = err as { response?: { status?: number; data?: { detail?: string } }; message?: string }
+    if (axiosErr.response?.status === 403) {
       error.value = 'You must be an admin to onboard customers'
-    } else if (err.response?.data?.detail) {
-      error.value = err.response.data.detail
+    } else if (axiosErr.response?.data?.detail) {
+      error.value = axiosErr.response.data.detail
     } else {
       error.value = 'Failed to onboard customer. Please try again.'
     }
@@ -282,7 +274,7 @@ const submitOnboarding = async () => {
               Enter root domains (e.g., example.com). The system will automatically discover all subdomains.
             </p>
 
-            <div v-for="(domain, index) in formData.domains" :key="index" class="flex items-center space-x-2 mb-3">
+            <div v-for="(_domain, index) in formData.domains" :key="index" class="flex items-center space-x-2 mb-3">
               <input
                 v-model="formData.domains[index]"
                 type="text"

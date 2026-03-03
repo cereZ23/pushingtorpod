@@ -55,6 +55,11 @@ class Asset(Base):
     priority_updated_at = Column(DateTime)
     priority_auto_calculated = Column(Boolean, default=True)  # False if manually set
 
+    # CDN/WAF/Cloud detection (Phase 5b: cdncheck)
+    cdn_name = Column(String(100), nullable=True)
+    waf_name = Column(String(100), nullable=True)
+    cloud_provider = Column(String(100), nullable=True)
+
     tenant = relationship("Tenant", back_populates="assets")
     services = relationship("Service", back_populates="asset", cascade="all, delete-orphan")
     findings = relationship("Finding", back_populates="asset", cascade="all, delete-orphan")
@@ -158,6 +163,10 @@ class Finding(Base):
     host = Column(String(500))  # Hostname extracted from matched_at
     matcher_name = Column(String(255))  # Nuclei matcher name for deduplication
 
+    # Deduplication: SHA-256 fingerprint and occurrence tracking
+    fingerprint = Column(String(64), index=True)  # SHA-256 hex digest
+    occurrence_count = Column(Integer, default=1, server_default="1")
+
     asset = relationship("Asset", back_populates="findings")
 
     __table_args__ = (
@@ -168,6 +177,8 @@ class Finding(Base):
         Index('idx_cve_id', 'cve_id'),
         # Sprint 3: Deduplication index (asset_id, template_id, matcher_name)
         Index('idx_finding_dedup', 'asset_id', 'template_id', 'matcher_name'),
+        # Fingerprint unique constraint for universal dedup
+        Index('idx_finding_fingerprint', 'fingerprint', unique=True),
     )
 
     def __repr__(self):

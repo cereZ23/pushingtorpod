@@ -1,9 +1,14 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTenantStore } from '@/stores/tenant'
 import { findingApi } from '@/api/findings'
+import apiClient from '@/api/client'
 import type { Finding, PaginatedResponse } from '@/api/types'
+import { getSeverityBadgeClass, getFindingStatusBadgeClass } from '@/utils/severity'
+import { formatDate } from '@/utils/formatters'
+import { useWindowedPagination } from '@/composables/usePagination'
+import SkeletonLoader from '@/components/SkeletonLoader.vue'
 
 const router = useRouter()
 const tenantStore = useTenantStore()
@@ -22,7 +27,14 @@ const selectedSeverity = ref('')
 const selectedStatus = ref('')
 const selectedSource = ref('')
 
+// Bulk selection
+const selectedIds = ref<Set<number>>(new Set())
+const isBulkUpdating = ref(false)
+
 const currentTenantId = computed(() => tenantStore.currentTenantId)
+
+// AbortController for cancelling in-flight API requests on navigation
+let abortController: AbortController | null = null
 
 onMounted(async () => {
   await loadFindings()
@@ -30,16 +42,24 @@ onMounted(async () => {
 
 watch(currentTenantId, () => {
   if (currentTenantId.value) {
+    currentPage.value = 1
     loadFindings()
   }
 })
 
+const { pages: paginationPages, hasPrevious, hasNext } = useWindowedPagination(currentPage, totalPages)
+
 async function loadFindings() {
+  selectedIds.value = new Set()
+
   if (!currentTenantId.value) {
     error.value = 'No tenant selected'
     isLoading.value = false
     return
   }
+
+  abortController?.abort()
+  abortController = new AbortController()
 
   isLoading.value = true
   error.value = ''
@@ -59,12 +79,17 @@ async function loadFindings() {
     totalItems.value = response.meta.total
     totalPages.value = response.meta.total_pages
   } catch (err: unknown) {
+    if (err instanceof Error && (err.name === 'CanceledError' || err.name === 'AbortError')) return
     const axiosErr = err as { message?: string }
     error.value = axiosErr.message || 'Failed to load findings'
   } finally {
     isLoading.value = false
   }
 }
+
+onUnmounted(() => {
+  abortController?.abort()
+})
 
 function handleSearch() {
   currentPage.value = 1
@@ -80,30 +105,81 @@ function viewFinding(findingId: number) {
   router.push({ name: 'FindingDetail', params: { id: findingId } })
 }
 
-function getSeverityColor(severity: string): string {
-  const colors: Record<string, string> = {
-    critical: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400',
-    high: 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400',
-    medium: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
-    low: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
-    info: 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400',
+function toggleSelectAll() {
+  if (selectedIds.value.size === findings.value.length) {
+    selectedIds.value = new Set()
+  } else {
+    selectedIds.value = new Set(findings.value.map(f => f.id))
   }
-  return colors[severity] || colors.info
 }
 
-function getStatusColor(status: string): string {
-  const colors: Record<string, string> = {
-    open: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400',
-    suppressed: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
-    fixed: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
+function toggleSelect(id: number) {
+  const next = new Set(selectedIds.value)
+  if (next.has(id)) {
+    next.delete(id)
+  } else {
+    next.add(id)
   }
-  return colors[status] || 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
+  selectedIds.value = next
 }
 
-function formatDate(dateString: string): string {
-  const date = new Date(dateString)
-  return date.toLocaleDateString()
+async function bulkChangeStatus(newStatus: string) {
+  if (selectedIds.value.size === 0) return
+  isBulkUpdating.value = true
+
+  try {
+    const tid = currentTenantId.value
+    if (!tid) return
+    const results = await Promise.allSettled(
+      Array.from(selectedIds.value).map(id =>
+        findingApi.update(tid, id, { status: newStatus } as Partial<Finding>)
+      )
+    )
+    const failed = results.filter(r => r.status === 'rejected').length
+    if (failed > 0) {
+      error.value = `${failed} of ${selectedIds.value.size} updates failed`
+    }
+    selectedIds.value = new Set()
+    await loadFindings()
+  } catch {
+    error.value = 'Bulk update failed'
+  } finally {
+    isBulkUpdating.value = false
+  }
 }
+
+function handleBulkStatusChange(event: Event) {
+  const select = event.target as HTMLSelectElement
+  const value = select.value
+  if (value) {
+    bulkChangeStatus(value)
+    select.value = ''
+  }
+}
+
+async function exportCsv() {
+  const tid = currentTenantId.value
+  if (!tid) return
+
+  try {
+    const response = await apiClient.get(
+      `/api/v1/tenants/${tid}/reports/export/csv`,
+      { responseType: 'blob' }
+    )
+    const url = URL.createObjectURL(response.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'findings_export.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    error.value = 'Failed to export CSV'
+  }
+}
+
+// Color functions and formatDate imported from @/utils/severity and @/utils/formatters
+const getSeverityColor = getSeverityBadgeClass
+const getStatusColor = getFindingStatusBadgeClass
 </script>
 
 <template>
@@ -111,13 +187,21 @@ function formatDate(dateString: string): string {
     <!-- Header -->
     <div class="flex justify-between items-center">
       <h2 class="text-2xl font-bold text-gray-900 dark:text-dark-text-primary">Findings</h2>
-      <button
-        @click="loadFindings"
-        :disabled="isLoading"
-        class="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50"
-      >
-        Refresh
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          @click="exportCsv"
+          class="px-4 py-2 border border-gray-300 dark:border-dark-border text-gray-700 dark:text-dark-text-secondary rounded-md hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary text-sm font-medium"
+        >
+          Export CSV
+        </button>
+        <button
+          @click="loadFindings"
+          :disabled="isLoading"
+          class="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50"
+        >
+          Refresh
+        </button>
+      </div>
     </div>
 
     <!-- Filters -->
@@ -188,50 +272,93 @@ function formatDate(dateString: string): string {
       </div>
     </div>
 
-    <!-- Loading State -->
-    <div v-if="isLoading" class="flex items-center justify-center h-64">
-      <div class="text-gray-600 dark:text-dark-text-secondary">Loading findings...</div>
+    <!-- Loading State (Skeleton) -->
+    <div v-if="isLoading" role="status" class="bg-white dark:bg-dark-bg-secondary rounded-lg border border-gray-200 dark:border-dark-border overflow-hidden">
+      <SkeletonLoader variant="table-row" :rows="10" />
     </div>
 
     <!-- Error State -->
-    <div v-else-if="error" class="bg-red-50 dark:bg-red-900/20 p-4 rounded-md">
+    <div v-else-if="error" role="alert" class="bg-red-50 dark:bg-red-900/20 p-4 rounded-md">
       <p class="text-red-800 dark:text-red-200">{{ error }}</p>
     </div>
 
     <!-- Findings Table -->
     <div v-else class="bg-white dark:bg-dark-bg-secondary rounded-lg border border-gray-200 dark:border-dark-border overflow-hidden">
+      <!-- Bulk Actions -->
+      <div v-if="selectedIds.size > 0" class="bg-primary-50 dark:bg-primary-900/20 px-6 py-3 flex items-center justify-between border-b border-primary-200 dark:border-primary-800">
+        <span class="text-sm font-medium text-primary-700 dark:text-primary-300">
+          {{ selectedIds.size }} selected
+        </span>
+        <div class="flex items-center gap-2">
+          <select
+            @change="handleBulkStatusChange"
+            :disabled="isBulkUpdating"
+            class="text-sm border border-gray-300 dark:border-dark-border rounded-md px-2 py-1 dark:bg-dark-bg-tertiary dark:text-dark-text-primary"
+          >
+            <option value="">Change Status...</option>
+            <option value="open">Open</option>
+            <option value="suppressed">Suppressed</option>
+            <option value="fixed">Fixed</option>
+          </select>
+          <button
+            @click="selectedIds = new Set()"
+            class="text-sm text-gray-600 dark:text-dark-text-secondary hover:text-gray-800 dark:hover:text-dark-text-primary"
+          >
+            Clear
+          </button>
+        </div>
+      </div>
       <div class="overflow-x-auto">
         <table class="min-w-full divide-y divide-gray-200 dark:divide-dark-border">
           <thead class="bg-gray-50 dark:bg-dark-bg-tertiary">
             <tr>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-3 py-3 text-left">
+                <input
+                  type="checkbox"
+                  :checked="selectedIds.size === findings.length && findings.length > 0"
+                  :indeterminate="selectedIds.size > 0 && selectedIds.size < findings.length"
+                  @change="toggleSelectAll"
+                  class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  aria-label="Select all findings"
+                />
+              </th>
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 Name
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 Severity
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 Status
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 Asset
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 Source
               </th>
-              <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-center text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 Seen
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 First Seen
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 Actions
               </th>
             </tr>
           </thead>
           <tbody class="bg-white dark:bg-dark-bg-secondary divide-y divide-gray-200 dark:divide-dark-border">
             <tr v-for="finding in findings" :key="finding.id" class="hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary">
+              <td class="px-3 py-4">
+                <input
+                  type="checkbox"
+                  :checked="selectedIds.has(finding.id)"
+                  @change="toggleSelect(finding.id)"
+                  class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  :aria-label="`Select finding ${finding.name}`"
+                />
+              </td>
               <td class="px-6 py-4">
                 <div class="text-sm font-medium text-gray-900 dark:text-dark-text-primary">{{ finding.name }}</div>
                 <div v-if="finding.cve_id" class="text-xs text-gray-500 dark:text-dark-text-secondary">{{ finding.cve_id }}</div>
@@ -308,7 +435,7 @@ function formatDate(dateString: string): string {
 
       <!-- Empty State -->
       <div v-if="findings.length === 0" class="flex flex-col items-center justify-center py-16 px-4">
-        <svg class="w-16 h-16 text-gray-300 dark:text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+        <svg aria-hidden="true" class="w-16 h-16 text-gray-300 dark:text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m0-10.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285zm0 13.036h.008v.008H12v-.008z" />
         </svg>
         <h3 class="text-lg font-semibold text-gray-900 dark:text-dark-text-primary mb-1">No vulnerabilities found</h3>
@@ -319,7 +446,7 @@ function formatDate(dateString: string): string {
           to="/scans"
           class="inline-flex items-center px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-md hover:bg-primary-700 transition-colors"
         >
-          <svg class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <svg aria-hidden="true" class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
           </svg>
           Run a Vulnerability Scan
@@ -332,31 +459,37 @@ function formatDate(dateString: string): string {
           <div class="text-sm text-gray-700 dark:text-dark-text-secondary">
             Showing {{ ((currentPage - 1) * pageSize) + 1 }} to {{ Math.min(currentPage * pageSize, totalItems) }} of {{ totalItems }} results
           </div>
-          <div class="flex space-x-2">
+          <div class="flex space-x-1">
             <button
               @click="goToPage(currentPage - 1)"
-              :disabled="currentPage === 1"
-              class="px-3 py-1 border border-gray-300 dark:border-dark-border rounded-md text-sm text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary disabled:opacity-50 disabled:cursor-not-allowed"
+              :disabled="!hasPrevious"
+              class="px-3 py-1 border border-gray-300 dark:border-dark-border rounded-md text-sm text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
               Previous
             </button>
-            <button
-              v-for="page in Math.min(5, totalPages)"
-              :key="page"
-              @click="goToPage(page)"
-              :class="[
-                'px-3 py-1 border rounded-md text-sm',
-                page === currentPage
-                  ? 'bg-primary-600 text-white border-primary-600'
-                  : 'border-gray-300 dark:border-dark-border text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary'
-              ]"
-            >
-              {{ page }}
-            </button>
+            <template v-for="pg in paginationPages" :key="pg.value">
+              <span
+                v-if="pg.type === 'ellipsis'"
+                class="px-2 py-1 text-sm text-gray-500 dark:text-dark-text-secondary"
+              >...</span>
+              <button
+                v-else
+                @click="goToPage(pg.value)"
+                :aria-current="pg.value === currentPage ? 'page' : undefined"
+                :class="[
+                  'px-3 py-1 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500',
+                  pg.value === currentPage
+                    ? 'bg-primary-600 text-white border-primary-600'
+                    : 'border-gray-300 dark:border-dark-border text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary'
+                ]"
+              >
+                {{ pg.value }}
+              </button>
+            </template>
             <button
               @click="goToPage(currentPage + 1)"
-              :disabled="currentPage === totalPages"
-              class="px-3 py-1 border border-gray-300 dark:border-dark-border rounded-md text-sm text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary disabled:opacity-50 disabled:cursor-not-allowed"
+              :disabled="!hasNext"
+              class="px-3 py-1 border border-gray-300 dark:border-dark-border rounded-md text-sm text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
               Next
             </button>

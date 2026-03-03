@@ -1,6 +1,7 @@
 import axios from 'axios'
 import type { AxiosInstance } from 'axios'
 import { useAuthStore } from '@/stores/auth'
+import router from '@/router'
 
 const apiClient: AxiosInstance = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000',
@@ -32,11 +33,11 @@ apiClient.interceptors.response.use(
     if (originalRequest.url?.includes('/auth/refresh')) {
       const authStore = useAuthStore()
       authStore.clearTokens()
-      window.location.href = '/login'
+      router.push('/login')
       return Promise.reject(error)
     }
 
-    // Handle 401 errors (expired token)
+    // Handle 401 errors (expired/invalid token) - 403 is authorization, not authentication
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true
 
@@ -50,7 +51,7 @@ apiClient.interceptors.response.use(
       } catch (refreshError) {
         // Refresh failed, logout user
         authStore.clearTokens()
-        window.location.href = '/login'
+        router.push('/login')
         return Promise.reject(refreshError)
       }
     }

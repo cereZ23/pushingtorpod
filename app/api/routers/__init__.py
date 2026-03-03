@@ -24,6 +24,12 @@ from .threat_intel import admin_router as threat_intel_admin_router
 from .threat_intel import tenant_router as threat_intel_tenant_router
 from .tickets import router as tickets_router
 from .saml import router as saml_router
+from .siem import router as siem_router
+from .report_schedules import router as report_schedules_router
+from .users import router as users_router
+from .users import invitations_router
+from .search import router as search_router
+from .audit import router as audit_router
 
 __all__ = [
     "auth_router",
@@ -46,4 +52,10 @@ __all__ = [
     "threat_intel_tenant_router",
     "tickets_router",
     "saml_router",
+    "siem_router",
+    "report_schedules_router",
+    "users_router",
+    "invitations_router",
+    "search_router",
+    "audit_router",
 ]

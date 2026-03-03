@@ -5,6 +5,8 @@ WORKDIR /app
 # Install system dependencies including Go
 RUN apt-get update && apt-get install -y \
     gcc \
+    git \
+    python3-dev \
     postgresql-client \
     curl \
     wget \
@@ -36,22 +38,37 @@ RUN mkdir -p /usr/local/pd-tools && \
     go install -v github.com/projectdiscovery/uncover/cmd/uncover@latest && \
     go install -v github.com/projectdiscovery/notify/cmd/notify@latest && \
     go install -v github.com/owasp-amass/amass/v4/...@master && \
+    go install -v github.com/projectdiscovery/alterx/cmd/alterx@latest && \
+    go install -v github.com/projectdiscovery/cdncheck/cmd/cdncheck@latest && \
+    go install -v github.com/projectdiscovery/cloudlist/cmd/cloudlist@latest && \
+    go install -v github.com/d3mondev/puredns/v2@latest && \
+    go install -v github.com/praetorian-inc/fingerprintx/cmd/fingerprintx@latest && \
     mv ${GOPATH}/bin/* /usr/local/pd-tools/ && \
     chmod +x /usr/local/pd-tools/*
+
+# Install massdns (required by puredns)
+RUN apt-get update && apt-get install -y --no-install-recommends make && \
+    git clone --depth 1 https://github.com/blechschmidt/massdns.git /tmp/massdns && \
+    cd /tmp/massdns && make -j$(nproc) && cp bin/massdns /usr/local/pd-tools/ && \
+    rm -rf /tmp/massdns && \
+    apt-get purge -y make && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 # Update Nuclei templates
 RUN /usr/local/pd-tools/nuclei -update-templates
 
 # Install Playwright Chromium browser for Phase 7 Visual Recon
 # This installs Chromium and all required system dependencies (libglib, libnss, etc.)
+# Use a shared path so both root (build-time) and appuser (runtime) find the browser
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
 RUN playwright install chromium --with-deps
+RUN chmod -R a+rx /opt/pw-browsers
 
 # Create non-root user
 RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
 
-# Move PD tools and templates to user-accessible locations
-RUN mkdir -p /home/appuser/nuclei-templates && \
+# Copy Nuclei templates from root to appuser home (nuclei -update-templates ran as root)
+RUN cp -r /root/nuclei-templates /home/appuser/nuclei-templates && \
     chown -R appuser:appuser /home/appuser
 
 # Copy application code

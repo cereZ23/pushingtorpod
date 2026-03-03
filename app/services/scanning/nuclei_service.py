@@ -76,9 +76,10 @@ class NucleiService:
         urls: List[str],
         templates: Optional[List[str]] = None,
         severity: Optional[List[str]] = None,
-        rate_limit: int = 1000,  # Increased from 300 for faster scanning
-        concurrency: int = 200,  # Increased from 50 for faster scanning
-        timeout: int = 1800
+        rate_limit: int = 300,
+        concurrency: int = 50,
+        timeout: int = 1800,
+        interactsh_server: Optional[str] = None,
     ) -> Dict:
         """
         Execute Nuclei scan on list of URLs
@@ -139,7 +140,8 @@ class NucleiService:
                 templates=templates,
                 severity=severity,
                 rate_limit=rate_limit,
-                concurrency=concurrency
+                concurrency=concurrency,
+                interactsh_server=interactsh_server,
             )
 
             # Execute Nuclei
@@ -265,7 +267,8 @@ class NucleiService:
         templates: Optional[List[str]],
         severity: List[str],
         rate_limit: int,
-        concurrency: int
+        concurrency: int,
+        interactsh_server: Optional[str] = None,
     ) -> List[str]:
         """
         Build Nuclei command arguments
@@ -285,11 +288,13 @@ class NucleiService:
             '-jsonl',                  # JSONL output (Nuclei v3+)
             '-silent',                 # Minimal console output
             '-no-color',               # Disable colors
-            '-stats',                  # Print statistics
             '-rl', str(rate_limit),    # Rate limit
             '-c', str(concurrency),    # Concurrency
             '-timeout', '10',          # Request timeout (seconds)
             '-retries', '1',           # Retry failed requests
+            '-bs', '25',               # Bulk size per template
+            '-headc', '5',             # Headless concurrency limit
+            '-hbs', '5',               # Headless bulk size limit
         ]
 
         # Add severity filter
@@ -297,27 +302,23 @@ class NucleiService:
             severity_str = ','.join(severity)
             args.extend(['-severity', severity_str])
 
-        # Add templates
+        # Add templates only if explicitly provided; otherwise let Nuclei
+        # use ALL templates filtered by the -severity flag above.
+        # Nuclei v3 reorganised template paths (e.g. http/cves/) so
+        # hard-coding old paths like 'cves/' causes 0 matches.
         if templates:
             for template in templates:
                 args.extend(['-t', template])
-        else:
-            # Default templates: Comprehensive coverage including fuzzing
-            # Rely on severity filter to limit scope
-            args.extend([
-                '-t', 'cves/',                    # CVE vulnerabilities
-                '-t', 'vulnerabilities/',         # Generic vulnerabilities (includes SQL injection)
-                '-t', 'exposures/',               # Information disclosure
-                '-t', 'misconfiguration/',        # Misconfigurations
-                '-t', 'exposed-panels/',          # Admin panels
-                '-t', 'fuzzing/',                 # Fuzzing templates (SQL, XSS, etc.)
-            ])
 
         # Exclude certain templates that may cause DoS or are too noisy
         # Only exclude actual DoS templates, allow fuzzing/intrusive tests
         args.extend([
             '-exclude-tags', 'dos'  # Only exclude DoS attacks
         ])
+
+        # Interactsh OOB callback support (Tier 3 aggressive scans)
+        if interactsh_server:
+            args.extend(['-iserver', interactsh_server, '-itoken', ''])
 
         return args
 
@@ -359,6 +360,10 @@ class NucleiService:
 
         for line in stdout.strip().split('\n'):
             if not line:
+                continue
+
+            # Skip non-JSON lines (e.g. Nuclei warnings/stats printed to stdout)
+            if not line.lstrip().startswith('{'):
                 continue
 
             try:

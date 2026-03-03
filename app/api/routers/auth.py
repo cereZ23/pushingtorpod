@@ -20,17 +20,85 @@ from app.api.schemas.auth import (
     UserResponse,
     UserCreate,
     UserUpdate,
-    ChangePasswordRequest
+    ChangePasswordRequest,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
+    InviteAcceptRequest,
+    MfaSetupResponse,
+    MfaVerifyRequest,
+    MfaLoginRequest,
+    MfaDisableRequest,
 )
-from app.models.auth import User
+from app.models.auth import User, TenantMembership, UserInvitation
 from app.security.jwt_auth import jwt_manager
 from app.config import settings
+from app.core.audit import (
+    log_audit_event,
+    log_authentication_attempt,
+    log_data_modification,
+    AuditEventType,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 
 from app.rate_limiter import limiter
+
+
+def _get_client_ip(request: Request) -> str:
+    """Extract client IP from request, respecting X-Forwarded-For."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _build_tokens_and_response(user: "User", db: Session) -> dict:
+    """Build JWT tokens and LoginResponse data for an authenticated user.
+
+    Raises HTTPException 403 if the user has no active tenant membership.
+    """
+    # Resolve tenant from memberships — never fall back to a hardcoded ID
+    active_memberships = [m for m in user.tenant_memberships if m.is_active]
+    if not active_memberships:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No active tenant membership. Contact your administrator.",
+        )
+
+    tenant_id = active_memberships[0].tenant_id
+    tenant_role = active_memberships[0].role
+
+    roles = [tenant_role]
+    if user.is_superuser:
+        roles.append("admin")
+
+    access_token = jwt_manager.create_access_token(
+        subject=str(user.id),
+        tenant_id=tenant_id,
+        roles=roles,
+    )
+    refresh_token = jwt_manager.create_refresh_token(
+        subject=str(user.id),
+        tenant_id=tenant_id,
+    )
+
+    user.last_login = datetime.now(timezone.utc)
+    db.commit()
+
+    tenant_roles = {m.tenant_id: m.role for m in user.tenant_memberships if m.is_active}
+
+    user_response = UserResponse.model_validate(user)
+    user_response.tenant_roles = tenant_roles
+
+    return LoginResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        expires_in=settings.jwt_access_token_expire_minutes * 60,
+        user=user_response,
+    )
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -52,11 +120,18 @@ def login(
         - 401: Invalid credentials
         - 403: Account inactive
     """
+    client_ip = _get_client_ip(request)
+    user_agent = request.headers.get("user-agent")
+
     # Find user by email
     user = db.query(User).filter(User.email == credentials.email).first()
 
     if not user:
-        logger.warning(f"Login attempt with non-existent email: {credentials.email}")
+        log_authentication_attempt(
+            success=False, username=credentials.email,
+            ip_address=client_ip, user_agent=user_agent,
+            error_message="Non-existent email",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password"
@@ -64,7 +139,12 @@ def login(
 
     # SSO-only users cannot use password login
     if not user.hashed_password and user.sso_provider:
-        logger.warning(f"Password login attempt for SSO-only user: {credentials.email}")
+        log_authentication_attempt(
+            success=False, username=credentials.email,
+            ip_address=client_ip, user_agent=user_agent,
+            error_message="SSO-only account attempted password login",
+            user_id=user.id,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="This account uses SSO. Please sign in with your identity provider."
@@ -72,7 +152,12 @@ def login(
 
     # Verify password
     if not user.hashed_password or not user.verify_password(credentials.password):
-        logger.warning(f"Failed login attempt for user: {credentials.email}")
+        log_authentication_attempt(
+            success=False, username=credentials.email,
+            ip_address=client_ip, user_agent=user_agent,
+            error_message="Invalid password",
+            user_id=user.id,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password"
@@ -80,50 +165,50 @@ def login(
 
     # Check if user is active
     if not user.is_active:
-        logger.warning(f"Login attempt for inactive user: {credentials.email}")
+        log_authentication_attempt(
+            success=False, username=credentials.email,
+            ip_address=client_ip, user_agent=user_agent,
+            error_message="Inactive account",
+            user_id=user.id,
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is inactive"
         )
 
-    # Get user's first tenant (for multi-tenant support)
-    # In production, you might want to handle multiple tenants differently
-    tenant_id = 1  # Default tenant
-    tenant_role = "user"  # Default role
-    if user.tenant_memberships:
-        tenant_id = user.tenant_memberships[0].tenant_id
-        tenant_role = user.tenant_memberships[0].role  # Get actual tenant role
+    # Check if MFA is enabled - return challenge instead of tokens
+    if user.mfa_enabled and user.mfa_secret:
+        import secrets as _secrets
 
-    # Determine user roles
-    roles = [tenant_role]  # Use tenant role instead of hardcoded "user"
-    if user.is_superuser:
-        roles.append("admin")
+        mfa_token = _secrets.token_urlsafe(32)
+        # Store MFA token in Redis with 5 min expiry
+        try:
+            import redis
+            r = redis.from_url(settings.redis_url, socket_connect_timeout=2)
+            r.setex(f"mfa_token:{mfa_token}", 300, str(user.id))
+            r.close()
+        except Exception:
+            logger.exception("Failed to store MFA token in Redis")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="MFA service unavailable"
+            )
 
-    # Create tokens
-    access_token = jwt_manager.create_access_token(
-        subject=str(user.id),
-        tenant_id=tenant_id,
-        roles=roles
+        logger.info(f"MFA challenge issued for user {user.email}")
+        return {"mfa_required": True, "mfa_token": mfa_token}
+
+    # Build tokens — raises 403 if no active tenant membership
+    response = _build_tokens_and_response(user, db)
+
+    first_tenant = next(iter(response.user.tenant_roles), None) if response.user.tenant_roles else None
+    log_authentication_attempt(
+        success=True, username=user.email,
+        ip_address=client_ip, user_agent=user_agent,
+        user_id=user.id,
+        tenant_id=first_tenant,
     )
 
-    refresh_token = jwt_manager.create_refresh_token(
-        subject=str(user.id),
-        tenant_id=tenant_id
-    )
-
-    # Update last login
-    user.last_login = datetime.now(timezone.utc)
-    db.commit()
-
-    logger.info(f"User {user.email} logged in successfully")
-
-    return LoginResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        token_type="bearer",
-        expires_in=settings.jwt_access_token_expire_minutes * 60,
-        user=UserResponse.model_validate(user)
-    )
+    return response
 
 
 @router.post("/refresh", response_model=RefreshTokenResponse)
@@ -162,6 +247,7 @@ def refresh_token(
 
 @router.post("/logout")
 def logout(
+    request: Request,
     current_user: User = Depends(get_current_user),
     payload: Dict[str, Any] = Depends(get_current_user_payload),
 ):
@@ -185,6 +271,16 @@ def logout(
     else:
         logger.warning(f"User {current_user.email} logged out but token had no JTI")
 
+    log_audit_event(
+        event_type=AuditEventType.AUTH_LOGOUT,
+        action=f"User logout: {current_user.email}",
+        result="success",
+        user_id=current_user.id,
+        ip_address=_get_client_ip(request),
+        resource="user",
+        resource_id=str(current_user.id),
+    )
+
     return {
         "success": True,
         "message": "Logged out successfully"
@@ -198,12 +294,19 @@ def get_current_user_info(
     """
     Get current user information
 
-    Returns user profile based on JWT token
+    Returns user profile based on JWT token with tenant roles
 
     Raises:
         - 401: Invalid or expired token
     """
-    return UserResponse.model_validate(current_user)
+    tenant_roles = {}
+    for m in current_user.tenant_memberships:
+        if m.is_active:
+            tenant_roles[m.tenant_id] = m.role
+
+    response = UserResponse.model_validate(current_user)
+    response.tenant_roles = tenant_roles
+    return response
 
 
 @router.patch("/me", response_model=UserResponse)
@@ -258,6 +361,7 @@ def update_current_user(
 
 @router.post("/change-password")
 def change_password(
+    http_request: Request,
     request: ChangePasswordRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -271,9 +375,18 @@ def change_password(
         - 401: Invalid current password
         - 400: Invalid new password
     """
+    client_ip = _get_client_ip(http_request)
+
     # Verify current password
     if not current_user.verify_password(request.current_password):
-        logger.warning(f"Failed password change attempt for user: {current_user.email}")
+        log_audit_event(
+            event_type=AuditEventType.AUTH_PASSWORD_CHANGE,
+            action=f"Password change failed: {current_user.email}",
+            result="failure",
+            user_id=current_user.id,
+            ip_address=client_ip,
+            severity="warning",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Current password is incorrect"
@@ -283,12 +396,400 @@ def change_password(
     current_user.hashed_password = User.hash_password(request.new_password)
     db.commit()
 
-    logger.info(f"User {current_user.email} changed their password")
+    log_audit_event(
+        event_type=AuditEventType.AUTH_PASSWORD_CHANGE,
+        action=f"Password changed: {current_user.email}",
+        result="success",
+        user_id=current_user.id,
+        ip_address=client_ip,
+        resource="user",
+        resource_id=str(current_user.id),
+    )
 
     return {
         "success": True,
         "message": "Password changed successfully"
     }
+
+
+@router.post("/forgot-password")
+@limiter.limit("3/minute")
+def forgot_password(
+    request: Request,
+    payload: ForgotPasswordRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Request password reset email.
+
+    Always returns 200 to prevent email enumeration.
+    """
+    import secrets
+
+    user = db.query(User).filter(User.email == payload.email).first()
+
+    if user and user.hashed_password:
+        token = secrets.token_urlsafe(32)
+        user.password_reset_token = token
+        user.password_reset_expires = datetime.now(timezone.utc) + timedelta(hours=1)
+        db.commit()
+
+        try:
+            from app.services.email_service import send_password_reset_email
+            send_password_reset_email(user.email, token)
+        except Exception:
+            logger.exception("Failed to send password reset email to %s", payload.email)
+
+    log_audit_event(
+        event_type=AuditEventType.AUTH_PASSWORD_RESET,
+        action=f"Password reset requested: {payload.email}",
+        result="success",
+        ip_address=_get_client_ip(request),
+        resource="user",
+        severity="info",
+    )
+
+    return {"message": "If the email exists, a reset link has been sent."}
+
+
+@router.post("/reset-password")
+@limiter.limit("5/minute")
+def reset_password(
+    request: Request,
+    payload: ResetPasswordRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Reset password using a valid token.
+
+    Raises:
+        - 400: Invalid or expired token
+    """
+    user = db.query(User).filter(
+        User.password_reset_token == payload.token,
+    ).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
+
+    if not user.password_reset_expires or user.password_reset_expires.replace(
+        tzinfo=timezone.utc
+    ) < datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
+
+    user.hashed_password = User.hash_password(payload.new_password)
+    user.password_reset_token = None
+    user.password_reset_expires = None
+    db.commit()
+
+    log_audit_event(
+        event_type=AuditEventType.AUTH_PASSWORD_RESET,
+        action=f"Password reset completed: {user.email}",
+        result="success",
+        user_id=user.id,
+        ip_address=_get_client_ip(request),
+        resource="user",
+        resource_id=str(user.id),
+    )
+
+    return {"message": "Password has been reset successfully."}
+
+
+@router.post("/accept-invite", response_model=UserResponse)
+@limiter.limit("5/minute")
+def accept_invite(
+    request: Request,
+    payload: InviteAcceptRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Accept a tenant invitation, creating the user if needed.
+
+    Raises:
+        - 400: Invalid, expired, or already-accepted invitation
+    """
+    invitation = db.query(UserInvitation).filter(
+        UserInvitation.token == payload.token,
+    ).first()
+
+    if not invitation:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid invitation token",
+        )
+
+    if invitation.is_accepted:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invitation has already been accepted",
+        )
+
+    if invitation.is_expired:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invitation has expired",
+        )
+
+    # Find or create user
+    user = db.query(User).filter(User.email == invitation.email).first()
+
+    if not user:
+        # Check username uniqueness
+        if db.query(User).filter(User.username == payload.username).first():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already taken",
+            )
+
+        user = User(
+            email=invitation.email,
+            username=payload.username,
+            hashed_password=User.hash_password(payload.password),
+            full_name=payload.full_name,
+        )
+        db.add(user)
+        db.flush()
+
+    # Create or reactivate membership
+    existing_membership = db.query(TenantMembership).filter(
+        TenantMembership.user_id == user.id,
+        TenantMembership.tenant_id == invitation.tenant_id,
+    ).first()
+
+    if existing_membership:
+        existing_membership.is_active = True
+        existing_membership.role = invitation.role
+    else:
+        membership = TenantMembership(
+            user_id=user.id,
+            tenant_id=invitation.tenant_id,
+            role=invitation.role,
+        )
+        db.add(membership)
+
+    invitation.accepted_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(user)
+
+    log_audit_event(
+        event_type=AuditEventType.USER_CREATE,
+        action=f"Invitation accepted: {user.email} joined tenant {invitation.tenant_id} as {invitation.role}",
+        result="success",
+        user_id=user.id,
+        tenant_id=invitation.tenant_id,
+        ip_address=_get_client_ip(request),
+        resource="user",
+        resource_id=str(user.id),
+    )
+
+    tenant_roles = {}
+    for m in user.tenant_memberships:
+        if m.is_active:
+            tenant_roles[m.tenant_id] = m.role
+
+    response = UserResponse.model_validate(user)
+    response.tenant_roles = tenant_roles
+    return response
+
+
+# MFA endpoints
+@router.post("/mfa/setup", response_model=MfaSetupResponse)
+def mfa_setup(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Generate MFA secret and provisioning URI for TOTP setup.
+
+    Returns secret, provisioning URI, and QR code image.
+    """
+    import pyotp
+    import base64
+    import io
+
+    if current_user.mfa_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="MFA is already enabled",
+        )
+
+    secret = pyotp.random_base32()
+    current_user.mfa_secret = secret
+    db.commit()
+
+    totp = pyotp.TOTP(secret)
+    provisioning_uri = totp.provisioning_uri(
+        name=current_user.email,
+        issuer_name="EASM Platform",
+    )
+
+    # Generate QR code
+    qr_base64 = None
+    try:
+        import qrcode
+
+        qr = qrcode.make(provisioning_uri)
+        buffer = io.BytesIO()
+        qr.save(buffer, format="PNG")
+        qr_base64 = base64.b64encode(buffer.getvalue()).decode()
+    except ImportError:
+        logger.warning("qrcode package not available for MFA QR generation")
+
+    return MfaSetupResponse(
+        secret=secret,
+        provisioning_uri=provisioning_uri,
+        qr_code_base64=qr_base64,
+    )
+
+
+@router.post("/mfa/verify-setup")
+def mfa_verify_setup(
+    payload: MfaVerifyRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Verify TOTP code and enable MFA."""
+    import pyotp
+
+    if not current_user.mfa_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Run MFA setup first",
+        )
+
+    if current_user.mfa_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="MFA is already enabled",
+        )
+
+    totp = pyotp.TOTP(current_user.mfa_secret)
+    if not totp.verify(payload.code):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid verification code",
+        )
+
+    current_user.mfa_enabled = True
+    db.commit()
+
+    log_audit_event(
+        event_type=AuditEventType.CONFIG_CHANGE,
+        action=f"MFA enabled: {current_user.email}",
+        result="success",
+        user_id=current_user.id,
+        resource="user",
+        resource_id=str(current_user.id),
+    )
+    return {"message": "MFA enabled successfully"}
+
+
+@router.post("/mfa/disable")
+def mfa_disable(
+    payload: MfaDisableRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Disable MFA (requires password confirmation)."""
+    if not current_user.mfa_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="MFA is not enabled",
+        )
+
+    if not current_user.verify_password(payload.password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid password",
+        )
+
+    current_user.mfa_secret = None
+    current_user.mfa_enabled = False
+    db.commit()
+
+    log_audit_event(
+        event_type=AuditEventType.CONFIG_CHANGE,
+        action=f"MFA disabled: {current_user.email}",
+        result="success",
+        user_id=current_user.id,
+        resource="user",
+        resource_id=str(current_user.id),
+    )
+    return {"message": "MFA disabled successfully"}
+
+
+@router.post("/mfa/verify", response_model=LoginResponse)
+@limiter.limit("5/minute")
+def mfa_verify(
+    request: Request,
+    payload: MfaLoginRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Second step of MFA login: exchange MFA token + TOTP code for JWT tokens.
+    """
+    import pyotp
+    import redis as _redis
+
+    # Look up MFA token in Redis
+    try:
+        r = _redis.from_url(settings.redis_url, socket_connect_timeout=2)
+        user_id_bytes = r.get(f"mfa_token:{payload.mfa_token}")
+        if user_id_bytes:
+            r.delete(f"mfa_token:{payload.mfa_token}")
+        r.close()
+    except Exception:
+        logger.exception("Failed to validate MFA token from Redis")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="MFA service unavailable",
+        )
+
+    if not user_id_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired MFA token",
+        )
+
+    user_id = int(user_id_bytes.decode())
+    user = db.query(User).filter(User.id == user_id).first()
+
+    if not user or not user.mfa_secret:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid MFA session",
+        )
+
+    # Verify TOTP code
+    totp = pyotp.TOTP(user.mfa_secret)
+    if not totp.verify(payload.code):
+        log_authentication_attempt(
+            success=False, username=user.email,
+            ip_address=_get_client_ip(request),
+            error_message="Invalid MFA code",
+            user_id=user.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid verification code",
+        )
+
+    # Build tokens — raises 403 if no active tenant membership
+    response = _build_tokens_and_response(user, db)
+
+    log_authentication_attempt(
+        success=True, username=user.email,
+        ip_address=_get_client_ip(request),
+        user_id=user.id,
+    )
+
+    return response
 
 
 # Admin endpoints
@@ -332,7 +833,15 @@ def create_user(
     db.commit()
     db.refresh(user)
 
-    logger.info(f"Admin {admin.email} created user {user.email}")
+    log_audit_event(
+        event_type=AuditEventType.USER_CREATE,
+        action=f"Admin created user: {user.email}",
+        result="success",
+        user_id=admin.id,
+        resource="user",
+        resource_id=str(user.id),
+        details={"created_email": user.email, "is_superuser": user.is_superuser},
+    )
 
     return UserResponse.model_validate(user)
 

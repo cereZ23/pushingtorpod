@@ -157,29 +157,60 @@ def check_tls_001(
     db: Any,
 ) -> list[dict]:
     """Detect certificates that will expire within 30 days."""
+    # ACME providers auto-renew at ~30 days; only alert if renewal seems stuck
+    ACME_ISSUERS = (
+        "let's encrypt", "letsencrypt", "r3", "r10", "r11", "e5", "e6",
+        "zerossl", "buypass", "google trust services",
+    )
+
     findings: list[dict] = []
     for cert in certificates:
         days_left = cert.days_until_expiry
         if days_left is None:
             continue
-        if 0 < days_left <= 30:
-            sev = "critical" if days_left <= 7 else "high"
-            findings.append({
-                "name": f"TLS certificate expires in {days_left} days",
-                "severity": sev,
-                "confidence": 0.95,
-                "evidence": {
-                    "subject_cn": cert.subject_cn,
-                    "not_after": str(cert.not_after),
-                    "days_until_expiry": days_left,
-                    "issuer": cert.issuer,
-                },
-                "control_id": "TLS-001",
-                "finding_key": f"TLS-001:{asset.identifier}:{cert.serial_number}",
-                "remediation": (
-                    "Renew the TLS certificate before expiration. Consider using "
-                    "automated certificate management (e.g. Let's Encrypt with "
-                    "certbot or ACME protocol) to prevent future lapses."
+        if days_left <= 0:
+            continue  # handled by TLS-006 (expired cert check)
+
+        issuer_lower = (cert.issuer or "").lower()
+        is_acme = any(acme in issuer_lower for acme in ACME_ISSUERS)
+
+        if is_acme:
+            # ACME auto-renew: only alert if renewal appears stuck (<7 days)
+            if days_left > 7:
+                continue
+            sev = "critical" if days_left <= 3 else "high"
+        else:
+            # Manual renewal: alert at 30 days with graduated severity
+            if days_left > 30:
+                continue
+            if days_left <= 7:
+                sev = "critical"
+            elif days_left <= 14:
+                sev = "high"
+            else:
+                sev = "medium"
+
+        acme_note = " (ACME auto-renewal may have failed)" if is_acme else ""
+        findings.append({
+            "name": f"TLS certificate expires in {days_left} days{acme_note}",
+            "severity": sev,
+            "confidence": 0.90 if is_acme else 0.95,
+            "evidence": {
+                "subject_cn": cert.subject_cn,
+                "not_after": str(cert.not_after),
+                "days_until_expiry": days_left,
+                "issuer": cert.issuer,
+                "auto_renew_expected": is_acme,
+            },
+            "control_id": "TLS-001",
+            "finding_key": f"TLS-001:{asset.identifier}:{cert.serial_number}",
+            "remediation": (
+                "Check that the ACME client (certbot/acme.sh) is running and the "
+                "renewal cron/timer is active. Verify DNS and HTTP-01 challenge access."
+                if is_acme else
+                "Renew the TLS certificate before expiration. Consider using "
+                "automated certificate management (e.g. Let's Encrypt with "
+                "certbot or ACME protocol) to prevent future lapses."
                 ),
             })
     return findings
@@ -2381,8 +2412,17 @@ def _parse_raw_metadata(asset: Asset) -> dict:
 # Main Celery task
 # ---------------------------------------------------------------------------
 
-@celery.task(name="app.tasks.misconfig.run_misconfig_detection")
+@celery.task(
+    name="app.tasks.misconfig.run_misconfig_detection",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+)
 def run_misconfig_detection(
+    self,
     tenant_id: int,
     scan_run_id: int | None = None,
 ) -> dict:
@@ -2563,14 +2603,13 @@ def run_misconfig_detection(
 
     except Exception as exc:
         tenant_logger.error(
-            f"Misconfiguration detection failed: {exc}", exc_info=True
+            "Misconfiguration detection failed: %s", exc, exc_info=True
         )
-        stats["status"] = "failed"
-        stats["error"] = str(exc)
         try:
             db.rollback()
         except Exception:
             pass
+        raise self.retry(exc=exc)
     finally:
         db.close()
 

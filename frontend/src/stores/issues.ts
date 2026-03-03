@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import axios from 'axios'
 import apiClient from '@/api/client'
 import { useTenantStore } from './tenant'
 import type { Finding } from '@/api/types'
@@ -98,6 +99,10 @@ export const useIssueStore = defineStore('issues', () => {
   const currentPage = ref(1)
   const pageSize = ref(25)
 
+  // AbortControllers for cancelling stale in-flight requests
+  let fetchIssuesAbort: AbortController | null = null
+  let fetchIssueAbort: AbortController | null = null
+
   const tenantId = computed(() => tenantStore.currentTenantId)
 
   async function fetchIssues(params?: IssueListParams): Promise<void> {
@@ -106,13 +111,16 @@ export const useIssueStore = defineStore('issues', () => {
       return
     }
 
+    fetchIssuesAbort?.abort()
+    fetchIssuesAbort = new AbortController()
+
     isLoading.value = true
     error.value = ''
 
     try {
       const response = await apiClient.get<IssueListResponse>(
         `/api/v1/tenants/${tenantId.value}/issues`,
-        { params }
+        { params, signal: fetchIssuesAbort.signal }
       )
       issues.value = response.data.data
       totalItems.value = response.data.meta.total
@@ -120,6 +128,7 @@ export const useIssueStore = defineStore('issues', () => {
       currentPage.value = response.data.meta.page
       pageSize.value = response.data.meta.page_size
     } catch (err: unknown) {
+      if (err instanceof Error && (err.name === 'CanceledError' || err.name === 'AbortError')) return
       const message = err instanceof Error ? err.message : 'Failed to fetch issues'
       error.value = message
     } finally {
@@ -133,15 +142,20 @@ export const useIssueStore = defineStore('issues', () => {
       return
     }
 
+    fetchIssueAbort?.abort()
+    fetchIssueAbort = new AbortController()
+
     isLoadingDetail.value = true
     error.value = ''
 
     try {
       const response = await apiClient.get<IssueDetail>(
-        `/api/v1/tenants/${tenantId.value}/issues/${issueId}`
+        `/api/v1/tenants/${tenantId.value}/issues/${issueId}`,
+        { signal: fetchIssueAbort.signal }
       )
       currentIssue.value = response.data
     } catch (err: unknown) {
+      if (err instanceof Error && (err.name === 'CanceledError' || err.name === 'AbortError')) return
       const message = err instanceof Error ? err.message : 'Failed to fetch issue'
       error.value = message
     } finally {
@@ -149,7 +163,7 @@ export const useIssueStore = defineStore('issues', () => {
     }
   }
 
-  async function updateIssueStatus(issueId: number, newStatus: IssueStatus): Promise<boolean> {
+  async function updateIssueStatus(issueId: number, newStatus: IssueStatus, comment?: string): Promise<boolean> {
     if (!tenantId.value) {
       error.value = 'No tenant selected'
       return false
@@ -158,9 +172,14 @@ export const useIssueStore = defineStore('issues', () => {
     error.value = ''
 
     try {
+      const payload: Record<string, string> = { status: newStatus }
+      if (comment) {
+        payload.comment = comment
+      }
+
       const response = await apiClient.patch<Issue>(
         `/api/v1/tenants/${tenantId.value}/issues/${issueId}`,
-        { status: newStatus }
+        payload
       )
 
       // Update in list
@@ -176,8 +195,13 @@ export const useIssueStore = defineStore('issues', () => {
 
       return true
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to update issue status'
-      error.value = message
+      // Extract detail from API error response
+      if (axios.isAxiosError(err) && err.response?.data?.detail) {
+        error.value = err.response.data.detail
+      } else {
+        const message = err instanceof Error ? err.message : 'Failed to update issue status'
+        error.value = message
+      }
       return false
     }
   }

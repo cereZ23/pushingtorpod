@@ -22,6 +22,7 @@ from app.api.schemas.finding import (
 )
 from app.api.schemas.envelope import PaginatedEnvelope, PaginationMeta
 from app.models.database import Asset, Finding, FindingSeverity, FindingStatus
+from app.core.audit import log_data_modification
 
 logger = logging.getLogger(__name__)
 
@@ -465,6 +466,11 @@ def update_finding(
 
     db.commit()
     db.refresh(finding)
+
+    log_data_modification(
+        action="update", resource="finding", resource_id=str(finding_id),
+        user_id=membership.user_id, tenant_id=tenant_id,
+    )
 
     logger.info(f"Updated finding {finding_id} to status {finding.status.value}")
 

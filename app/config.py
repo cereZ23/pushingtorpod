@@ -118,6 +118,11 @@ class Settings(BaseSettings):
     minio_secure: bool = False
     minio_bucket_prefix: str = "easm"
 
+    # MaxMind GeoLite2 database paths
+    # Download free databases from https://www.maxmind.com/en/geoip-databases
+    geoip_city_db_path: Optional[str] = "/app/data/geoip/GeoLite2-City.mmdb"
+    geoip_asn_db_path: Optional[str] = "/app/data/geoip/GeoLite2-ASN.mmdb"
+
     # Tool Execution Security
     tool_execution_timeout: int = 600
     tool_execution_max_output_size: int = 100 * 1024 * 1024  # 100MB
@@ -125,18 +130,30 @@ class Settings(BaseSettings):
     tool_allowed_tools: set[str] = {
         'subfinder', 'dnsx', 'httpx', 'naabu',
         'katana', 'nuclei', 'tlsx', 'uncover', 'notify',
-        'amass'  # Sprint 1.7: OWASP Amass for enhanced subdomain enumeration
+        'amass',  # Sprint 1.7: OWASP Amass for enhanced subdomain enumeration
+        'alterx', 'puredns', 'cdncheck', 'cloudlist', 'fingerprintx',
     }
 
     # Discovery Pipeline
     discovery_batch_size: int = 100
-    discovery_subfinder_timeout: int = 600
-    discovery_amass_timeout: int = 900  # Amass is slower, needs more time
-    discovery_amass_enabled: bool = True  # Enable/disable Amass enumeration
-    discovery_dnsx_timeout: int = 600
-    discovery_httpx_timeout: int = 900
-    discovery_naabu_timeout: int = 1200
+    discovery_subfinder_timeout: int = 300
+    discovery_amass_timeout: int = 600
+    discovery_amass_enabled: bool = True
+    discovery_dnsx_timeout: int = 300
+    discovery_httpx_timeout: int = 600
+    discovery_naabu_timeout: int = 600
     discovery_nuclei_timeout: int = 1800
+
+    # New tool timeouts
+    alterx_timeout: int = 300          # 5 min
+    puredns_timeout: int = 1800        # 30 min (174k+ candidates at 200/s)
+    cdncheck_timeout: int = 120        # 2 min
+    cloudlist_timeout: int = 300       # 5 min
+    fingerprintx_timeout: int = 300    # 5 min
+    interactsh_enabled: bool = False   # Opt-in, requires interactsh server URL
+    interactsh_server: str = ''        # e.g. 'oast.pro' or self-hosted
+    puredns_resolvers_path: str = '/app/data/resolvers.txt'
+    puredns_wordlist_path: str = '/app/data/dns-wordlist.txt'
 
     # Enrichment Pipeline (Sprint 2)
     enrichment_enabled: bool = True
@@ -144,24 +161,24 @@ class Settings(BaseSettings):
     enrichment_batch_size: int = 100  # Max assets to enrich per run
 
     # HTTPx - Web Technology Fingerprinting
-    httpx_timeout: int = 900  # 15 minutes
-    httpx_rate_limit: int = 50  # Requests per second
+    httpx_timeout: int = 300  # 5 minutes
+    httpx_rate_limit: int = 150  # Requests per second
     httpx_response_size_limit: int = 1048576  # 1MB max response size
 
     # Naabu - Port Scanning
-    naabu_timeout: int = 1200  # 20 minutes
+    naabu_timeout: int = 600  # 10 minutes
     naabu_rate_limit: int = 1000  # Packets per second
     naabu_default_ports: str = "top-1000"  # top-100, top-1000, or "1-65535"
     naabu_blocked_ports: list[int] = [22, 445, 3389, 3306, 5432]  # SSH, SMB, RDP, MySQL, PostgreSQL
 
     # TLSx - TLS/SSL Certificate Analysis
-    tlsx_timeout: int = 600  # 10 minutes
+    tlsx_timeout: int = 300  # 5 minutes
     tlsx_expiry_warning_days: int = 30  # Alert if cert expires within N days
 
     # Katana - Web Crawling
-    katana_timeout: int = 1800  # 30 minutes
-    katana_max_depth: int = 3  # Maximum crawl depth
-    katana_max_pages: int = 1000  # Maximum pages per domain
+    katana_timeout: int = 300  # 5 minutes
+    katana_max_depth: int = 2  # Maximum crawl depth
+    katana_max_pages: int = 500  # Maximum pages per domain
     katana_respect_robots: bool = True  # Respect robots.txt
 
     # Rate Limiting

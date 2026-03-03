@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <style>{{ css }}</style>
+</head>
+<body>
+    <!-- Cover Page -->
+    <div class="cover">
+        <h1>EASM Report</h1>
+        <p class="subtitle">{{ report_title }}</p>
+        <div class="meta">
+            <div>Tenant: <strong>{{ tenant_name }}</strong></div>
+            <div>Generated: <strong>{{ generated_at }}</strong></div>
+        </div>
+        <div class="confidential">Confidential &mdash; For authorized recipients only</div>
+    </div>
+
+    {% block content %}{% endblock %}
+</body>
+</html>

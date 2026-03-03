@@ -7,7 +7,8 @@ Features:
 - JWT authentication
 - Multi-tenant isolation
 - Comprehensive API endpoints
-- Rate limiting
+- Global rate limiting (100/min GET, 30/min mutations) with Redis storage
+- Per-endpoint rate limit overrides (e.g. 5/min on login)
 - Health monitoring
 - OpenAPI documentation
 """
@@ -18,13 +19,13 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 import logging
 import time
 
 from app.config import settings
+from app.api.middleware import register_middleware
+from app.metrics import PrometheusMiddleware, metrics_endpoint
 from app.api.routers import (
     auth_router,
     tenants_router,
@@ -46,12 +47,24 @@ from app.api.routers import (
     threat_intel_tenant_router,
     tickets_router,
     saml_router,
+    siem_router,
+    report_schedules_router,
+    users_router,
+    invitations_router,
+    search_router,
+    audit_router,
 )
 
 logger = logging.getLogger(__name__)
 
-# Import shared rate limiter instance
-from app.rate_limiter import limiter
+# Import shared rate limiter instance and constants
+from app.rate_limiter import (
+    limiter,
+    MUTATION_DEFAULT_LIMIT,
+    MUTATION_METHODS,
+    RATE_LIMIT_EXEMPT_PATHS,
+    _get_rate_limit_key,
+)
 from app.api.dependencies import get_current_user
 
 # Create FastAPI app with comprehensive metadata
@@ -82,8 +95,11 @@ All API endpoints (except /health and /api/v1/auth/login) require JWT authentica
 
 ## Rate Limits
 
-- Default: 100 requests per minute per IP
-- Higher limits available for authenticated users
+- **GET/HEAD/OPTIONS**: 100 requests per minute (global default)
+- **POST/PUT/PATCH/DELETE**: 30 requests per minute (mutation default)
+- Authenticated users are rate-limited by user ID; anonymous by IP
+- Some endpoints have stricter limits (e.g. login: 5/min, registration: 3/hour)
+- Redis-backed storage for accurate counting across workers
 
 ## Multi-tenancy
 
@@ -125,31 +141,96 @@ app.add_middleware(
     allow_headers=settings.cors_allow_headers,
 )
 
+# 3. Security headers, request ID, request logging, trusted hosts (production)
+register_middleware(app)
 
-# Request timing middleware
-@app.middleware("http")
-async def add_process_time_header(request: Request, call_next):
-    """Add processing time to response headers"""
-    start_time = time.time()
-    response = await call_next(request)
-    process_time = time.time() - start_time
-    response.headers["X-Process-Time"] = str(round(process_time * 1000, 2))
-    return response
+# 4. Prometheus request metrics
+app.add_middleware(PrometheusMiddleware)
 
 
-# Request logging middleware
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    """Log all requests for monitoring"""
-    client_host = request.client.host if request.client else "unknown"
-    logger.info(f"{request.method} {request.url.path} - Client: {client_host}")
+# ---------------------------------------------------------------------------
+# Mutation rate-limiting middleware
+# ---------------------------------------------------------------------------
+# SlowAPI's ``default_limits`` covers ALL endpoints uniformly (100/min).
+# This middleware adds a *stricter* layer for state-changing HTTP methods
+# (POST/PUT/PATCH/DELETE) at 30/min.  It uses the ``limits`` library
+# directly (already a transitive dependency of slowapi) so that we can
+# keep a separate rate window without interfering with per-endpoint
+# ``@limiter.limit()`` overrides.
+#
+# If an endpoint already has a specific ``@limiter.limit()`` decorator the
+# SlowAPI handler enforces that limit.  This middleware adds an
+# *additional* mutation budget on top (defense in depth).
+# ---------------------------------------------------------------------------
+
+# Initialise mutation limiter components once at module level.
+# Wrapped in try/except so that import or connection errors do not
+# prevent the application from starting.
+_mutation_limiter_strategy = None
+_mutation_rate = None
+
+try:
+    from limits import parse as _parse_rate
+    from limits.storage import storage_from_string as _storage_from_string
+    from limits.strategies import FixedWindowRateLimiter as _FixedWindowRateLimiter
+
+    _mutation_rate = _parse_rate(MUTATION_DEFAULT_LIMIT)
     try:
-        response = await call_next(request)
-        logger.info(f"{request.method} {request.url.path} - Status: {response.status_code}")
-        return response
-    except Exception as e:
-        logger.error(f"{request.method} {request.url.path} - Error: {str(e)}")
-        raise
+        _mutation_storage = _storage_from_string(settings.redis_url)
+    except Exception:
+        logger.warning(
+            "Redis unavailable for mutation rate limiter; falling back to in-memory storage"
+        )
+        _mutation_storage = _storage_from_string("memory://")
+    _mutation_limiter_strategy = _FixedWindowRateLimiter(_mutation_storage)
+except ImportError:
+    logger.warning("limits library not available; mutation rate limiting will be disabled")
+except Exception:
+    logger.exception("Failed to initialise mutation rate limiter")
+
+
+@app.middleware("http")
+async def mutation_rate_limit_middleware(request: Request, call_next):
+    """Enforce a stricter rate limit for mutation HTTP methods."""
+    # Only apply to mutation methods
+    if request.method not in MUTATION_METHODS:
+        return await call_next(request)
+
+    # Skip exempt paths (health, docs)
+    if request.url.path in RATE_LIMIT_EXEMPT_PATHS:
+        return await call_next(request)
+
+    # Skip if mutation limiter was not initialised
+    if _mutation_limiter_strategy is None or _mutation_rate is None:
+        return await call_next(request)
+
+    try:
+        # Build key: "mutation_limit:<identity>"
+        identity = _get_rate_limit_key(request)
+        key = f"mutation_limit:{identity}"
+
+        if not _mutation_limiter_strategy.hit(_mutation_rate, key):
+            logger.warning(
+                "Mutation rate limit exceeded for %s on %s %s",
+                identity,
+                request.method,
+                request.url.path,
+            )
+            return JSONResponse(
+                status_code=429,
+                headers={"Retry-After": "60"},
+                content={
+                    "error": "RateLimitExceeded",
+                    "detail": "Too many mutation requests. Please try again later.",
+                    "status_code": 429,
+                    "retry_after": 60,
+                },
+            )
+    except Exception:
+        # Rate limiting must never break the application; log and continue
+        logger.exception("Mutation rate limit middleware error; skipping check")
+
+    return await call_next(request)
 
 
 # Exception handlers
@@ -182,14 +263,33 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
-    """Handle rate limit exceeded"""
+    """
+    Handle rate limit exceeded with Retry-After header.
+
+    The Retry-After header tells clients how many seconds to wait before
+    retrying.  This follows RFC 6585 Section 4 and RFC 7231 Section 7.1.3.
+    """
+    # Extract wait time from the exception detail if available
+    retry_after = 60  # Default: retry after 60 seconds
+    detail_str = str(getattr(exc, "detail", ""))
+    # slowapi detail format: "Rate limit exceeded: N per M <period>"
+    # Try to extract the period for a more accurate Retry-After
+    if "per minute" in detail_str or "/minute" in detail_str:
+        retry_after = 60
+    elif "per hour" in detail_str or "/hour" in detail_str:
+        retry_after = 3600
+    elif "per second" in detail_str or "/second" in detail_str:
+        retry_after = 1
+
     return JSONResponse(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        headers={"Retry-After": str(retry_after)},
         content={
             "error": "RateLimitExceeded",
             "detail": "Too many requests. Please try again later.",
-            "status_code": 429
-        }
+            "status_code": 429,
+            "retry_after": retry_after,
+        },
     )
 
 
@@ -253,6 +353,12 @@ def root(request: Request):
         "health": "/health",
         "authentication": "/api/v1/auth/login"
     }
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics(request: Request):
+    """Prometheus metrics scrape endpoint (no auth required)."""
+    return metrics_endpoint(request)
+
 
 @app.get("/health")
 def health_check():
@@ -336,6 +442,12 @@ app.include_router(threat_intel_admin_router)
 app.include_router(threat_intel_tenant_router)
 app.include_router(tickets_router)
 app.include_router(saml_router)
+app.include_router(siem_router)
+app.include_router(report_schedules_router)
+app.include_router(users_router)
+app.include_router(invitations_router)
+app.include_router(search_router)
+app.include_router(audit_router)
 
 
 # Startup and shutdown events
@@ -349,11 +461,14 @@ async def startup_event():
     - Verify database connectivity
     - Initialize caches
     """
+    from app.rate_limiter import GLOBAL_DEFAULT_LIMIT
+
     logger.info("="*80)
     logger.info(f"Starting {settings.app_name} v3.0.0")
     logger.info(f"Environment: {settings.environment}")
     logger.info(f"Debug mode: {settings.debug}")
     logger.info(f"API Documentation: http://{settings.api_host}:{settings.api_port}/api/docs")
+    logger.info(f"Rate limits: GET={GLOBAL_DEFAULT_LIMIT}, mutations={MUTATION_DEFAULT_LIMIT}, storage=Redis")
     logger.info("="*80)
 
     # Test database connection

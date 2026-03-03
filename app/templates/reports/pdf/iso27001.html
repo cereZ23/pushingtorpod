@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <style>{{ css }}</style>
+</head>
+<body>
+
+<!-- Running elements (positioned via CSS running()) -->
+<div class="running-header-left">
+    <div class="running-header-line">EASM ISO 27001 Compliance Report</div>
+</div>
+<div class="running-header-right">
+    <div class="running-header-line">{{ tenant_name }} &mdash; {{ generated_at }}</div>
+</div>
+<span class="report-date">{{ generated_at }}</span>
+
+<!-- ========================================================================
+     COVER PAGE
+     ======================================================================== -->
+<div class="cover">
+    <!-- Indigo vertical spine -- brand signature -->
+    <div class="cover-spine"></div>
+
+    <!-- Subtle circuit-board grid pattern -->
+    <svg class="cover-grid" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 800" preserveAspectRatio="xMidYMid slice">
+        <defs>
+            <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#6366F1" stroke-width="0.5"/>
+            </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#grid)"/>
+        <circle cx="120" cy="160" r="3" fill="#6366F1"/>
+        <circle cx="280" cy="80" r="2" fill="#6366F1"/>
+        <circle cx="400" cy="240" r="3" fill="#6366F1"/>
+        <circle cx="200" cy="400" r="2" fill="#6366F1"/>
+        <circle cx="480" cy="360" r="3" fill="#6366F1"/>
+        <circle cx="320" cy="560" r="2" fill="#6366F1"/>
+        <circle cx="160" cy="680" r="3" fill="#6366F1"/>
+        <circle cx="440" cy="640" r="2" fill="#6366F1"/>
+        <line x1="120" y1="160" x2="280" y2="80" stroke="#6366F1" stroke-width="0.5"/>
+        <line x1="280" y1="80" x2="400" y2="240" stroke="#6366F1" stroke-width="0.5"/>
+        <line x1="200" y1="400" x2="480" y2="360" stroke="#6366F1" stroke-width="0.5"/>
+        <line x1="320" y1="560" x2="440" y2="640" stroke="#6366F1" stroke-width="0.5"/>
+    </svg>
+
+    <!-- TLP banner -->
+    <div class="cover-tlp tlp-red">TLP:RED &mdash; Restricted Distribution</div>
+
+    <div class="cover-content">
+        <div class="cover-brand">PUSHINGTORPOD</div>
+        <h1>ISO 27001<br>Compliance</h1>
+        <p class="cover-subtitle">Annex A Control Assessment</p>
+        <div class="cover-divider"></div>
+
+        <div class="cover-risk-display">
+            <div class="cover-risk-score">{{ "%.0f"|format(risk_score) }}<span class="cover-grade-badge grade-{{ risk_grade|lower }}">{{ risk_grade }}</span></div>
+            <div class="cover-risk-label">Risk Score / 100</div>
+        </div>
+
+        <div class="cover-meta">
+            <div class="cover-meta-row">
+                <div class="cover-meta-item">
+                    <span class="meta-key">Organization</span>
+                    <span class="meta-val">{{ tenant_name }}</span>
+                </div>
+                <div class="cover-meta-item">
+                    <span class="meta-key">Date</span>
+                    <span class="meta-val">{{ generated_at }}</span>
+                </div>
+                <div class="cover-meta-item">
+                    <span class="meta-key">Report ID</span>
+                    <span class="meta-val">{{ report_id }}</span>
+                </div>
+                <div class="cover-meta-item">
+                    <span class="meta-key">Framework</span>
+                    <span class="meta-val">ISO/IEC 27001:2022</span>
+                </div>
+            </div>
+
+            <div class="cover-classification">
+                <span class="cover-classification-badge">Confidential</span>
+                <span class="cover-classification-line"></span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ========================================================================
+     TABLE OF CONTENTS
+     ======================================================================== -->
+<div class="toc">
+    <div class="toc-header">Contents</div>
+    <div class="toc-header-line"></div>
+    <div class="toc-list">
+        <div class="toc-item"><a href="#isms-scope">1. ISMS Scope Summary</a></div>
+        <div class="toc-item"><a href="#applicability">2. Control Applicability Statement</a></div>
+        <div class="toc-item toc-sub"><a href="#applicability-table">2.1 Annex A Control Summary</a></div>
+        <div class="toc-item"><a href="#nonconformities">3. Non-Conformities</a></div>
+        <div class="toc-item toc-sub"><a href="#major-nc">3.1 Major Non-Conformities (Critical)</a></div>
+        <div class="toc-item toc-sub"><a href="#minor-nc">3.2 Minor Non-Conformities (High)</a></div>
+        <div class="toc-item"><a href="#observation-log">4. Observation Log</a></div>
+        <div class="toc-item"><a href="#findings-by-annex">5. Findings by Annex A Control Domain</a></div>
+        {% for domain in annex_a_domains %}
+        {% if compliance_map.get(domain.id, {}).get("findings") %}
+        <div class="toc-item toc-sub"><a href="#annex-{{ domain.id|replace('.', '-') }}">5.{{ loop.index }} {{ domain.id }}: {{ domain.name }} ({{ compliance_map[domain.id]["findings"]|length }})</a></div>
+        {% endif %}
+        {% endfor %}
+        <div class="toc-item"><a href="#improvement">6. Improvement Opportunities</a></div>
+        <div class="toc-item"><a href="#recommendations">7. Recommendations</a></div>
+    </div>
+</div>
+
+<!-- ========================================================================
+     1. ISMS SCOPE SUMMARY
+     ======================================================================== -->
+<h2 id="isms-scope"><span class="section-number">1</span> ISMS Scope Summary</h2>
+<div class="section-rule"></div>
+
+<div class="kpi-grid">
+    <div class="kpi-card accent-risk">
+        <div class="kpi-label">Risk Score</div>
+        <div class="kpi-value">{{ "%.0f"|format(risk_score) }}</div>
+        <div class="kpi-sub">out of 100</div>
+    </div>
+    <div class="kpi-card accent-grade">
+        <div class="kpi-label">Security Grade</div>
+        <div class="kpi-value grade-{{ risk_grade|lower }}">{{ risk_grade }}</div>
+        <div class="kpi-sub">overall rating</div>
+    </div>
+    <div class="kpi-card accent-assets">
+        <div class="kpi-label">Controls Assessed</div>
+        <div class="kpi-value">{{ annex_a_total_controls }}</div>
+        <div class="kpi-sub">Annex A domains</div>
+    </div>
+    <div class="kpi-card accent-open">
+        <div class="kpi-label">Non-Conformities</div>
+        <div class="kpi-value">{{ annex_a_nc_count }}</div>
+        <div class="kpi-sub">requiring action</div>
+    </div>
+</div>
+
+<p class="section-intro">
+    This report provides an ISO/IEC 27001:2022 Annex A control assessment for
+    <strong>{{ tenant_name }}</strong> based on findings from the External Attack Surface Management
+    platform. The ISMS scope covers externally facing assets including
+    <strong>{{ total_assets }}</strong> monitored assets across domains, subdomains, IP addresses,
+    URLs, and services.
+</p>
+
+<p class="section-intro">
+    The assessment maps EASM findings to applicable ISO 27001 Annex A control domains, with
+    primary focus on <strong>A.8</strong> (Asset Management), <strong>A.12</strong> (Operations Security),
+    <strong>A.13</strong> (Communications Security), <strong>A.14</strong> (System Acquisition,
+    Development and Maintenance), and <strong>A.18</strong> (Compliance). Critical findings are
+    classified as <strong>major non-conformities</strong>, high-severity findings as
+    <strong>minor non-conformities</strong>, and medium-severity findings as <strong>observations</strong>.
+</p>
+
+<!-- Asset Distribution -->
+<h3>Asset Inventory Overview</h3>
+
+<table>
+    <thead>
+        <tr>
+            <th style="width: 30%">Asset Type</th>
+            <th class="text-right" style="width: 20%">Count</th>
+            <th class="text-right" style="width: 20%">% of Total</th>
+            <th style="width: 30%">Annex A Relevance</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for atype, count in asset_counts.items() %}
+        <tr>
+            <td style="font-weight: 600; text-transform: capitalize">{{ atype }}</td>
+            <td class="text-right" style="font-weight: 700">{{ count }}</td>
+            <td class="text-right">
+                {% if total_assets > 0 %}
+                {{ "%.1f"|format(count / total_assets * 100) }}%
+                {% else %}0.0%{% endif %}
+            </td>
+            <td style="font-size: 8pt; color: #64748B">
+                {% if atype in ["domain", "subdomain"] %}A.8, A.13
+                {% elif atype == "ip" %}A.8, A.12, A.13
+                {% elif atype == "url" %}A.12, A.14
+                {% elif atype == "service" %}A.12, A.13, A.14
+                {% else %}A.8{% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        <tr class="table-total">
+            <td>Total</td>
+            <td class="text-right">{{ total_assets }}</td>
+            <td class="text-right">100%</td>
+            <td></td>
+        </tr>
+    </tbody>
+</table>
+
+{% if severity_counts.get("critical", 0) > 0 %}
+<div class="callout-box callout-danger no-break">
+    <div class="callout-title">Major Non-Conformities Identified</div>
+    <div class="callout-text">
+        {{ severity_counts.get("critical", 0) }} critical-severity finding{{ "s" if severity_counts.get("critical", 0) != 1 else "" }}
+        have been classified as <strong>major non-conformities</strong> under ISO 27001.
+        These findings indicate that Annex A controls are not implemented or are not operating
+        effectively, and require corrective action before the next surveillance audit.
+    </div>
+</div>
+{% endif %}
+
+<!-- ========================================================================
+     2. CONTROL APPLICABILITY STATEMENT
+     ======================================================================== -->
+<div class="page-break"></div>
+<h2 id="applicability"><span class="section-number">2</span> Control Applicability Statement</h2>
+<div class="section-rule"></div>
+
+<p class="section-intro">
+    The Statement of Applicability (SoA) below maps EASM findings to ISO 27001:2022 Annex A
+    control domains. This mapping focuses on controls relevant to external attack surface
+    monitoring and management.
+</p>
+
+<h3 id="applicability-table"><span class="subsection-number">2.1</span> Annex A Control Summary</h3>
+
+<table>
+    <thead>
+        <tr>
+            <th style="width: 8%">Control</th>
+            <th style="width: 28%">Domain Name</th>
+            <th style="text-align: center; width: 10%">Findings</th>
+            <th style="text-align: center; width: 10%">Major NC</th>
+            <th style="text-align: center; width: 10%">Minor NC</th>
+            <th style="text-align: center; width: 10%">Obs.</th>
+            <th style="width: 24%">Conformity Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for domain in annex_a_domains %}
+        {% set dom_data = compliance_map.get(domain.id, {}) %}
+        {% set dom_findings = dom_data.get("findings", []) %}
+        {% set dom_critical = dom_findings|selectattr("severity", "equalto", "critical")|list|length %}
+        {% set dom_high = dom_findings|selectattr("severity", "equalto", "high")|list|length %}
+        {% set dom_medium = dom_findings|selectattr("severity", "equalto", "medium")|list|length %}
+        <tr>
+            <td style="font-weight: 700; color: #4F46E5">{{ domain.id }}</td>
+            <td style="font-weight: 600">{{ domain.name }}</td>
+            <td style="text-align: center; font-weight: 700">{{ dom_findings|length }}</td>
+            <td style="text-align: center">
+                {% if dom_critical > 0 %}
+                <span class="badge badge-critical">{{ dom_critical }}</span>
+                {% else %}&mdash;{% endif %}
+            </td>
+            <td style="text-align: center">
+                {% if dom_high > 0 %}
+                <span class="badge badge-high">{{ dom_high }}</span>
+                {% else %}&mdash;{% endif %}
+            </td>
+            <td style="text-align: center">
+                {% if dom_medium > 0 %}
+                <span class="badge badge-medium">{{ dom_medium }}</span>
+                {% else %}&mdash;{% endif %}
+            </td>
+            <td>
+                {% if dom_critical > 0 %}
+                <span class="badge badge-critical">MAJOR NC</span>
+                {% elif dom_high > 0 %}
+                <span class="badge badge-high">MINOR NC</span>
+                {% elif dom_medium > 0 %}
+                <span class="badge badge-medium">OBSERVATION</span>
+                {% elif dom_findings|length > 0 %}
+                <span class="badge badge-low">NOTE</span>
+                {% else %}
+                <span class="badge badge-fixed">CONFORMING</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<!-- Charts -->
+<div class="chart-row">
+    <div class="chart-box">
+        <div class="chart-title">Risk Score Gauge</div>
+        <img src="{{ gauge_chart }}" alt="Risk gauge">
+    </div>
+    <div class="chart-box">
+        <div class="chart-title">Findings by Severity</div>
+        <img src="{{ severity_chart }}" alt="Severity distribution">
+    </div>
+</div>
+
+<!-- ========================================================================
+     3. NON-CONFORMITIES
+     ======================================================================== -->
+<div class="page-break"></div>
+<h2 id="nonconformities"><span class="section-number">3</span> Non-Conformities</h2>
+<div class="section-rule"></div>
+
+<p class="section-intro">
+    Non-conformities are classified according to their severity and impact on the ISMS:
+</p>
+
+<table>
+    <thead>
+        <tr>
+            <th style="width: 20%">Finding Severity</th>
+            <th style="width: 25%">ISO 27001 Classification</th>
+            <th style="width: 55%">Implication</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td><span class="badge badge-critical">CRITICAL</span></td>
+            <td style="font-weight: 700; color: #991B1B">Major Non-Conformity</td>
+            <td>Control is absent or fundamentally failing. Requires immediate corrective action and root cause analysis. May affect certification recommendation.</td>
+        </tr>
+        <tr>
+            <td><span class="badge badge-high">HIGH</span></td>
+            <td style="font-weight: 700; color: #9A3412">Minor Non-Conformity</td>
+            <td>Control exists but is not fully effective. Corrective action required within defined timeframe. Should be closed before next surveillance audit.</td>
+        </tr>
+        <tr>
+            <td><span class="badge badge-medium">MEDIUM</span></td>
+            <td style="font-weight: 700; color: #854D0E">Observation</td>
+            <td>Control is effective but improvement opportunity identified. Not required for certification but recommended for continuous improvement.</td>
+        </tr>
+        <tr>
+            <td><span class="badge badge-low">LOW</span> / <span class="badge badge-info">INFO</span></td>
+            <td style="font-weight: 600; color: #475569">Note</td>
+            <td>Informational item. No impact on ISMS conformity. Documented for awareness and future reference.</td>
+        </tr>
+    </tbody>
+</table>
+
+<!-- Major Non-Conformities -->
+{% set major_ncs = nonconformities.get("major", []) %}
+<h3 id="major-nc"><span class="subsection-number">3.1</span> Major Non-Conformities ({{ major_ncs|length }})</h3>
+
+{% if major_ncs %}
+<div class="callout-box callout-danger no-break">
+    <div class="callout-title">Corrective Action Required</div>
+    <div class="callout-text">
+        {{ major_ncs|length }} major non-conformit{{ "ies" if major_ncs|length != 1 else "y" }}
+        identified. Root cause analysis and corrective action plan must be submitted
+        within 30 days. Evidence of effective correction must be provided before the
+        next surveillance audit.
+    </div>
+</div>
+
+<table>
+    <thead>
+        <tr>
+            <th style="width: 4%; text-align: center">NC#</th>
+            <th style="width: 26%">Finding</th>
+            <th style="width: 8%">Control</th>
+            <th style="width: 8%" class="text-right">CVSS</th>
+            <th style="width: 30%">Affected Asset</th>
+            <th style="width: 12%">Detected</th>
+            <th style="width: 12%">Deadline</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for f in major_ncs %}
+        <tr>
+            <td class="rank-cell" style="text-align: center">{{ loop.index }}</td>
+            <td style="font-weight: 600; color: #1E293B">{{ f.name }}</td>
+            <td><span class="badge badge-critical">{{ f.annex_id }}</span></td>
+            <td class="text-right" style="font-weight: 700">{{ "%.1f"|format(f.cvss_score) if f.cvss_score else "&mdash;" }}</td>
+            <td class="asset-cell">{{ f.asset_identifier }}</td>
+            <td style="font-size: 8pt; color: #64748B">{{ f.first_seen }}</td>
+            <td style="font-size: 8pt; font-weight: 700; color: #991B1B">24 hours</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="callout-box callout-info no-break">
+    <div class="callout-title">No Major Non-Conformities</div>
+    <div class="callout-text">No critical-severity findings were detected. No major non-conformities identified at this time.</div>
+</div>
+{% endif %}
+
+<!-- Minor Non-Conformities -->
+{% set minor_ncs = nonconformities.get("minor", []) %}
+<h3 id="minor-nc"><span class="subsection-number">3.2</span> Minor Non-Conformities ({{ minor_ncs|length }})</h3>
+
+{% if minor_ncs %}
+<table>
+    <thead>
+        <tr>
+            <th style="width: 4%; text-align: center">NC#</th>
+            <th style="width: 26%">Finding</th>
+            <th style="width: 8%">Control</th>
+            <th style="width: 8%" class="text-right">CVSS</th>
+            <th style="width: 30%">Affected Asset</th>
+            <th style="width: 12%">Detected</th>
+            <th style="width: 12%">Deadline</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for f in minor_ncs %}
+        <tr>
+            <td class="rank-cell" style="text-align: center">{{ loop.index }}</td>
+            <td style="font-weight: 600; color: #1E293B">{{ f.name }}</td>
+            <td><span class="badge badge-high">{{ f.annex_id }}</span></td>
+            <td class="text-right" style="font-weight: 700">{{ "%.1f"|format(f.cvss_score) if f.cvss_score else "&mdash;" }}</td>
+            <td class="asset-cell">{{ f.asset_identifier }}</td>
+            <td style="font-size: 8pt; color: #64748B">{{ f.first_seen }}</td>
+            <td style="font-size: 8pt; font-weight: 700; color: #9A3412">7 days</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="callout-box callout-info no-break">
+    <div class="callout-title">No Minor Non-Conformities</div>
+    <div class="callout-text">No high-severity findings mapped to minor non-conformities.</div>
+</div>
+{% endif %}
+
+<!-- ========================================================================
+     4. OBSERVATION LOG
+     ======================================================================== -->
+<h2 id="observation-log"><span class="section-number">4</span> Observation Log</h2>
+<div class="section-rule"></div>
+
+{% set observation_items = nonconformities.get("observations", []) %}
+{% if observation_items %}
+<p class="section-intro">
+    The following {{ observation_items|length }} observation{{ "s" if observation_items|length != 1 else "" }}
+    have been noted. While these do not constitute non-conformities, they represent opportunities
+    for improvement and should be reviewed during management review meetings.
+</p>
+
+<table>
+    <thead>
+        <tr>
+            <th style="width: 4%; text-align: center">#</th>
+            <th style="width: 28%">Observation</th>
+            <th style="width: 10%">Control</th>
+            <th style="width: 8%" class="text-right">CVSS</th>
+            <th style="width: 30%">Affected Asset</th>
+            <th style="width: 20%">Detected</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for f in observation_items %}
+        <tr>
+            <td class="rank-cell" style="text-align: center">{{ loop.index }}</td>
+            <td style="font-weight: 600; color: #1E293B">{{ f.name }}</td>
+            <td><span class="badge badge-medium">{{ f.annex_id }}</span></td>
+            <td class="text-right" style="font-weight: 700">{{ "%.1f"|format(f.cvss_score) if f.cvss_score else "&mdash;" }}</td>
+            <td class="asset-cell">{{ f.asset_identifier }}</td>
+            <td style="font-size: 8pt; color: #64748B">{{ f.first_seen }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="callout-box callout-info no-break">
+    <div class="callout-title">No Observations</div>
+    <div class="callout-text">No medium-severity findings mapped to observations at this time.</div>
+</div>
+{% endif %}
+
+<!-- ========================================================================
+     5. FINDINGS BY ANNEX A CONTROL DOMAIN
+     ======================================================================== -->
+<div class="page-break"></div>
+<h2 id="findings-by-annex"><span class="section-number">5</span> Findings by Annex A Control Domain</h2>
+<div class="section-rule"></div>
+
+<p class="section-intro">
+    This section presents all mapped findings organized by their ISO 27001 Annex A control domain.
+    Each finding includes the affected asset, conformity classification, and remediation guidance
+    where available.
+</p>
+
+{% for domain in annex_a_domains %}
+{% set dom_data = compliance_map.get(domain.id, {}) %}
+{% set dom_findings = dom_data.get("findings", []) %}
+{% if dom_findings %}
+
+<div class="severity-group">
+    <div class="severity-group-header sev-{% if dom_findings|selectattr('severity', 'equalto', 'critical')|list|length > 0 %}critical{% elif dom_findings|selectattr('severity', 'equalto', 'high')|list|length > 0 %}high{% elif dom_findings|selectattr('severity', 'equalto', 'medium')|list|length > 0 %}medium{% else %}low{% endif %}" id="annex-{{ domain.id|replace('.', '-') }}">
+        <span>{{ domain.id }}: {{ domain.name }}</span>
+        <span class="sev-count">&mdash; {{ dom_findings|length }} finding{{ "s" if dom_findings|length != 1 else "" }}</span>
+    </div>
+</div>
+
+<p class="section-intro" style="margin-top: 0; font-size: 8.5pt; color: #64748B;">
+    {{ domain.description }}
+</p>
+
+{% for f in dom_findings %}
+<div class="finding-card sev-{{ f.severity }}">
+    <div class="finding-card-body">
+        <div class="finding-header">
+            <span class="finding-title">{{ f.name }}</span>
+            <span class="badge badge-{{ f.severity }}">{{ f.severity|upper }}</span>
+            {% if f.cvss_score %}
+            <span class="finding-cvss {% if f.cvss_score >= 9.0 %}cvss-critical{% elif f.cvss_score >= 7.0 %}cvss-high{% elif f.cvss_score >= 4.0 %}cvss-medium{% elif f.cvss_score > 0 %}cvss-low{% else %}cvss-none{% endif %}">CVSS {{ "%.1f"|format(f.cvss_score) }}</span>
+            {% endif %}
+        </div>
+
+        <div class="finding-meta">
+            <div class="meta-item">
+                <span class="meta-label">Asset</span>
+                <span class="meta-value">{{ f.asset_identifier }}</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Annex A Control</span>
+                <span class="meta-value" style="font-weight: 700; color: #4F46E5">{{ f.annex_id }}</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Conformity Status</span>
+                <span class="meta-value">
+                    {% if f.severity == "critical" %}Major Non-Conformity
+                    {% elif f.severity == "high" %}Minor Non-Conformity
+                    {% elif f.severity == "medium" %}Observation
+                    {% else %}Note{% endif %}
+                </span>
+            </div>
+            {% if f.template_id %}
+            <div class="meta-item">
+                <span class="meta-label">Template</span>
+                <span class="meta-value" style="font-family: monospace; font-size: 7.5pt">{{ f.template_id }}</span>
+            </div>
+            {% endif %}
+            <div class="meta-item">
+                <span class="meta-label">First Seen</span>
+                <span class="meta-value">{{ f.first_seen }}</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Status</span>
+                <span class="meta-value"><span class="badge badge-{{ f.status }}">{{ f.status|upper }}</span></span>
+            </div>
+        </div>
+
+        {% if f.remediation %}
+        <div class="finding-section">
+            <div class="section-label">Corrective Action</div>
+            <div class="remediation-block">
+                <p class="remediation-text">{{ f.remediation }}</p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+
+{% endif %}
+{% endfor %}
+
+<!-- ========================================================================
+     6. IMPROVEMENT OPPORTUNITIES
+     ======================================================================== -->
+<div class="page-break"></div>
+<h2 id="improvement"><span class="section-number">6</span> Improvement Opportunities</h2>
+<div class="section-rule"></div>
+
+<p class="section-intro">
+    In line with the Plan-Do-Check-Act (PDCA) cycle and Clause 10.1 of ISO 27001, the following
+    improvement opportunities have been identified based on the external attack surface assessment.
+</p>
+
+<table>
+    <thead>
+        <tr>
+            <th style="width: 20%">Area</th>
+            <th style="width: 15%">Priority</th>
+            <th style="width: 15%">Timeline</th>
+            <th style="text-align: center; width: 12%">Findings</th>
+            <th style="width: 38%">Improvement Action</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td style="font-weight: 700">Vulnerability Management</td>
+            <td><span class="badge badge-critical">IMMEDIATE</span></td>
+            <td style="font-weight: 700">24 hours</td>
+            <td style="text-align: center; font-weight: 700">{{ severity_counts.get("critical", 0) }}</td>
+            <td>Implement emergency patching process for critical vulnerabilities on externally exposed assets.</td>
+        </tr>
+        <tr>
+            <td style="font-weight: 700">Access Controls</td>
+            <td><span class="badge badge-high">HIGH</span></td>
+            <td style="font-weight: 700">7 days</td>
+            <td style="text-align: center; font-weight: 700">{{ severity_counts.get("high", 0) }}</td>
+            <td>Review and strengthen access controls on exposed administrative interfaces and services.</td>
+        </tr>
+        <tr>
+            <td style="font-weight: 700">Encryption &amp; TLS</td>
+            <td><span class="badge badge-medium">MEDIUM</span></td>
+            <td style="font-weight: 700">30 days</td>
+            <td style="text-align: center; font-weight: 700">{{ severity_counts.get("medium", 0) }}</td>
+            <td>Upgrade TLS configurations, renew expiring certificates, and enforce encryption standards.</td>
+        </tr>
+        <tr>
+            <td style="font-weight: 700">Continuous Monitoring</td>
+            <td><span class="badge badge-low">LOW</span></td>
+            <td style="font-weight: 700">90 days</td>
+            <td style="text-align: center; font-weight: 700">{{ severity_counts.get("low", 0) + severity_counts.get("info", 0) }}</td>
+            <td>Enhance monitoring coverage and alert thresholds for low-severity and informational findings.</td>
+        </tr>
+    </tbody>
+</table>
+
+<!-- ========================================================================
+     7. RECOMMENDATIONS
+     ======================================================================== -->
+<h2 id="recommendations"><span class="section-number">7</span> Recommendations</h2>
+<div class="section-rule"></div>
+
+<p class="section-intro">
+    The following recommendations are prioritized to support ISMS continual improvement
+    and preparation for ISO 27001 certification or surveillance audits.
+</p>
+
+<div class="rec-list">
+{% for rec in recommendations %}
+<div class="recommendation">
+    <div class="rec-priority-badge">{{ rec.priority }}</div>
+    <div class="rec-body">
+        <div class="rec-title">{{ rec.title }}</div>
+        <div class="rec-desc">{{ rec.description }}</div>
+    </div>
+</div>
+{% endfor %}
+</div>
+
+<!-- ========================================================================
+     FOOTER / DISCLAIMER
+     ======================================================================== -->
+<div class="report-footer">
+    <strong>Disclaimer:</strong> This ISO 27001 Annex A compliance report is generated automatically
+    by the EASM platform and provides a best-effort mapping of external attack surface findings to
+    ISO/IEC 27001:2022 Annex A controls. This report does not constitute a formal certification
+    audit and should be used as supplementary evidence for ISMS management reviews and internal
+    audits. Findings are based on automated scanning and may require manual validation by qualified
+    auditors. This document is classified as <strong>Confidential</strong> and is intended
+    solely for authorized recipients within {{ tenant_name }}.
+</div>
+
+</body>
+</html>

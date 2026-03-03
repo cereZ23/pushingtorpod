@@ -6,6 +6,7 @@ const authStore = useAuthStore()
 
 const email = ref('')
 const password = ref('')
+const mfaCode = ref('')
 const isLoading = ref(false)
 const error = ref('')
 
@@ -28,6 +29,27 @@ async function handleLogin() {
     isLoading.value = false
   }
 }
+
+async function handleMfaVerify() {
+  error.value = ''
+  isLoading.value = true
+
+  try {
+    await authStore.verifyMfa(mfaCode.value)
+  } catch (err: unknown) {
+    const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
+    error.value = axiosErr.response?.data?.detail || axiosErr.message || 'Invalid MFA code'
+  } finally {
+    isLoading.value = false
+  }
+}
+
+function cancelMfa() {
+  authStore.mfaRequired = false
+  authStore.mfaToken = null
+  mfaCode.value = ''
+  error.value = ''
+}
 </script>
 
 <template>
@@ -41,7 +63,58 @@ async function handleLogin() {
           External Attack Surface Management
         </p>
       </div>
-      <form class="mt-8 space-y-6" @submit.prevent="handleLogin">
+
+      <!-- MFA Step -->
+      <form v-if="authStore.mfaRequired" class="mt-8 space-y-6" @submit.prevent="handleMfaVerify">
+        <div class="text-center mb-4">
+          <svg class="mx-auto h-12 w-12 text-primary-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          </svg>
+          <p class="mt-2 text-sm text-gray-600 dark:text-dark-text-secondary">
+            Enter the 6-digit code from your authenticator app
+          </p>
+        </div>
+
+        <div>
+          <label for="mfa-code" class="sr-only">MFA Code</label>
+          <input
+            id="mfa-code"
+            v-model="mfaCode"
+            type="text"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            required
+            maxlength="6"
+            pattern="[0-9]{6}"
+            class="appearance-none rounded-md relative block w-full px-3 py-3 border border-gray-300 dark:border-dark-border placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-dark-text-primary dark:bg-dark-bg-secondary focus:outline-none focus:ring-primary-500 focus:border-primary-500 text-center text-2xl tracking-widest font-mono"
+            placeholder="000000"
+          />
+        </div>
+
+        <div v-if="error" class="rounded-md bg-red-50 dark:bg-red-900/20 p-4">
+          <p class="text-sm text-red-800 dark:text-red-200">{{ error }}</p>
+        </div>
+
+        <div class="space-y-3">
+          <button
+            type="submit"
+            :disabled="isLoading || mfaCode.length !== 6"
+            class="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {{ isLoading ? 'Verifying...' : 'Verify' }}
+          </button>
+          <button
+            type="button"
+            @click="cancelMfa"
+            class="w-full text-center text-sm text-gray-600 dark:text-dark-text-secondary hover:text-gray-800 dark:hover:text-dark-text-primary"
+          >
+            Back to login
+          </button>
+        </div>
+      </form>
+
+      <!-- Login Step -->
+      <form v-else class="mt-8 space-y-6" @submit.prevent="handleLogin">
         <div class="rounded-md shadow-sm -space-y-px">
           <div>
             <label for="email" class="sr-only">Email address</label>
@@ -69,6 +142,15 @@ async function handleLogin() {
               placeholder="Password"
             />
           </div>
+        </div>
+
+        <div class="flex items-center justify-end">
+          <router-link
+            to="/forgot-password"
+            class="text-sm font-medium text-primary-600 hover:text-primary-500"
+          >
+            Forgot your password?
+          </router-link>
         </div>
 
         <div v-if="error" class="rounded-md bg-red-50 dark:bg-red-900/20 p-4">

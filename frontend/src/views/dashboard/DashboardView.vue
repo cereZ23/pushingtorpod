@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, onUnmounted } from 'vue'
+import { ref, onMounted, computed, onUnmounted, watch } from 'vue'
 import { useTenantStore } from '@/stores/tenant'
 import apiClient from '@/api/client'
+import { getRiskGrade, SEVERITY_HEX, ASSET_TYPE_HEX } from '@/utils/severity'
+import { useRiskGauge } from '@/composables/useRiskGauge'
+import { formatDate as formatDateShared } from '@/utils/formatters'
+import SkeletonLoader from '@/components/SkeletonLoader.vue'
 
 // -- Types --
 
@@ -40,6 +44,18 @@ interface RecentActivity {
   timestamp: string
 }
 
+interface HeatmapCell {
+  severity: string
+  asset_type: string
+  count: number
+}
+
+interface RiskHeatmapResponse {
+  cells: HeatmapCell[]
+  severities: string[]
+  asset_types: string[]
+}
+
 interface GraphNode {
   id: string
   label: string
@@ -59,6 +75,9 @@ const tenantStore = useTenantStore()
 const isLoading = ref(true)
 const error = ref('')
 const hoveredNode = ref<GraphNode | null>(null)
+
+// AbortController for cancelling in-flight API requests on navigation/reload
+let abortController: AbortController | null = null
 const tooltipPos = ref({ x: 0, y: 0 })
 
 const currentTenantId = computed(() => tenantStore.currentTenantId)
@@ -79,46 +98,24 @@ const summary = ref<DashboardSummary>({
 const graphNodes = ref<GraphNode[]>([])
 const graphEdges = ref<GraphEdge[]>([])
 
+// Heatmap data
+const heatmapData = ref<RiskHeatmapResponse>({
+  cells: [],
+  severities: [],
+  asset_types: [],
+})
+const heatmapLoading = ref(false)
+
 // -- Computed: SVG Charts --
 
-// Risk grade from score
-const riskGrade = computed(() => {
-  const s = summary.value.risk_score
-  if (s <= 20) return { letter: 'A', color: '#16a34a' }
-  if (s <= 40) return { letter: 'B', color: '#65a30d' }
-  if (s <= 60) return { letter: 'C', color: '#eab308' }
-  if (s <= 80) return { letter: 'D', color: '#ea580c' }
-  return { letter: 'F', color: '#dc2626' }
-})
+// Risk grade from score (shared utility)
+const riskGrade = computed(() => getRiskGrade(summary.value.risk_score))
 
-// Gauge arc for risk score (0-100)
-const riskGaugeArc = computed(() => {
-  const score = Math.min(100, Math.max(0, summary.value.risk_score))
-  const angle = (score / 100) * 270 // 270 degree arc
-  const startAngle = 135 // start at bottom-left
-  const endAngle = startAngle + angle
-  const r = 40
-  const cx = 50
-  const cy = 50
-  const startRad = (startAngle * Math.PI) / 180
-  const endRad = (endAngle * Math.PI) / 180
-  const x1 = cx + r * Math.cos(startRad)
-  const y1 = cy + r * Math.sin(startRad)
-  const x2 = cx + r * Math.cos(endRad)
-  const y2 = cy + r * Math.sin(endRad)
-  const largeArc = angle > 180 ? 1 : 0
-  return `M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2}`
-})
+// Gauge arc for risk score (shared composable, radius 40 matches our SVG)
+const riskScoreRef = computed(() => summary.value.risk_score)
+const { arc: riskGaugeArc } = useRiskGauge(riskScoreRef)
 
-// Donut chart segments
-const severityColors: Record<string, string> = {
-  critical: '#dc2626',
-  high: '#ea580c',
-  medium: '#eab308',
-  low: '#3b82f6',
-  info: '#6b7280',
-}
-
+// Donut chart segments (using shared SEVERITY_HEX colors)
 const donutSegments = computed(() => {
   const breakdown = summary.value.severity_breakdown
   const entries = Object.entries(breakdown).filter(([, v]) => v > 0)
@@ -133,7 +130,7 @@ const donutSegments = computed(() => {
     const segment = {
       key,
       value,
-      color: severityColors[key] || '#6b7280',
+      color: SEVERITY_HEX[key] || '#6b7280',
       dasharray: `${dashLen} ${circumference - dashLen}`,
       dashoffset: -offset,
       pct: Math.round(pct * 100),
@@ -148,15 +145,7 @@ const donutTotal = computed(() => {
   return b.critical + b.high + b.medium + b.low + b.info
 })
 
-// Bar chart for asset types
-const assetTypeColors: Record<string, string> = {
-  domain: '#3b82f6',
-  subdomain: '#8b5cf6',
-  ip: '#06b6d4',
-  url: '#10b981',
-  service: '#f59e0b',
-}
-
+// Bar chart for asset types (using shared ASSET_TYPE_HEX colors)
 const assetBars = computed(() => {
   const types = summary.value.assets_by_type
   const entries = Object.entries(types)
@@ -164,7 +153,7 @@ const assetBars = computed(() => {
   return entries.map(([key, value]) => ({
     key,
     value,
-    color: assetTypeColors[key] || '#6b7280',
+    color: ASSET_TYPE_HEX[key] || '#6b7280',
     widthPct: (value / maxVal) * 100,
   }))
 })
@@ -241,6 +230,76 @@ const nodeTypeColors: Record<string, string> = {
   service: '#f59e0b',
 }
 
+// -- Heatmap helpers --
+
+const heatmapCellMap = computed(() => {
+  const map = new Map<string, number>()
+  for (const cell of heatmapData.value.cells) {
+    map.set(`${cell.severity}:${cell.asset_type}`, cell.count)
+  }
+  return map
+})
+
+function getHeatmapCount(severity: string, assetType: string): number {
+  return heatmapCellMap.value.get(`${severity}:${assetType}`) ?? 0
+}
+
+function getHeatmapCellClass(severity: string, assetType: string): string {
+  const count = getHeatmapCount(severity, assetType)
+
+  if (count === 0) {
+    return 'bg-gray-50 text-gray-400 dark:bg-gray-800 dark:text-gray-600'
+  }
+
+  // Determine intensity tier: light (1-5), medium (6-20), dark (21+)
+  const intensityMap: Record<string, Record<string, string>> = {
+    critical: {
+      light: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+      medium: 'bg-red-300 text-red-900 dark:bg-red-800/50 dark:text-red-200',
+      dark: 'bg-red-500 text-white dark:bg-red-700 dark:text-white',
+    },
+    high: {
+      light: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
+      medium: 'bg-orange-300 text-orange-900 dark:bg-orange-800/50 dark:text-orange-200',
+      dark: 'bg-orange-500 text-white dark:bg-orange-700 dark:text-white',
+    },
+    medium: {
+      light: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300',
+      medium: 'bg-yellow-300 text-yellow-900 dark:bg-yellow-800/50 dark:text-yellow-200',
+      dark: 'bg-yellow-500 text-white dark:bg-yellow-700 dark:text-white',
+    },
+    low: {
+      light: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+      medium: 'bg-blue-300 text-blue-900 dark:bg-blue-800/50 dark:text-blue-200',
+      dark: 'bg-blue-500 text-white dark:bg-blue-700 dark:text-white',
+    },
+    info: {
+      light: 'bg-gray-100 text-gray-700 dark:bg-gray-700/30 dark:text-gray-300',
+      medium: 'bg-gray-300 text-gray-900 dark:bg-gray-600/50 dark:text-gray-200',
+      dark: 'bg-gray-500 text-white dark:bg-gray-500 dark:text-white',
+    },
+  }
+
+  const tier = count <= 5 ? 'light' : count <= 20 ? 'medium' : 'dark'
+  return intensityMap[severity]?.[tier] ?? intensityMap.info[tier]
+}
+
+const heatmapSeverityLabels: Record<string, string> = {
+  critical: 'Critical',
+  high: 'High',
+  medium: 'Medium',
+  low: 'Low',
+  info: 'Info',
+}
+
+const heatmapAssetTypeLabels: Record<string, string> = {
+  domain: 'Domain',
+  subdomain: 'Subdomain',
+  ip: 'IP',
+  url: 'URL',
+  service: 'Service',
+}
+
 // -- API calls --
 
 async function loadDashboard(): Promise<void> {
@@ -250,13 +309,18 @@ async function loadDashboard(): Promise<void> {
     return
   }
 
+  abortController?.abort()
+  abortController = new AbortController()
+  const { signal } = abortController
+
   isLoading.value = true
   error.value = ''
 
   try {
     // Try the dashboard summary endpoint first
     const dashboardResponse = await apiClient.get(
-      `/api/v1/tenants/${currentTenantId.value}/dashboard`
+      `/api/v1/tenants/${currentTenantId.value}/dashboard`,
+      { signal }
     ).catch(() => null)
 
     if (dashboardResponse?.data) {
@@ -283,16 +347,17 @@ async function loadDashboard(): Promise<void> {
           url: stats.assets_by_type?.url ?? 0,
           service: stats.assets_by_type?.service ?? 0,
         },
-        risk_trend: stats.risk_trend ?? d.risk_trend ?? generatePlaceholderTrend(stats.average_risk_score ?? 45),
+        risk_trend: stats.risk_trend ?? d.risk_trend ?? [],
         recent_activity: d.recent_activity ?? [],
       }
     } else {
       error.value = 'Dashboard data unavailable. Start a scan to populate your attack surface.'
     }
 
-    // Load graph data
-    await loadGraphData()
+    // Load graph data and heatmap in parallel
+    await Promise.all([loadGraphData(), loadHeatmap()])
   } catch (err: unknown) {
+    if (err instanceof Error && (err.name === 'CanceledError' || err.name === 'AbortError')) return
     const message = err instanceof Error ? err.message : 'Failed to load dashboard data'
     console.error('Dashboard load error:', message)
     error.value = 'Failed to load dashboard data. Please check that the API is running.'
@@ -305,9 +370,10 @@ async function loadGraphData(): Promise<void> {
   if (!currentTenantId.value) return
 
   try {
+    const signal = abortController?.signal
     const [nodesResp, edgesResp] = await Promise.allSettled([
-      apiClient.get(`/api/v1/tenants/${currentTenantId.value}/graph/nodes`, { params: { limit: 20 } }),
-      apiClient.get(`/api/v1/tenants/${currentTenantId.value}/graph/edges`, { params: { limit: 50 } }),
+      apiClient.get(`/api/v1/tenants/${currentTenantId.value}/graph/nodes`, { params: { limit: 20 }, signal }),
+      apiClient.get(`/api/v1/tenants/${currentTenantId.value}/graph/edges`, { params: { limit: 50 }, signal }),
     ])
 
     if (nodesResp.status === 'fulfilled') {
@@ -336,18 +402,23 @@ async function loadGraphData(): Promise<void> {
   }
 }
 
-function generatePlaceholderTrend(base: number): number[] {
-  const trend: number[] = []
-  let val = Math.max(10, base + 20)
-  for (let i = 0; i < 10; i++) {
-    trend.push(Math.round(Math.max(5, Math.min(95, val))))
-    val += (Math.random() - 0.6) * 8
+async function loadHeatmap(): Promise<void> {
+  if (!currentTenantId.value) return
+
+  heatmapLoading.value = true
+  try {
+    const response = await apiClient.get<RiskHeatmapResponse>(
+      `/api/v1/tenants/${currentTenantId.value}/dashboard/risk-heatmap`,
+      { signal: abortController?.signal }
+    )
+    heatmapData.value = response.data
+  } catch {
+    // Heatmap data unavailable - leave empty
+  } finally {
+    heatmapLoading.value = false
   }
-  return trend
 }
 
-// Placeholder functions removed - dashboard now shows honest empty state
-// when data is unavailable instead of fabricated numbers
 
 // -- Event handlers --
 
@@ -363,16 +434,7 @@ function handleNodeLeave(): void {
 // -- Helpers --
 
 function formatDate(dateString: string): string {
-  const date = new Date(dateString)
-  const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffMin = Math.floor(diffMs / 60000)
-  if (diffMin < 1) return 'Just now'
-  if (diffMin < 60) return `${diffMin}m ago`
-  const diffHours = Math.floor(diffMin / 60)
-  if (diffHours < 24) return `${diffHours}h ago`
-  const diffDays = Math.floor(diffHours / 24)
-  return `${diffDays}d ago`
+  return formatDateShared(dateString, 'relative')
 }
 
 function getSeverityBadgeClass(severity: string): string {
@@ -405,8 +467,15 @@ onMounted(async () => {
   refreshInterval = setInterval(loadDashboard, 60000)
 })
 
+watch(currentTenantId, () => {
+  if (currentTenantId.value) {
+    loadDashboard()
+  }
+})
+
 onUnmounted(() => {
   if (refreshInterval) clearInterval(refreshInterval)
+  abortController?.abort()
 })
 </script>
 
@@ -423,7 +492,7 @@ onUnmounted(() => {
         :disabled="isLoading"
         class="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50 transition-colors flex items-center gap-2"
       >
-        <svg class="w-4 h-4" :class="{ 'animate-spin': isLoading }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg aria-hidden="true" class="w-4 h-4" :class="{ 'animate-spin': isLoading }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
         </svg>
         Refresh
@@ -431,27 +500,32 @@ onUnmounted(() => {
     </div>
 
     <!-- Error State -->
-    <div v-if="error && !isLoading" class="bg-red-50 dark:bg-red-900/20 p-4 rounded-md">
+    <div v-if="error && !isLoading" role="alert" class="bg-red-50 dark:bg-red-900/20 p-4 rounded-md">
       <p class="text-red-800 dark:text-red-200">{{ error }}</p>
     </div>
 
-    <!-- Loading State -->
-    <div v-if="isLoading" class="flex items-center justify-center h-64">
-      <div class="flex flex-col items-center gap-3">
-        <svg class="w-8 h-8 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-        </svg>
-        <span class="text-gray-600 dark:text-dark-text-secondary">Loading dashboard...</span>
+    <!-- Loading State (Skeleton) -->
+    <template v-if="isLoading">
+      <div role="status" class="space-y-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <SkeletonLoader variant="card" />
+          <SkeletonLoader variant="card" />
+          <SkeletonLoader variant="card" />
+          <SkeletonLoader variant="card" />
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <SkeletonLoader variant="chart" />
+          <SkeletonLoader variant="chart" />
+        </div>
       </div>
-    </div>
+    </template>
 
     <!-- Dashboard Content -->
     <template v-if="!isLoading">
       <!-- KPI Cards -->
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <!-- Total Assets -->
-        <div class="bg-white dark:bg-dark-bg-secondary p-6 rounded-lg border border-gray-200 dark:border-dark-border">
+        <router-link to="/assets" class="bg-white dark:bg-dark-bg-secondary p-6 rounded-lg border border-gray-200 dark:border-dark-border hover:border-primary-300 dark:hover:border-primary-700 transition-colors block">
           <div class="flex items-center justify-between">
             <div>
               <p class="text-sm text-gray-600 dark:text-dark-text-secondary">Total Assets</p>
@@ -466,7 +540,7 @@ onUnmounted(() => {
                     ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
                     : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'"
                 >
-                  <svg class="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg aria-hidden="true" class="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path v-if="summary.asset_delta > 0" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 11l5-5m0 0l5 5m-5-5v12" />
                     <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 13l-5 5m0 0l-5-5m5 5V6" />
                   </svg>
@@ -476,15 +550,15 @@ onUnmounted(() => {
               </div>
             </div>
             <div class="p-3 bg-blue-100 dark:bg-blue-900/20 rounded-lg">
-              <svg class="w-8 h-8 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg aria-hidden="true" class="w-8 h-8 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
               </svg>
             </div>
           </div>
-        </div>
+        </router-link>
 
         <!-- Open Findings -->
-        <div class="bg-white dark:bg-dark-bg-secondary p-6 rounded-lg border border-gray-200 dark:border-dark-border">
+        <router-link to="/findings" class="bg-white dark:bg-dark-bg-secondary p-6 rounded-lg border border-gray-200 dark:border-dark-border hover:border-primary-300 dark:hover:border-primary-700 transition-colors block">
           <div class="flex items-center justify-between">
             <div>
               <p class="text-sm text-gray-600 dark:text-dark-text-secondary">Open Findings</p>
@@ -519,12 +593,12 @@ onUnmounted(() => {
               </div>
             </div>
             <div class="p-3 bg-red-100 dark:bg-red-900/20 rounded-lg">
-              <svg class="w-8 h-8 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg aria-hidden="true" class="w-8 h-8 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
             </div>
           </div>
-        </div>
+        </router-link>
 
         <!-- Risk Score Gauge -->
         <div class="bg-white dark:bg-dark-bg-secondary p-6 rounded-lg border border-gray-200 dark:border-dark-border">
@@ -534,6 +608,7 @@ onUnmounted(() => {
               <div class="flex items-center gap-3 mt-2">
                 <!-- Inline SVG gauge -->
                 <svg viewBox="0 0 100 100" class="w-16 h-16">
+                  <title>Risk Score Gauge - {{ summary.risk_score }} out of 100</title>
                   <!-- Background arc -->
                   <circle
                     cx="50" cy="50" r="40"
@@ -574,7 +649,7 @@ onUnmounted(() => {
         </div>
 
         <!-- Active Scans -->
-        <div class="bg-white dark:bg-dark-bg-secondary p-6 rounded-lg border border-gray-200 dark:border-dark-border">
+        <router-link to="/scans" class="bg-white dark:bg-dark-bg-secondary p-6 rounded-lg border border-gray-200 dark:border-dark-border hover:border-primary-300 dark:hover:border-primary-700 transition-colors block">
           <div class="flex items-center justify-between">
             <div>
               <p class="text-sm text-gray-600 dark:text-dark-text-secondary">Active Scans</p>
@@ -586,12 +661,12 @@ onUnmounted(() => {
               </p>
             </div>
             <div class="p-3 bg-green-100 dark:bg-green-900/20 rounded-lg">
-              <svg class="w-8 h-8 text-green-600 dark:text-green-400" :class="{ 'animate-spin': summary.active_scans > 0 }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg aria-hidden="true" class="w-8 h-8 text-green-600 dark:text-green-400" :class="{ 'animate-spin': summary.active_scans > 0 }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
             </div>
           </div>
-        </div>
+        </router-link>
       </div>
 
       <!-- Charts Row -->
@@ -602,6 +677,7 @@ onUnmounted(() => {
           <div class="flex items-center gap-6">
             <!-- SVG Donut -->
             <svg viewBox="0 0 100 100" class="w-40 h-40 flex-shrink-0">
+              <title>Findings by Severity</title>
               <circle cx="50" cy="50" r="40" fill="none" stroke="currentColor" stroke-width="12" class="text-gray-100 dark:text-gray-800" />
               <circle
                 v-for="segment in donutSegments"
@@ -672,6 +748,7 @@ onUnmounted(() => {
         <div class="bg-white dark:bg-dark-bg-secondary p-6 rounded-lg border border-gray-200 dark:border-dark-border">
           <h3 class="text-lg font-semibold text-gray-900 dark:text-dark-text-primary mb-4">Risk Score Trend</h3>
           <svg viewBox="0 0 280 160" class="w-full" preserveAspectRatio="xMidYMid meet">
+            <title>Risk Score Trend</title>
             <!-- Grade bands background -->
             <rect x="10" y="10" width="260" height="28" fill="#dc2626" opacity="0.08" rx="2" />
             <rect x="10" y="38" width="260" height="24" fill="#ea580c" opacity="0.08" rx="2" />
@@ -732,6 +809,7 @@ onUnmounted(() => {
         <div class="bg-white dark:bg-dark-bg-secondary p-6 rounded-lg border border-gray-200 dark:border-dark-border relative">
           <h3 class="text-lg font-semibold text-gray-900 dark:text-dark-text-primary mb-4">Asset Relationships</h3>
           <svg viewBox="0 0 500 350" class="w-full" preserveAspectRatio="xMidYMid meet">
+            <title>Asset Relationships</title>
             <!-- Edges -->
             <line
               v-for="(edge, i) in edgeLines"
@@ -795,6 +873,87 @@ onUnmounted(() => {
         </div>
       </div>
 
+      <!-- Risk Heatmap -->
+      <div class="bg-white dark:bg-dark-bg-secondary p-6 rounded-lg border border-gray-200 dark:border-dark-border">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-dark-text-primary mb-4">Risk Heatmap</h3>
+        <p class="text-sm text-gray-500 dark:text-dark-text-tertiary mb-4">Open findings by severity and asset type</p>
+
+        <!-- Loading state -->
+        <div v-if="heatmapLoading" class="flex items-center justify-center h-40">
+          <svg aria-hidden="true" class="w-6 h-6 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+        </div>
+
+        <!-- Heatmap grid -->
+        <div v-else-if="heatmapData.severities.length > 0" class="overflow-x-auto">
+          <table class="w-full border-collapse">
+            <thead>
+              <tr>
+                <th scope="col" class="w-24 p-2 text-left text-xs font-medium text-gray-500 dark:text-dark-text-tertiary uppercase tracking-wider">
+                  Severity
+                </th>
+                <th
+                  scope="col"
+                  v-for="at in heatmapData.asset_types"
+                  :key="at"
+                  class="p-2 text-center text-xs font-medium text-gray-500 dark:text-dark-text-tertiary uppercase tracking-wider"
+                >
+                  {{ heatmapAssetTypeLabels[at] || at }}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="sev in heatmapData.severities" :key="sev">
+                <td class="p-2 text-sm font-medium text-gray-700 dark:text-dark-text-secondary capitalize">
+                  {{ heatmapSeverityLabels[sev] || sev }}
+                </td>
+                <td
+                  v-for="at in heatmapData.asset_types"
+                  :key="`${sev}-${at}`"
+                  class="p-1"
+                >
+                  <div
+                    class="flex items-center justify-center h-12 rounded-md text-sm font-semibold transition-colors"
+                    :class="getHeatmapCellClass(sev, at)"
+                    :title="`${heatmapSeverityLabels[sev] || sev} findings on ${heatmapAssetTypeLabels[at] || at} assets: ${getHeatmapCount(sev, at)}`"
+                  >
+                    {{ getHeatmapCount(sev, at) }}
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <!-- Legend -->
+          <div class="flex items-center gap-4 mt-4 text-xs text-gray-500 dark:text-dark-text-tertiary">
+            <span>Intensity:</span>
+            <div class="flex items-center gap-1">
+              <span class="inline-block w-4 h-4 rounded bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"></span>
+              <span>0</span>
+            </div>
+            <div class="flex items-center gap-1">
+              <span class="inline-block w-4 h-4 rounded bg-red-100 dark:bg-red-900/30 border border-gray-200 dark:border-gray-700"></span>
+              <span>1-5</span>
+            </div>
+            <div class="flex items-center gap-1">
+              <span class="inline-block w-4 h-4 rounded bg-red-300 dark:bg-red-800/50 border border-gray-200 dark:border-gray-700"></span>
+              <span>6-20</span>
+            </div>
+            <div class="flex items-center gap-1">
+              <span class="inline-block w-4 h-4 rounded bg-red-500 dark:bg-red-700 border border-gray-200 dark:border-gray-700"></span>
+              <span>21+</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Empty state -->
+        <div v-else class="flex items-center justify-center h-40 text-sm text-gray-500 dark:text-dark-text-secondary">
+          No heatmap data available. Run a scan to populate findings.
+        </div>
+      </div>
+
       <!-- Recent Activity -->
       <div class="bg-white dark:bg-dark-bg-secondary p-6 rounded-lg border border-gray-200 dark:border-dark-border">
         <h3 class="text-lg font-semibold text-gray-900 dark:text-dark-text-primary mb-4">Recent Activity</h3>
@@ -805,7 +964,7 @@ onUnmounted(() => {
             class="flex items-start gap-3 p-3 rounded-lg bg-gray-50 dark:bg-dark-bg-tertiary"
           >
             <div class="p-1.5 rounded-md bg-primary-100 dark:bg-primary-900/20 mt-0.5">
-              <svg class="w-4 h-4 text-primary-600 dark:text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg aria-hidden="true" class="w-4 h-4 text-primary-600 dark:text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="getActivityIcon(activity.type)" />
               </svg>
             </div>

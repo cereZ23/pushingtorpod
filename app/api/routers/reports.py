@@ -600,7 +600,7 @@ def generate_technical_report(
 @router.get("/export/pdf")
 def export_report_pdf(
     tenant_id: int,
-    report_type: str = Query(default="executive", regex="^(executive|technical)$", description="Report type"),
+    report_type: str = Query(default="executive", regex="^(executive|technical|soc2|iso27001)$", description="Report type"),
     severity: Optional[str] = Query(None, description="Filter by severity (technical only)"),
     finding_status: Optional[str] = Query(None, alias="status", description="Filter by status (technical only)"),
     limit: int = Query(default=500, ge=1, le=5000, description="Max findings (technical only)"),
@@ -608,14 +608,21 @@ def export_report_pdf(
     membership=Depends(verify_tenant_access),
 ) -> StreamingResponse:
     """
-    Export a professional PDF report (executive or technical).
+    Export a professional PDF report.
+
+    Supported report types:
+
+    - ``executive`` – High-level risk summary for leadership.
+    - ``technical`` – Detailed findings with evidence for engineers.
+    - ``soc2`` – SOC 2 Trust Service Criteria compliance assessment.
+    - ``iso27001`` – ISO 27001 Annex A control assessment.
 
     Returns a streaming PDF response with charts, tables, severity badges,
     and branded layout suitable for stakeholder distribution.
 
     Args:
         tenant_id: Tenant ID from path.
-        report_type: ``executive`` or ``technical``.
+        report_type: ``executive``, ``technical``, ``soc2``, or ``iso27001``.
         severity: Optional severity filter for technical reports.
         finding_status: Optional status filter for technical reports.
         limit: Max findings to include in technical reports.
@@ -657,7 +664,7 @@ def export_report_pdf(
 @router.get("/export/docx")
 def export_report_docx(
     tenant_id: int,
-    report_type: str = Query(default="executive", regex="^(executive|technical)$", description="Report type"),
+    report_type: str = Query(default="executive", regex="^(executive|technical|soc2|iso27001)$", description="Report type"),
     severity: Optional[str] = Query(None, description="Filter by severity (technical only)"),
     finding_status: Optional[str] = Query(None, alias="status", description="Filter by status (technical only)"),
     limit: int = Query(default=500, ge=1, le=5000, description="Max findings (technical only)"),
@@ -665,14 +672,16 @@ def export_report_docx(
     membership=Depends(verify_tenant_access),
 ) -> StreamingResponse:
     """
-    Export a professional DOCX report (executive or technical).
+    Export a professional DOCX report.
+
+    Supported report types: ``executive``, ``technical``, ``soc2``, ``iso27001``.
 
     Returns a streaming DOCX response with charts, tables, and
     structured sections suitable for editing or sharing.
 
     Args:
         tenant_id: Tenant ID from path.
-        report_type: ``executive`` or ``technical``.
+        report_type: ``executive``, ``technical``, ``soc2``, or ``iso27001``.
         severity: Optional severity filter for technical reports.
         finding_status: Optional status filter for technical reports.
         limit: Max findings to include in technical reports.
@@ -897,4 +906,72 @@ def export_findings_csv(
         io.BytesIO(csv_bytes),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/export/assets-csv")
+def export_assets_csv(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    membership=Depends(verify_tenant_access),
+) -> StreamingResponse:
+    """
+    Export all assets as a downloadable CSV file.
+
+    Returns a streaming CSV response with Content-Disposition set for
+    file download. Suitable for import into spreadsheets, CMDBs,
+    or external asset management systems.
+
+    Args:
+        tenant_id: Tenant ID from path.
+        db: Database session.
+        membership: Verified tenant membership.
+
+    Returns:
+        StreamingResponse with text/csv content type.
+    """
+    _verify_tenant_exists(db, tenant_id)
+
+    results = (
+        db.query(Asset)
+        .filter(Asset.tenant_id == tenant_id)
+        .order_by(Asset.last_seen.desc())
+        .all()
+    )
+
+    csv_headers = [
+        "id",
+        "identifier",
+        "type",
+        "priority",
+        "risk_score",
+        "first_seen",
+        "last_seen",
+        "is_active",
+        "enrichment_status",
+    ]
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(csv_headers)
+
+    for asset in results:
+        writer.writerow([
+            asset.id,
+            asset.identifier,
+            asset.type.value if asset.type else "",
+            asset.priority or "",
+            asset.risk_score or "",
+            asset.first_seen.isoformat() if asset.first_seen else "",
+            asset.last_seen.isoformat() if asset.last_seen else "",
+            asset.is_active,
+            asset.enrichment_status or "",
+        ])
+
+    csv_bytes = output.getvalue().encode("utf-8")
+
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="assets_export.csv"'},
     )

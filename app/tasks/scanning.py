@@ -33,7 +33,9 @@ def run_nuclei_scan(
     asset_ids: Optional[List[int]] = None,
     severity: Optional[List[str]] = None,
     templates: Optional[List[str]] = None,
-    rate_limit: int = 300
+    rate_limit: int = 300,
+    concurrency: int = 50,
+    interactsh_server: Optional[str] = None,
 ):
     """
     Execute Nuclei vulnerability scan on assets
@@ -130,38 +132,12 @@ def run_nuclei_scan(
 
         tenant_logger.info(f"Scanning {len(all_urls)} URLs across {len(assets)} assets")
 
-        # Step 1: Crawl URLs with Katana to discover endpoints with parameters
-        tenant_logger.info("Running Katana crawler to discover vulnerable endpoints...")
-        from app.utils.secure_executor import SecureToolExecutor
+        # NOTE: Katana crawling is already done in Phase 6b of the pipeline.
+        # Running it again here per-URL was causing O(N*300s) timeouts that
+        # stalled the entire pipeline.  We scan the base URLs directly.
+        scan_targets = all_urls
 
-        crawled_urls = []
-        for url in all_urls:
-            tenant_logger.debug(f"Crawling {url}...")
-
-            try:
-                with SecureToolExecutor(tenant_id) as executor:
-                    # Run Katana to discover endpoints
-                    returncode, stdout, stderr = executor.execute(
-                        'katana',
-                        ['-u', url, '-d', '2', '-jc', '-silent'],
-                        timeout=300
-                    )
-
-                    if returncode == 0 and stdout:
-                        # Extract URLs with parameters
-                        for line in stdout.strip().split('\n'):
-                            if line and '?' in line:  # Has query parameters
-                                crawled_urls.append(line.strip())
-                                tenant_logger.debug(f"Discovered: {line.strip()}")
-            except Exception as e:
-                tenant_logger.warning(f"Katana crawl failed for {url}: {e}")
-                continue
-
-        # Combine base URLs + crawled URLs with parameters
-        scan_targets = list(set(all_urls + crawled_urls))
-        tenant_logger.info(f"Total scan targets: {len(scan_targets)} ({len(all_urls)} base + {len(crawled_urls)} crawled)")
-
-        # Step 2: Execute Nuclei scan
+        # Execute Nuclei scan
         nuclei_service = NucleiService(tenant_id)
 
         # Use asyncio to run async method
@@ -170,7 +146,9 @@ def run_nuclei_scan(
                 urls=scan_targets,  # Scan both base URLs and crawled endpoints
                 templates=templates,
                 severity=severity or ['critical', 'high', 'medium'],
-                rate_limit=rate_limit
+                rate_limit=rate_limit,
+                concurrency=concurrency,
+                interactsh_server=interactsh_server,
             )
         )
 

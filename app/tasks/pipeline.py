@@ -1,22 +1,26 @@
 """
 Pipeline orchestrator for EASM scan execution.
 
-Manages the 16-phase scan pipeline:
+Manages the scan pipeline:
   Phase 0:  Seed Ingestion & Scope Validation
   Phase 1:  Passive Discovery (subfinder, crt.sh Certificate Transparency)
   Phase 1b: GitHub Dorking (optional, requires GITHUB_TOKEN)
   Phase 1c: WHOIS/RDAP + Reverse WHOIS
   Phase 1d: Cloud Bucket/Storage Discovery (S3, GCS, Azure Blob, DO Spaces)
-  Phase 2:  Active DNS Enumeration (brute-force + permutations)
+  Phase 1e: Cloud Asset Enumeration (cloudlist, Tier 2+)
+  Phase 2:  DNS Permutation & Bruteforce (alterx + puredns, Tier 2+)
   Phase 3:  DNS Resolution + SPF/MX Pivot
   Phase 4:  HTTP Probing (httpx)
+  Phase 4b: TLS Certificate Collection (tlsx)
   Phase 5:  Port Scanning (naabu)
+  Phase 5b: CDN/WAF Detection (cdncheck, all tiers)
+  Phase 5c: Service Fingerprinting (fingerprintx, Tier 2+)
   Phase 6:  Technology Fingerprinting
   Phase 6b: Web Crawling (katana)
   Phase 6c: Sensitive Path Discovery
   Phase 7:  Visual Recon (stub)
   Phase 8:  Misconfiguration Detection
-  Phase 9:  Vulnerability Scanning (nuclei)
+  Phase 9:  Vulnerability Scanning (nuclei, + interactsh on Tier 3)
   Phase 10: Correlation & Dedup
   Phase 11: Risk Scoring
   Phase 12: Diff, Alerting & Reporting
@@ -25,6 +29,8 @@ Manages the 16-phase scan pipeline:
 import logging
 from datetime import datetime, timezone
 from typing import Optional
+
+from celery.exceptions import SoftTimeLimitExceeded
 
 from app.celery_app import celery
 from app.config import settings
@@ -44,10 +50,14 @@ PHASES = [
     {'id': '1b', 'name': 'GitHub Dorking', 'required': False},
     {'id': '1c', 'name': 'WHOIS/RDAP Discovery', 'required': False},
     {'id': '1d', 'name': 'Cloud Bucket Discovery', 'required': False},
-    {'id': '2', 'name': 'Active DNS Enumeration', 'required': True},
+    {'id': '1e', 'name': 'Cloud Asset Enumeration', 'required': False},
+    {'id': '2', 'name': 'DNS Permutation & Bruteforce', 'required': False},
     {'id': '3', 'name': 'DNS Resolution', 'required': True},
     {'id': '4', 'name': 'HTTP Probing', 'required': True},
+    {'id': '4b', 'name': 'TLS Certificate Collection', 'required': False},
     {'id': '5', 'name': 'Port Scanning', 'required': True},
+    {'id': '5b', 'name': 'CDN/WAF Detection', 'required': False},
+    {'id': '5c', 'name': 'Service Fingerprinting', 'required': False},
     {'id': '6', 'name': 'Technology Fingerprinting', 'required': True},
     {'id': '6b', 'name': 'Web Crawling', 'required': True},
     {'id': '6c', 'name': 'Sensitive Path Discovery', 'required': True},
@@ -112,7 +122,19 @@ def _update_scan_run(db, scan_run_id: int, status: ScanRunStatus,
     db.commit()
 
 
-@celery.task(name='app.tasks.pipeline.run_scan_pipeline', bind=True)
+@celery.task(
+    name='app.tasks.pipeline.run_scan_pipeline',
+    bind=True,
+    max_retries=2,
+    default_retry_delay=120,
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+    acks_late=True,
+    reject_on_worker_lost=True,
+    soft_time_limit=7200,
+    time_limit=7500,
+)
 def run_scan_pipeline(self, scan_run_id: int):
     """
     Execute the full scan pipeline for a scan run.
@@ -120,6 +142,13 @@ def run_scan_pipeline(self, scan_run_id: int):
     Runs phases sequentially, tracking progress in phase_results.
     Each phase can be skipped if not required or if dependencies
     (like API keys) are missing.
+
+    Retry policy:
+    - Infrastructure errors (DB connection, Redis) trigger retries
+      with exponential backoff (max 2 retries).
+    - Business-logic phase failures are NOT retried; they are recorded
+      in phase_results and the pipeline continues.
+    - If retries are exhausted, the scan_run is marked FAILED.
     """
     db = SessionLocal()
 
@@ -160,6 +189,10 @@ def run_scan_pipeline(self, scan_run_id: int):
 
         tenant_logger.info(f"Starting scan pipeline for project {project.name} (run {scan_run_id})")
 
+        # Initialize adaptive throttle for this scan
+        from app.services.adaptive_throttle import get_throttle, cleanup_throttle
+        throttle = get_throttle(tenant_id, scan_run_id)
+
         # Collect aggregate stats
         pipeline_stats = {
             'phases_completed': 0,
@@ -182,7 +215,7 @@ def run_scan_pipeline(self, scan_run_id: int):
                 break
 
             # Check if phase should be skipped
-            should_skip, skip_reason = _should_skip_phase(phase_id, project)
+            should_skip, skip_reason = _should_skip_phase(phase_id, project, scan_tier)
             if should_skip:
                 tenant_logger.info(f"Skipping phase {phase_id} ({phase_name}): {skip_reason}")
                 _update_phase(db, scan_run_id, phase_id, PhaseStatus.SKIPPED,
@@ -210,6 +243,14 @@ def run_scan_pipeline(self, scan_run_id: int):
                     pipeline_stats['findings_created'] += result.get('findings_created', 0)
                     pipeline_stats['relationships_created'] += result.get('relationships_created', 0)
 
+                    # Adaptive throttle: check for 429s in phase results
+                    phase_429s = result.get('http_429_count', 0)
+                    if phase_429s > 0:
+                        for _ in range(phase_429s):
+                            throttle.report_429(f"phase_{phase_id}")
+                    else:
+                        throttle.report_phase_clean()
+
                 tenant_logger.info(f"Phase {phase_id} ({phase_name}) completed: {result}")
 
             except Exception as e:
@@ -232,30 +273,53 @@ def run_scan_pipeline(self, scan_run_id: int):
                         f"Required phase {phase_id} failed, continuing pipeline"
                     )
 
+        # Log adaptive throttle summary
+        throttle_summary = cleanup_throttle(tenant_id, scan_run_id)
+        if throttle_summary and throttle_summary.get('total_429s', 0) > 0:
+            tenant_logger.warning(f"Adaptive throttle summary: {throttle_summary}")
+            pipeline_stats['throttle'] = throttle_summary
+
         # Mark scan as completed
         _update_scan_run(db, scan_run_id, ScanRunStatus.COMPLETED, stats=pipeline_stats)
         tenant_logger.info(f"Scan pipeline completed for run {scan_run_id}: {pipeline_stats}")
 
         return pipeline_stats
 
-    except Exception as e:
-        logger.error(f"Pipeline error for scan run {scan_run_id}: {e}", exc_info=True)
+    except SoftTimeLimitExceeded:
+        logger.warning("Pipeline soft time limit reached for scan run %d", scan_run_id)
         try:
-            _update_scan_run(db, scan_run_id, ScanRunStatus.FAILED, error=str(e))
+            _update_scan_run(
+                db, scan_run_id, ScanRunStatus.FAILED,
+                error="Pipeline exceeded 2h time limit",
+                stats=pipeline_stats,
+            )
         except Exception:
-            pass
-        return {'error': str(e)}
+            logger.exception("Failed to update scan_run status after timeout")
+        return {'error': 'time_limit_exceeded', 'stats': pipeline_stats}
+    except Exception as exc:
+        logger.exception("Pipeline error for scan run %d: %s", scan_run_id, exc)
+        # Mark scan as failed before deciding whether to retry
+        try:
+            _update_scan_run(db, scan_run_id, ScanRunStatus.FAILED, error=str(exc))
+        except Exception:
+            logger.exception("Failed to update scan_run status after pipeline error")
+        # Retry infrastructure-level failures (DB disconnect, Redis timeout, etc.)
+        # The scan_run is already marked FAILED; if the retry succeeds it will
+        # be re-marked as RUNNING at the top of the next attempt.
+        raise self.retry(exc=exc)
     finally:
         db.close()
 
 
-def _should_skip_phase(phase_id: str, project: Project) -> tuple:
-    """Determine if a phase should be skipped."""
+def _should_skip_phase(phase_id: str, project: Project, scan_tier: int = 1) -> tuple:
+    """Determine if a phase should be skipped based on config and scan tier."""
+    from app.config import settings as app_settings
+
     project_settings = project.settings or {}
 
     if phase_id == '1b':
         # GitHub dorking requires GITHUB_TOKEN
-        if not getattr(settings, 'github_token', None):
+        if not getattr(app_settings, 'github_token', None):
             return True, 'GITHUB_TOKEN not configured'
 
     if phase_id == '1c':
@@ -268,9 +332,30 @@ def _should_skip_phase(phase_id: str, project: Project) -> tuple:
         if not project_settings.get('cloud_bucket_scan_enabled', True):
             return True, 'Cloud bucket scanning disabled in project settings'
 
+    if phase_id == '1e':
+        # Cloud enumeration requires provider config + tier 2+
+        if scan_tier < 2:
+            return True, 'Cloud enumeration requires tier 2+'
+        providers = project_settings.get('cloud_providers')
+        if not providers:
+            return True, 'No cloud providers configured'
+
+    if phase_id == '2':
+        # DNS permutation/bruteforce requires tier 2+
+        if scan_tier < 2:
+            return True, 'DNS permutation requires tier 2+'
+
+    if phase_id == '5b':
+        # cdncheck is read-only DNS lookup, safe for all tiers
+        pass
+
+    if phase_id == '5c':
+        # fingerprintx requires tier 2+
+        if scan_tier < 2:
+            return True, 'Service fingerprinting requires tier 2+'
+
     if phase_id == '7':
-        from app.config import settings
-        if not getattr(settings, 'feature_visual_recon_enabled', True):
+        if not getattr(app_settings, 'feature_visual_recon_enabled', True):
             return True, 'Visual recon disabled in feature flags'
 
     return False, ''
@@ -291,14 +376,22 @@ def _execute_phase(phase_id: str, tenant_id: int, project_id: int,
         return _phase_1c_whois_discovery(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == '1d':
         return _phase_1d_cloud_buckets(tenant_id, project_id, scan_run_id, db, tenant_logger)
+    elif phase_id == '1e':
+        return _phase_1e_cloud_enum(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == '2':
-        return _phase_2_dns_enumeration(tenant_id, project_id, scan_run_id, db, tenant_logger)
+        return _phase_2_dns_bruteforce(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier)
     elif phase_id == '3':
         return _phase_3_dns_resolution(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == '4':
         return _phase_4_http_probing(tenant_id, project_id, scan_run_id, db, tenant_logger)
+    elif phase_id == '4b':
+        return _phase_4b_tls_collection(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == '5':
         return _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier)
+    elif phase_id == '5b':
+        return _phase_5b_cdn_detection(tenant_id, project_id, scan_run_id, db, tenant_logger)
+    elif phase_id == '5c':
+        return _phase_5c_service_fingerprint(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == '6':
         return _phase_6_fingerprinting(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == '6b':
@@ -615,24 +708,32 @@ def _phase_1_passive_discovery(tenant_id, project_id, scan_run_id, db, tenant_lo
         db.commit()
 
     # Run crt.sh Certificate Transparency log search
-    crtsh_found = 0
+    crtsh_total = 0
+    crtsh_new = 0
     for domain in domain_list:
         try:
-            crtsh_found += _query_crtsh(domain, tenant_id, db, tenant_logger)
+            total, new = _query_crtsh(domain, tenant_id, db, tenant_logger)
+            crtsh_total += total
+            crtsh_new += new
         except Exception as e:
             tenant_logger.warning(f"crt.sh query failed for {domain} (non-fatal): {e}")
 
-    assets_discovered += crtsh_found
+    assets_discovered += crtsh_new
 
     return {
         'assets_discovered': assets_discovered,
-        'crtsh_found': crtsh_found,
+        'crtsh_found': crtsh_total,
+        'crtsh_new': crtsh_new,
         'domains_checked': len(domain_list),
     }
 
 
-def _query_crtsh(domain: str, tenant_id: int, db, tenant_logger) -> int:
-    """Query crt.sh Certificate Transparency logs for subdomains."""
+def _query_crtsh(domain: str, tenant_id: int, db, tenant_logger) -> tuple[int, int]:
+    """Query crt.sh Certificate Transparency logs for subdomains.
+
+    Returns:
+        Tuple of (total_found, new_created).
+    """
     import requests as req_lib
     from app.models.database import Asset, AssetType
 
@@ -640,11 +741,11 @@ def _query_crtsh(domain: str, tenant_id: int, db, tenant_logger) -> int:
     try:
         resp = req_lib.get(url, timeout=30, headers={'User-Agent': 'EASM-Scanner/1.0'})
         if resp.status_code != 200:
-            return 0
+            return 0, 0
 
         entries = resp.json()
     except Exception:
-        return 0
+        return 0, 0
 
     # Extract unique subdomain names from CN and SAN fields
     seen = set()
@@ -676,7 +777,7 @@ def _query_crtsh(domain: str, tenant_id: int, db, tenant_logger) -> int:
         db.commit()
         tenant_logger.info(f"crt.sh found {created} new subdomains for {domain}")
 
-    return created
+    return len(seen), created
 
 
 def _phase_1b_github_dorking(tenant_id, project_id, scan_run_id, db, tenant_logger):
@@ -758,10 +859,152 @@ def _phase_1d_cloud_buckets(tenant_id, project_id, scan_run_id, db, tenant_logge
     }
 
 
-def _phase_2_dns_enumeration(tenant_id, project_id, scan_run_id, db, tenant_logger):
-    """Phase 2: Active DNS brute-force with wildcard detection."""
-    # Will be implemented in Phase 3 of the plan
-    return {'assets_discovered': 0, 'status': 'stub'}
+def _phase_1e_cloud_enum(tenant_id, project_id, scan_run_id, db, tenant_logger):
+    """Phase 1e: Cloud asset enumeration with cloudlist.
+
+    Reads cloud provider credentials from project.settings['cloud_providers'],
+    runs cloudlist, and upserts discovered IPs/hostnames as assets.
+    """
+    from app.tasks.cloud_enum import run_cloudlist
+    from app.models.database import Asset, AssetType
+    from app.models.scanning import Project
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    provider_config = (project.settings or {}).get('cloud_providers', [])
+
+    if not provider_config:
+        return {'assets_discovered': 0, 'providers_scanned': 0}
+
+    cloud_assets = run_cloudlist(tenant_id, provider_config)
+
+    assets_created = 0
+    for ca in cloud_assets:
+        identifier = ca.get('hostname') or ca.get('ip', '')
+        if not identifier:
+            continue
+
+        asset_type = AssetType.IP if _is_ip(identifier) else AssetType.SUBDOMAIN
+
+        existing = db.query(Asset).filter(
+            Asset.tenant_id == tenant_id,
+            Asset.identifier == identifier,
+            Asset.type == asset_type,
+        ).first()
+
+        if not existing:
+            asset = Asset(
+                tenant_id=tenant_id,
+                type=asset_type,
+                identifier=identifier,
+                is_active=True,
+                cloud_provider=ca.get('provider', ''),
+            )
+            db.add(asset)
+            assets_created += 1
+        else:
+            existing.last_seen = datetime.now(timezone.utc)
+            existing.is_active = True
+            if ca.get('provider'):
+                existing.cloud_provider = ca['provider']
+
+    db.commit()
+
+    return {
+        'assets_discovered': assets_created,
+        'providers_scanned': len(provider_config),
+        'total_cloud_assets': len(cloud_assets),
+    }
+
+
+def _phase_2_dns_bruteforce(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier=2):
+    """Phase 2: DNS permutation & bruteforce with alterx + puredns.
+
+    1. Reads known subdomains/domains from the DB
+    2. Generates permutation candidates via alterx
+    3. Validates candidates with puredns (wildcard filtering)
+    4. Upserts validated subdomains as new assets
+    """
+    from app.tasks.dns_bruteforce import run_alterx, run_puredns
+    from app.models.database import Asset, AssetType
+
+    # Gather known subdomains
+    subdomains = db.query(Asset).filter(
+        Asset.tenant_id == tenant_id,
+        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
+        Asset.is_active == True,
+    ).all()
+
+    if not subdomains:
+        return {'assets_discovered': 0, 'candidates_generated': 0}
+
+    subdomain_list = [a.identifier for a in subdomains]
+
+    # Rate limits per tier
+    tier_rate = {2: 100, 3: 300}
+    rate = tier_rate.get(scan_tier, 100)
+
+    # Generate permutations
+    candidates = run_alterx(subdomain_list, tenant_id)
+    tenant_logger.info("alterx generated %d permutation candidates", len(candidates))
+
+    # Validate via puredns
+    validated = run_puredns(candidates, tenant_id, rate=rate)
+    tenant_logger.info("puredns validated %d / %d candidates", len(validated), len(candidates))
+
+    # Upsert validated subdomains
+    assets_created = 0
+    relationships_created = 0
+    for hostname in validated:
+        hostname = hostname.strip().lower()
+        if not hostname:
+            continue
+
+        existing = db.query(Asset).filter(
+            Asset.tenant_id == tenant_id,
+            Asset.identifier == hostname,
+            Asset.type == AssetType.SUBDOMAIN,
+        ).first()
+
+        if not existing:
+            asset = Asset(
+                tenant_id=tenant_id,
+                type=AssetType.SUBDOMAIN,
+                identifier=hostname,
+                is_active=True,
+            )
+            db.add(asset)
+            db.flush()
+            assets_created += 1
+
+            # Create parent_domain relationship
+            parent_domain = _extract_parent_domain(hostname)
+            if parent_domain:
+                parent_asset = db.query(Asset).filter(
+                    Asset.tenant_id == tenant_id,
+                    Asset.identifier == parent_domain,
+                    Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
+                ).first()
+                if parent_asset:
+                    if _upsert_relationship(
+                        db, tenant_id,
+                        source_asset_id=asset.id,
+                        target_asset_id=parent_asset.id,
+                        rel_type='parent_domain',
+                        metadata={'source': 'dns_bruteforce'},
+                    ):
+                        relationships_created += 1
+        else:
+            existing.last_seen = datetime.now(timezone.utc)
+            existing.is_active = True
+
+    db.commit()
+
+    return {
+        'assets_discovered': assets_created,
+        'candidates_generated': len(candidates),
+        'candidates_validated': len(validated),
+        'relationships_created': relationships_created,
+    }
 
 
 def _phase_3_dns_resolution(tenant_id, project_id, scan_run_id, db, tenant_logger):
@@ -1036,6 +1279,44 @@ def _phase_4_http_probing(tenant_id, project_id, scan_run_id, db, tenant_logger)
     }
 
 
+def _phase_4b_tls_collection(tenant_id, project_id, scan_run_id, db, tenant_logger):
+    """Phase 4b: TLS certificate collection with tlsx.
+
+    Runs tlsx against all active DOMAIN and SUBDOMAIN assets to collect
+    TLS/SSL certificate metadata (validity, SANs, cipher suites, TLS
+    versions, certificate chain). Results are stored as Certificate
+    records and linked Service records via the enrichment task.
+    """
+    from app.tasks.enrichment import run_tlsx
+    from app.models.database import Asset, AssetType
+
+    assets = db.query(Asset).filter(
+        Asset.tenant_id == tenant_id,
+        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
+        Asset.is_active == True,
+    ).all()
+
+    if not assets:
+        tenant_logger.warning("No active domain/subdomain assets for TLS collection")
+        return {'certificates_collected': 0, 'hosts_analyzed': 0}
+
+    asset_ids = [a.id for a in assets]
+    tenant_logger.info(f"TLSx: collecting certificates from {len(asset_ids)} assets")
+    result = run_tlsx(tenant_id, asset_ids)
+
+    certificates_collected = result.get('certificates_discovered', 0) if isinstance(result, dict) else 0
+    certificates_created = result.get('certificates_created', 0) if isinstance(result, dict) else 0
+    certificates_updated = result.get('certificates_updated', 0) if isinstance(result, dict) else 0
+    hosts_analyzed = result.get('hosts_analyzed', 0) if isinstance(result, dict) else 0
+
+    return {
+        'certificates_collected': certificates_collected,
+        'certificates_created': certificates_created,
+        'certificates_updated': certificates_updated,
+        'hosts_analyzed': hosts_analyzed,
+    }
+
+
 def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier=1):
     """Phase 5: Port scanning with Naabu. Ports/rate depend on scan tier.
 
@@ -1049,11 +1330,16 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
 
     # Tier-based port configuration
     tier_config = {
-        1: {'top_ports': '100', 'rate': 10, 'full_scan': False},
-        2: {'top_ports': '1000', 'rate': 50, 'full_scan': False},
-        3: {'top_ports': 'full', 'rate': 100, 'full_scan': True},
+        1: {'top_ports': '100', 'rate': 100, 'full_scan': False},
+        2: {'top_ports': '1000', 'rate': 500, 'full_scan': False},
+        3: {'top_ports': '1000', 'rate': 1000, 'full_scan': False},
     }
     config = tier_config.get(scan_tier, tier_config[1])
+
+    # Apply adaptive throttle if active
+    from app.services.adaptive_throttle import get_throttle
+    throttle = get_throttle(tenant_id, scan_run_id)
+    effective_rate = throttle.get_rate(config['rate'])
 
     assets = db.query(Asset).filter(
         Asset.tenant_id == tenant_id,
@@ -1066,10 +1352,11 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
 
     asset_ids = [a.id for a in assets]
     tenant_logger.info(
-        f"Naabu: top_ports={config['top_ports']}, rate={config['rate']} req/s, "
+        f"Naabu: top_ports={config['top_ports']}, rate={effective_rate} pkt/s "
+        f"{'(throttled) ' if throttle.is_throttled else ''}"
         f"full_scan={config['full_scan']} (tier {scan_tier}), targets={len(asset_ids)}"
     )
-    result = run_naabu(tenant_id, asset_ids, full_scan=config['full_scan'])
+    result = run_naabu(tenant_id, asset_ids, full_scan=config['full_scan'], rate=effective_rate)
 
     return {
         'ports_discovered': result.get('ports_discovered', 0) if isinstance(result, dict) else 0,
@@ -1078,6 +1365,141 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         'scan_tier': scan_tier,
         'top_ports': config['top_ports'],
         'rate': config['rate'],
+    }
+
+
+def _is_ip(value: str) -> bool:
+    """Check if a string is an IP address."""
+    import ipaddress
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
+
+
+def _phase_5b_cdn_detection(tenant_id, project_id, scan_run_id, db, tenant_logger):
+    """Phase 5b: CDN/WAF detection with cdncheck.
+
+    Runs on all tiers (read-only DNS lookup). Updates cdn_name, waf_name,
+    and cloud_provider columns on the Asset model.
+    """
+    from app.tasks.service_fingerprint import run_cdncheck
+    from app.models.database import Asset, AssetType
+
+    assets = db.query(Asset).filter(
+        Asset.tenant_id == tenant_id,
+        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN, AssetType.IP]),
+        Asset.is_active == True,
+    ).all()
+
+    if not assets:
+        return {'hosts_checked': 0, 'cdn_detected': 0, 'waf_detected': 0}
+
+    hosts = [a.identifier for a in assets]
+    results = run_cdncheck(hosts, tenant_id)
+
+    cdn_count = 0
+    waf_count = 0
+    updated = 0
+
+    for asset in assets:
+        info = results.get(asset.identifier)
+        if not info:
+            continue
+
+        changed = False
+        if info.get('cdn') and info.get('cdn_name'):
+            asset.cdn_name = info['cdn_name']
+            cdn_count += 1
+            changed = True
+        if info.get('waf') and info.get('waf_name'):
+            asset.waf_name = info['waf_name']
+            waf_count += 1
+            changed = True
+        if info.get('cloud'):
+            asset.cloud_provider = info['cloud']
+            changed = True
+
+        if changed:
+            updated += 1
+
+    db.commit()
+
+    return {
+        'hosts_checked': len(results),
+        'cdn_detected': cdn_count,
+        'waf_detected': waf_count,
+        'assets_updated': updated,
+    }
+
+
+def _phase_5c_service_fingerprint(tenant_id, project_id, scan_run_id, db, tenant_logger):
+    """Phase 5c: Service fingerprinting with fingerprintx.
+
+    Runs on open ports discovered by naabu (Phase 5). Updates service
+    product/version with more accurate protocol-level identification.
+    """
+    from app.tasks.service_fingerprint import run_fingerprintx
+    from app.models.database import Asset, AssetType, Service
+
+    # Build host:port targets from services table
+    services = db.query(Service).join(Asset).filter(
+        Asset.tenant_id == tenant_id,
+        Asset.is_active == True,
+        Service.port.isnot(None),
+    ).all()
+
+    if not services:
+        return {'services_fingerprinted': 0, 'protocols_identified': 0}
+
+    # Build target list as host:port
+    targets = []
+    service_map: dict[str, Service] = {}
+    for svc in services:
+        asset = svc.asset
+        if asset and svc.port:
+            target = f"{asset.identifier}:{svc.port}"
+            targets.append(target)
+            service_map[target] = svc
+
+    if not targets:
+        return {'services_fingerprinted': 0, 'protocols_identified': 0}
+
+    results = run_fingerprintx(targets, tenant_id)
+
+    protocols_identified = 0
+    services_updated = 0
+
+    for entry in results:
+        host = entry.get('host', '')
+        port = entry.get('port', 0)
+        target_key = f"{host}:{port}"
+
+        svc = service_map.get(target_key)
+        if not svc:
+            continue
+
+        # Update with more precise fingerprint data
+        if entry.get('service'):
+            svc.product = entry['service']
+            services_updated += 1
+        if entry.get('version'):
+            svc.version = entry['version']
+        if entry.get('protocol'):
+            svc.protocol = entry['protocol']
+            protocols_identified += 1
+        if entry.get('tls'):
+            svc.has_tls = True
+        # Mark enrichment source
+        svc.enrichment_source = 'fingerprintx'
+
+    db.commit()
+
+    return {
+        'services_fingerprinted': services_updated,
+        'protocols_identified': protocols_identified,
+        'targets_scanned': len(targets),
     }
 
 
@@ -1192,7 +1614,7 @@ def _phase_7_visual_recon(tenant_id, project_id, scan_run_id, db, tenant_logger)
 
     return {
         'screenshots_taken': result.get('screenshots_taken', 0) if isinstance(result, dict) else 0,
-        'status': 'completed',
+        'status': result.get('status', 'completed') if isinstance(result, dict) else 'completed',
     }
 
 
@@ -1245,8 +1667,33 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         return {'findings_created': 0, 'scan_tier': scan_tier}
 
     asset_ids = [a.id for a in assets]
-    tenant_logger.info(f"Nuclei: severity={severity} (tier {scan_tier}), targets={len(asset_ids)}")
-    result = run_nuclei_scan(tenant_id, asset_ids, severity=severity)
+
+    # Interactsh OOB callback support (Tier 3 only)
+    from app.config import settings as app_settings
+    use_interactsh = scan_tier >= 3 and getattr(app_settings, 'interactsh_enabled', False)
+    interactsh_server = ''
+    if use_interactsh:
+        interactsh_server = app_settings.interactsh_server or 'oast.pro'
+        tenant_logger.info("Nuclei: interactsh enabled (server=%s)", interactsh_server)
+
+    # Tier-based concurrency: more templates loaded = lower concurrency to avoid OOM
+    tier_concurrency = {1: 25, 2: 15, 3: 10}
+    concurrency = tier_concurrency.get(scan_tier, 15)
+
+    # Apply adaptive throttle if active
+    from app.services.adaptive_throttle import get_throttle
+    throttle = get_throttle(tenant_id, scan_run_id)
+    concurrency = throttle.get_rate(concurrency)
+
+    tenant_logger.info(
+        f"Nuclei: severity={severity}, concurrency={concurrency} (tier {scan_tier})"
+        f"{' [THROTTLED]' if throttle.is_throttled else ''}, targets={len(asset_ids)}"
+    )
+    result = run_nuclei_scan(
+        tenant_id, asset_ids, severity=severity,
+        concurrency=concurrency,
+        interactsh_server=interactsh_server if use_interactsh else None,
+    )
 
     return {
         'findings_created': result.get('findings_created', 0) if isinstance(result, dict) else 0,
@@ -1255,6 +1702,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         'urls_scanned': result.get('urls_scanned', 0) if isinstance(result, dict) else 0,
         'scan_tier': scan_tier,
         'severity_filter': severity,
+        'interactsh_enabled': use_interactsh,
     }
 
 
@@ -1276,37 +1724,110 @@ def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
 def _phase_11_risk_scoring(tenant_id, project_id, scan_run_id, db, tenant_logger):
     """Phase 11: Risk scoring (issue -> asset -> org).
 
-    Uses the comprehensive RiskScoringEngine for per-asset scoring (findings,
-    certs, ports, services, asset age, EPSS/KEV) and risk_engine for issue-level
-    and org-level aggregation.
+    Three-pass scoring:
+    1. Issues: risk_engine.compute_issue_score with real EPSS/KEV data from
+       the highest-severity linked finding.
+    2. Assets: risk_scoring.recalculate_asset_risk (CVSS + EPSS + KEV base,
+       internet-exposure / expired-cert / new-asset modifiers, capped at 100).
+    3. Org: risk_engine.compute_org_score (top-weighted aggregation with
+       dampening, persisted as a RiskScore snapshot).
     """
     from app.services.risk_engine import (
         compute_issue_score, compute_org_score,
         IssueScoreInput,
     )
-    from app.services.risk_scoring import RiskScoringEngine
-    from app.models.database import Asset
-    from app.models.issues import Issue, IssueStatus
+    from app.services.risk_scoring import recalculate_asset_risk
+    from app.models.database import Asset, Finding
+    from app.models.issues import Issue, IssueFinding, IssueStatus
     from app.models.risk import RiskScore
 
     scores_computed = 0
-    engine = RiskScoringEngine(db)
 
-    # 1. Score each open issue (risk_engine: issue-level math)
+    # ------------------------------------------------------------------
+    # 1. Score each open issue with real threat intel from linked findings
+    # ------------------------------------------------------------------
     issues = db.query(Issue).filter(
         Issue.tenant_id == tenant_id,
-        Issue.status.in_([IssueStatus.OPEN, IssueStatus.TRIAGED, IssueStatus.IN_PROGRESS]),
+        Issue.status.in_([
+            IssueStatus.OPEN,
+            IssueStatus.TRIAGED,
+            IssueStatus.IN_PROGRESS,
+        ]),
     ).all()
+
+    # Build a lightweight threat intel helper (may be None if Redis is down)
+    threat_intel_svc = None
+    try:
+        from app.services.threat_intel import ThreatIntelService
+        threat_intel_svc = ThreatIntelService()
+    except Exception as exc:
+        tenant_logger.warning(
+            "ThreatIntelService unavailable for issue scoring: %s", exc,
+        )
 
     for issue in issues:
         mitigation = 0.5 if issue.status == IssueStatus.MITIGATED else 0.0
+        severity_str = (
+            issue.severity if isinstance(issue.severity, str)
+            else str(issue.severity)
+        )
+
+        # Derive EPSS/KEV from the highest-severity linked finding
+        issue_epss = 0.0
+        issue_is_kev = False
+
+        issue_is_cdn = False
+
+        linked_finding_ids = [
+            row.finding_id
+            for row in db.query(IssueFinding.finding_id)
+            .filter_by(issue_id=issue.id)
+            .all()
+        ]
+        if linked_finding_ids:
+            linked_findings = (
+                db.query(Finding)
+                .filter(Finding.id.in_(linked_finding_ids))
+                .all()
+            )
+
+            # Check CDN status from linked assets
+            linked_asset_ids = list({f.asset_id for f in linked_findings})
+            if linked_asset_ids:
+                cdn_assets = db.query(Asset.id).filter(
+                    Asset.id.in_(linked_asset_ids),
+                    Asset.cdn_name.isnot(None),
+                ).count()
+                if cdn_assets > 0:
+                    issue_is_cdn = True
+
+            if threat_intel_svc is not None:
+                for finding in linked_findings:
+                    if not finding.cve_id:
+                        continue
+                    evidence = finding.evidence or {}
+                    cached = evidence.get("threat_intel", {})
+                    if cached:
+                        epss = float(cached.get("epss_score", 0.0))
+                        kev = bool(cached.get("is_kev", False))
+                    else:
+                        try:
+                            epss = threat_intel_svc.get_epss_score(finding.cve_id)
+                            kev = threat_intel_svc.is_in_kev(finding.cve_id)
+                        except Exception:
+                            epss, kev = 0.0, False
+                    if epss > issue_epss:
+                        issue_epss = epss
+                    if kev:
+                        issue_is_kev = True
+
         inp = IssueScoreInput(
-            severity=issue.severity if isinstance(issue.severity, str) else str(issue.severity),
+            severity=severity_str,
             confidence=issue.confidence or 1.0,
             exposure_factor=1.0,
-            is_kev=False,
-            epss_score=0.0,
-            is_cdn_fronted=False,
+            is_kev=issue_is_kev,
+            epss_score=issue_epss,
+            is_cdn_fronted=issue_is_cdn,
             mitigation_factor=mitigation,
         )
         result = compute_issue_score(inp)
@@ -1315,7 +1836,9 @@ def _phase_11_risk_scoring(tenant_id, project_id, scan_run_id, db, tenant_logger
 
     db.flush()
 
-    # 2. Score each asset (risk_scoring: comprehensive DB-backed engine)
+    # ------------------------------------------------------------------
+    # 2. Score each active asset via the new two-tier algorithm
+    # ------------------------------------------------------------------
     assets = db.query(Asset).filter(
         Asset.tenant_id == tenant_id,
         Asset.is_active == True,
@@ -1324,34 +1847,58 @@ def _phase_11_risk_scoring(tenant_id, project_id, scan_run_id, db, tenant_logger
     asset_scores = []
     for asset in assets:
         try:
-            result = engine.calculate_asset_risk(asset.id)
-            if 'risk_score' in result:
-                asset.risk_score = result['risk_score']
-                asset_scores.append(result['risk_score'])
+            result = recalculate_asset_risk(asset.id, db)
+            score = result.get('risk_score', 0.0)
+            if 'error' not in result:
+                asset_scores.append(score)
                 scores_computed += 1
-        except Exception as e:
-            tenant_logger.error(f"Risk scoring failed for asset {asset.id}: {e}")
+        except Exception as exc:
+            tenant_logger.error(
+                "Risk scoring failed for asset %d: %s", asset.id, exc,
+            )
 
     db.flush()
 
-    # 3. Org score (risk_engine: top-weighted aggregation with dampening)
+    # ------------------------------------------------------------------
+    # 3. Org score (top-weighted aggregation with dampening)
+    # ------------------------------------------------------------------
     if asset_scores:
-        org_result = compute_org_score(sorted(asset_scores, reverse=True))
+        # Fetch previous org score for dampening
+        prev_row = (
+            db.query(RiskScore.score)
+            .filter_by(tenant_id=tenant_id, scope_type='organization')
+            .order_by(RiskScore.scored_at.desc())
+            .first()
+        )
+        previous_score = prev_row.score if prev_row else None
 
-        risk_score = RiskScore(
+        org_result = compute_org_score(
+            sorted(asset_scores, reverse=True),
+            previous_score=previous_score,
+        )
+
+        risk_score_row = RiskScore(
             tenant_id=tenant_id,
             scope_type='organization',
             scope_id=None,
             scan_run_id=scan_run_id,
             score=org_result.score,
             grade=org_result.grade,
+            previous_score=previous_score,
+            delta=org_result.delta,
             components={
-                'previous_score': org_result.previous_score,
-                'delta': org_result.delta,
+                'top_contribution': round(org_result.score, 2),
+                'asset_count': len(asset_scores),
             },
-            explanation={'total_assets_scored': len(asset_scores)},
+            explanation={
+                'total_assets_scored': len(asset_scores),
+                'average_asset_score': round(
+                    sum(asset_scores) / len(asset_scores), 2,
+                ),
+                'max_asset_score': round(max(asset_scores), 2),
+            },
         )
-        db.add(risk_score)
+        db.add(risk_score_row)
         scores_computed += 1
 
     db.commit()
@@ -1360,10 +1907,33 @@ def _phase_11_risk_scoring(tenant_id, project_id, scan_run_id, db, tenant_logger
 
 
 def _phase_12_diff_alerting(tenant_id, project_id, scan_run_id, db, tenant_logger):
-    """Phase 12: Diff computation and alerting."""
+    """Phase 12: Diff computation and alerting.
+
+    Runs two steps:
+    1. Synchronous diff computation (snapshot comparison, event-based alerts).
+    2. Asynchronous alert policy evaluation against actual DB findings
+       dispatched as a Celery task so it does not block the pipeline.
+    """
     from app.tasks.diff_alert import run_diff_and_alert
 
     result = run_diff_and_alert(tenant_id, scan_run_id)
+
+    # Fire the policy-based alert evaluation asynchronously.
+    # This queries real Finding rows and matches against tenant alert
+    # policies, complementing the lightweight event-based alerting
+    # performed inside run_diff_and_alert.
+    try:
+        from app.tasks.alert_evaluation import evaluate_alert_policies
+        evaluate_alert_policies.delay(tenant_id, scan_run_id)
+        tenant_logger.info(
+            "Dispatched alert policy evaluation for tenant %d (scan_run %d)",
+            tenant_id, scan_run_id,
+        )
+    except Exception as exc:
+        # Non-fatal: policy evaluation failure should not break the pipeline
+        tenant_logger.error(
+            "Failed to dispatch alert policy evaluation: %s", exc,
+        )
 
     if isinstance(result, dict):
         return {
@@ -1375,8 +1945,16 @@ def _phase_12_diff_alerting(tenant_id, project_id, scan_run_id, db, tenant_logge
     return {'alerts_sent': 0}
 
 
-@celery.task(name='app.tasks.pipeline.cancel_scan')
-def cancel_scan(scan_run_id: int):
+@celery.task(
+    name='app.tasks.pipeline.cancel_scan',
+    bind=True,
+    max_retries=3,
+    default_retry_delay=10,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+)
+def cancel_scan(self, scan_run_id: int):
     """Cancel a running scan."""
     db = SessionLocal()
     try:
@@ -1397,5 +1975,8 @@ def cancel_scan(scan_run_id: int):
 
         db.commit()
         return {'status': 'cancelled', 'scan_run_id': scan_run_id}
+    except Exception as exc:
+        logger.exception("Failed to cancel scan run %d: %s", scan_run_id, exc)
+        raise self.retry(exc=exc)
     finally:
         db.close()

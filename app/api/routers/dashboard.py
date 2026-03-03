@@ -35,6 +35,8 @@ from app.api.schemas.dashboard import (
     ScoreTrendResponse,
     RecentFindingItem,
     RiskyAssetItem,
+    HeatmapCell,
+    RiskHeatmapResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -442,6 +444,67 @@ def get_top_risky_assets(
         )
         for asset, finding_count in assets
     ]
+
+
+@router.get("/risk-heatmap", response_model=RiskHeatmapResponse)
+def get_risk_heatmap(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    membership=Depends(verify_tenant_access),
+) -> RiskHeatmapResponse:
+    """
+    Risk heatmap matrix: open finding counts grouped by severity and asset type.
+
+    Returns a flat list of cells (severity x asset_type -> count) together
+    with the ordered axis labels so the frontend can render the matrix
+    without needing to know the enum values in advance.
+
+    Args:
+        tenant_id: Tenant ID from path.
+        db: Database session.
+        membership: Verified tenant membership.
+
+    Returns:
+        RiskHeatmapResponse with cells, severities and asset_types.
+    """
+    _verify_tenant_exists(db, tenant_id)
+
+    # Ordered axes — severity from most critical to least, asset types alphabetically-ish
+    severity_order = [s.value for s in FindingSeverity][::-1]  # critical, high, medium, low, info
+    asset_type_order = [t.value for t in AssetType]  # domain, subdomain, ip, url, service
+
+    rows = (
+        db.query(
+            Finding.severity,
+            Asset.type,
+            func.count(Finding.id).label("cnt"),
+        )
+        .join(Asset, Finding.asset_id == Asset.id)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Finding.status == FindingStatus.OPEN,
+        )
+        .group_by(Finding.severity, Asset.type)
+        .all()
+    )
+
+    # Build a lookup dict for quick access
+    counts: dict[tuple[str, str], int] = {}
+    for severity_enum, asset_type_enum, cnt in rows:
+        counts[(severity_enum.value, asset_type_enum.value)] = cnt
+
+    # Generate the full matrix (including zero cells)
+    cells = [
+        HeatmapCell(severity=sev, asset_type=at, count=counts.get((sev, at), 0))
+        for sev in severity_order
+        for at in asset_type_order
+    ]
+
+    return RiskHeatmapResponse(
+        cells=cells,
+        severities=severity_order,
+        asset_types=asset_type_order,
+    )
 
 
 # ---------------------------------------------------------------------------

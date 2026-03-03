@@ -8,6 +8,7 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, T
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from passlib.context import CryptContext
+import secrets
 
 from app.models.database import Base
 
@@ -29,6 +30,10 @@ class User(Base):
     is_superuser = Column(Boolean, default=False, nullable=False)
     sso_provider = Column(String(50), nullable=True, index=True)  # 'saml', 'oidc', etc.
     sso_subject_id = Column(String(255), nullable=True, index=True)  # IdP NameID
+    mfa_secret = Column(String(255), nullable=True)
+    mfa_enabled = Column(Boolean, default=False, nullable=False)
+    password_reset_token = Column(String(255), nullable=True, index=True)
+    password_reset_expires = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_login = Column(DateTime)
@@ -108,7 +113,8 @@ class TenantMembership(Base):
         """
         role_permissions = {
             'viewer': ['read'],
-            'member': ['read', 'write'],
+            'member': ['read', 'write'],  # backward compat
+            'analyst': ['read', 'write'],
             'admin': ['read', 'write', 'admin'],
             'owner': ['read', 'write', 'admin']  # Owner has all permissions
         }
@@ -157,3 +163,45 @@ class APIKey(Base):
     def is_valid(self) -> bool:
         """Check if API key is valid (active and not expired)"""
         return self.is_active and not self.is_expired()
+
+
+class UserInvitation(Base):
+    """Invitation to join a tenant"""
+
+    __tablename__ = 'user_invitations'
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), nullable=False)
+    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
+    role = Column(String(50), nullable=False, default='analyst')
+    token = Column(String(255), nullable=False, unique=True, index=True)
+    invited_by = Column(Integer, ForeignKey('users.id'), nullable=False)
+    accepted_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    tenant = relationship("Tenant")
+    inviter = relationship("User", foreign_keys=[invited_by])
+
+    __table_args__ = (
+        Index('idx_invitation_tenant_email', 'tenant_id', 'email'),
+    )
+
+    def __repr__(self):
+        return f"<UserInvitation(email='{self.email}', tenant_id={self.tenant_id})>"
+
+    @property
+    def is_expired(self) -> bool:
+        """Check if invitation has expired"""
+        return datetime.now(timezone.utc) > self.expires_at.replace(tzinfo=timezone.utc)
+
+    @property
+    def is_accepted(self) -> bool:
+        """Check if invitation has been accepted"""
+        return self.accepted_at is not None
+
+    @staticmethod
+    def generate_token() -> str:
+        """Generate a secure invitation token"""
+        return secrets.token_urlsafe(32)

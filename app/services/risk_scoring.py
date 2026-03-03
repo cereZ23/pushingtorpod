@@ -1,488 +1,684 @@
 """
 Comprehensive Risk Scoring Engine for EASM Platform
 
-Calculates risk scores for assets based on multiple security factors:
-- Vulnerability findings (Nuclei)
-- EPSS exploit probability scores (FIRST.org)
-- CISA KEV known exploited vulnerabilities
-- TLS/certificate issues
-- Exposed high-risk ports
-- Login page exposure
-- Asset age (new assets are higher risk)
-- Service security posture
+Two-tier scoring model:
+
+Finding-level score (0-100):
+    - Base: CVSS score (0-10) * 10 = 0-100
+    - EPSS multiplier: >0.5 -> +15, >0.1 -> +10, >0.01 -> +5
+    - KEV (Known Exploited Vulnerability): if in CISA KEV -> +20
+    - Severity fallback (when no CVSS): critical=90, high=70, medium=45, low=20, info=5
+    - Capped at 100
+
+Asset-level score (0-100):
+    - Highest finding score among open findings
+    - Internet-exposed bonus: ports 80/443/8080/8443 -> +5
+    - Expired TLS certificate -> +10
+    - New asset (first_seen < 7 days) -> +10
+    - Capped at 100
+
+The engine also produces detailed component breakdowns and actionable
+recommendations for each scored asset.
+
+Integration points:
+    - Pipeline Phase 11 calls recalculate_asset_risk per asset
+    - recalculate_tenant_risk batch-updates all active assets for a tenant
+    - ThreatIntelService provides EPSS/KEV data (cached in Redis)
+    - RiskScore snapshots are stored for historical trending
 """
 
-import logging
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional
-from sqlalchemy.orm import Session
-from sqlalchemy import text
+from __future__ import annotations
 
-from app.models.database import Asset, Service, Finding
+import logging
+from datetime import datetime, timezone
+from typing import Dict, List, Optional
+
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from app.models.database import Asset, Finding, FindingSeverity, FindingStatus, Service
 
 logger = logging.getLogger(__name__)
 
 
-class RiskScoringEngine:
+# ---------------------------------------------------------------------------
+# Finding-level scoring constants
+# ---------------------------------------------------------------------------
+
+# Severity fallback when CVSS is unavailable
+SEVERITY_FALLBACK_SCORE: Dict[str, float] = {
+    'critical': 90.0,
+    'high': 70.0,
+    'medium': 45.0,
+    'low': 20.0,
+    'info': 5.0,
+}
+
+# EPSS probability thresholds and their bonus points
+EPSS_THRESHOLDS = [
+    (0.5, 15.0),   # > 50% exploitation probability
+    (0.1, 10.0),   # > 10%
+    (0.01, 5.0),   # > 1%
+]
+
+# CISA KEV bonus
+KEV_BONUS = 20.0
+
+# ---------------------------------------------------------------------------
+# Asset-level scoring constants
+# ---------------------------------------------------------------------------
+
+# Ports that indicate internet exposure
+INTERNET_EXPOSED_PORTS = {80, 443, 8080, 8443}
+INTERNET_EXPOSED_BONUS = 5.0
+
+EXPIRED_CERT_BONUS = 10.0
+NEW_ASSET_DAYS = 7
+NEW_ASSET_BONUS = 10.0
+
+# High-risk ports with individual penalties (kept for detailed breakdown)
+HIGH_RISK_PORTS = {
+    22: ('SSH', 8.0),
+    23: ('Telnet', 10.0),
+    445: ('SMB', 8.0),
+    1433: ('MSSQL', 7.0),
+    3306: ('MySQL', 7.0),
+    3389: ('RDP', 9.0),
+    5432: ('PostgreSQL', 7.0),
+    5984: ('CouchDB', 6.0),
+    6379: ('Redis', 7.0),
+    7001: ('WebLogic', 6.0),
+    8089: ('Splunk', 5.0),
+    9200: ('Elasticsearch', 7.0),
+    27017: ('MongoDB', 7.0),
+}
+
+# Login page indicators
+LOGIN_INDICATORS = [
+    'login', 'signin', 'sign-in', 'auth', 'sso',
+    'admin', 'console', 'dashboard', 'portal',
+]
+
+
+# ---------------------------------------------------------------------------
+# Finding-level scoring
+# ---------------------------------------------------------------------------
+
+def compute_finding_score(
+    finding: Finding,
+    epss_score: float = 0.0,
+    is_kev: bool = False,
+) -> float:
+    """Compute a risk score (0-100) for a single finding.
+
+    Algorithm:
+        1. If the finding has a CVSS score, base = cvss * 10 (maps 0-10 to 0-100).
+        2. Otherwise fall back to a severity-based static score.
+        3. Add EPSS bonus based on exploitation probability thresholds.
+        4. Add KEV bonus (+20) if the CVE appears in the CISA KEV catalog.
+        5. Cap the result at 100.
+
+    Args:
+        finding: Finding ORM object with severity and optional cvss_score.
+        epss_score: EPSS probability (0.0-1.0) for this finding's CVE.
+        is_kev: Whether this finding's CVE is in the CISA KEV catalog.
+
+    Returns:
+        Numeric score between 0.0 and 100.0.
     """
-    Comprehensive risk scoring engine for EASM assets
+    # 1. Base score from CVSS or severity fallback
+    if finding.cvss_score is not None and finding.cvss_score > 0:
+        base = finding.cvss_score * 10.0
+    else:
+        severity = _normalize_severity(finding.severity)
+        base = SEVERITY_FALLBACK_SCORE.get(severity, 5.0)
+
+    # 2. EPSS bonus (first matching threshold wins)
+    epss_bonus = 0.0
+    for threshold, bonus in EPSS_THRESHOLDS:
+        if epss_score > threshold:
+            epss_bonus = bonus
+            break
+
+    # 3. KEV bonus
+    kev_bonus = KEV_BONUS if is_kev else 0.0
+
+    score = base + epss_bonus + kev_bonus
+    return min(score, 100.0)
+
+
+# ---------------------------------------------------------------------------
+# Threat intel helpers
+# ---------------------------------------------------------------------------
+
+def _get_finding_threat_intel(
+    finding: Finding,
+    threat_intel_svc: Optional[object] = None,
+) -> tuple[float, bool]:
+    """Extract or fetch EPSS score and KEV status for a finding.
+
+    Checks the cached ``evidence.threat_intel`` field first (populated by
+    the threat_intel_sync Celery task). If not present, falls back to a
+    live lookup via the provided ThreatIntelService instance.
+
+    Args:
+        finding: Finding ORM object.
+        threat_intel_svc: Optional ThreatIntelService instance for live lookups.
+
+    Returns:
+        Tuple of (epss_score: float, is_kev: bool).
+    """
+    if not finding.cve_id:
+        return 0.0, False
+
+    # Prefer cached data from evidence field
+    evidence = finding.evidence or {}
+    if isinstance(evidence, str):
+        try:
+            import json
+            evidence = json.loads(evidence)
+        except (json.JSONDecodeError, TypeError):
+            evidence = {}
+    cached = evidence.get("threat_intel", {})
+    if cached:
+        return float(cached.get("epss_score", 0.0)), bool(cached.get("is_kev", False))
+
+    # Live lookup fallback
+    if threat_intel_svc is not None:
+        try:
+            epss = threat_intel_svc.get_epss_score(finding.cve_id)
+            kev = threat_intel_svc.is_in_kev(finding.cve_id)
+            return epss, kev
+        except Exception as exc:
+            logger.debug("Threat intel lookup failed for %s: %s", finding.cve_id, exc)
+
+    return 0.0, False
+
+
+def _build_threat_intel_service() -> Optional[object]:
+    """Lazy-construct a ThreatIntelService, returning None on failure."""
+    try:
+        from app.services.threat_intel import ThreatIntelService
+        return ThreatIntelService()
+    except Exception as exc:
+        logger.warning("Could not initialize ThreatIntelService: %s", exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Asset-level scoring
+# ---------------------------------------------------------------------------
+
+def _normalize_severity(severity) -> str:
+    """Normalise a FindingSeverity enum or string to a lowercase string."""
+    if severity is None:
+        return 'info'
+    if isinstance(severity, FindingSeverity):
+        return severity.value.lower()
+    return str(severity).lower()
+
+
+def _is_asset_new(asset: Asset) -> bool:
+    """Check whether the asset was first seen within NEW_ASSET_DAYS."""
+    if not asset.first_seen:
+        return False
+    first_seen = asset.first_seen
+    if first_seen.tzinfo is None:
+        first_seen = first_seen.replace(tzinfo=timezone.utc)
+    days = (datetime.now(timezone.utc) - first_seen).days
+    return days <= NEW_ASSET_DAYS
+
+
+def _has_expired_cert(asset_id: int, db: Session) -> bool:
+    """Check if the asset has at least one expired TLS certificate."""
+    try:
+        row = db.execute(
+            text("SELECT 1 FROM certificates WHERE asset_id = :aid AND is_expired = true LIMIT 1"),
+            {"aid": asset_id},
+        ).fetchone()
+        return row is not None
+    except Exception:
+        # Table may not exist yet; degrade gracefully
+        return False
+
+
+def _has_internet_exposed_services(asset_id: int, db: Session) -> bool:
+    """Check if the asset has services on common internet-facing ports."""
+    services = db.query(Service.port).filter_by(asset_id=asset_id).all()
+    return any(svc.port in INTERNET_EXPOSED_PORTS for svc in services)
+
+
+# ---------------------------------------------------------------------------
+# Main public API
+# ---------------------------------------------------------------------------
+
+class RiskScoringEngine:
+    """Comprehensive risk scoring engine for EASM assets.
 
     Score Range: 0.0 to 100.0
-    - 0-20: Low Risk (Green)
-    - 21-40: Medium Risk (Yellow)
-    - 41-70: High Risk (Orange)
-    - 71-100: Critical Risk (Red)
+        - 0-20:  Low Risk (Green)
+        - 21-40: Medium Risk (Yellow)
+        - 41-70: High Risk (Orange)
+        - 71-100: Critical Risk (Red)
+
+    The engine computes a **finding-level score** for each open finding
+    (CVSS + EPSS + KEV), then derives the **asset-level score** as the
+    highest finding score plus environmental modifiers (internet exposure,
+    expired certs, new-asset bonus).
+
+    For assets with no open findings the score is driven purely by
+    environmental modifiers (expired certs, high-risk ports, etc.).
     """
 
-    # Finding severity weights
-    FINDING_WEIGHTS = {
-        'critical': 15.0,
-        'high': 10.0,
-        'medium': 5.0,
-        'low': 2.0,
-        'info': 0.5
-    }
-
-    # Risk modifiers
-    NEW_ASSET_BONUS = 10.0  # Asset discovered in last 7 days
-    EXPIRED_CERT_PENALTY = 15.0
-    EXPIRING_CERT_PENALTY = 8.0  # < 30 days
-    CERT_MISMATCH_PENALTY = 12.0
-    LOGIN_PAGE_EXPOSED = 10.0
-    HTTP_LOGIN_EXPOSED = 15.0  # Login over HTTP (no TLS)
-
-    # Threat intelligence risk modifiers
-    KEV_BOOST = 15.0          # CISA KEV: confirmed active exploitation
-    EPSS_HIGH_BOOST = 10.0    # EPSS >= 0.7: very likely to be exploited
-    EPSS_MEDIUM_BOOST = 5.0   # EPSS >= 0.4: likely to be exploited
-    EPSS_LOW_BOOST = 2.0      # EPSS >= 0.1: some exploitation probability
-
-    # High-risk ports (database, admin, remote access)
-    HIGH_RISK_PORTS = {
-        22: 8.0,    # SSH
-        23: 10.0,   # Telnet (very high risk)
-        445: 8.0,   # SMB
-        1433: 7.0,  # MSSQL
-        3306: 7.0,  # MySQL
-        3389: 9.0,  # RDP
-        5432: 7.0,  # PostgreSQL
-        5984: 6.0,  # CouchDB
-        6379: 7.0,  # Redis
-        7001: 6.0,  # WebLogic
-        8089: 5.0,  # Splunk
-        9200: 7.0,  # Elasticsearch
-        27017: 7.0, # MongoDB
-    }
-
-    # Login page indicators
-    LOGIN_INDICATORS = [
-        'login', 'signin', 'sign-in', 'auth', 'sso',
-        'admin', 'console', 'dashboard', 'portal'
-    ]
-
     def __init__(self, db: Session):
-        """
-        Initialize risk scoring engine
-
-        Args:
-            db: Database session
-        """
         self.db = db
+        self._threat_intel_svc: Optional[object] = None
+        self._threat_intel_loaded = False
 
-    def calculate_asset_risk(self, asset_id: int) -> Dict:
+    # -- Lazy threat intel accessor ------------------------------------------
+
+    def _get_threat_intel(self) -> Optional[object]:
+        """Return (and cache) a ThreatIntelService, or None on failure."""
+        if not self._threat_intel_loaded:
+            self._threat_intel_svc = _build_threat_intel_service()
+            self._threat_intel_loaded = True
+        return self._threat_intel_svc
+
+    # -- Finding scoring -----------------------------------------------------
+
+    def _score_all_findings(self, asset: Asset) -> Dict:
+        """Score all open findings for an asset.
+
+        Returns a dict with:
+            - max_finding_score: highest individual finding score (0-100)
+            - finding_scores: list of per-finding score dicts
+            - severity_counts: dict of severity -> count
+            - kev_count / high_epss_count: threat intel summary
+            - recommendations: list of actionable items
         """
-        Calculate comprehensive risk score for an asset
+        findings = (
+            self.db.query(Finding)
+            .filter_by(asset_id=asset.id)
+            .filter(Finding.status == FindingStatus.OPEN)
+            .all()
+        )
 
-        Args:
-            asset_id: Asset ID to score
-
-        Returns:
-            Dict with score breakdown and recommendations
-        """
-        asset = self.db.query(Asset).filter_by(id=asset_id).first()
-
-        if not asset:
-            logger.warning(f"Asset {asset_id} not found for risk scoring")
+        if not findings:
             return {
-                'asset_id': asset_id,
-                'risk_score': 0.0,
-                'error': 'asset_not_found'
-            }
-
-        # Initialize score components
-        components = {
-            'findings_score': 0.0,
-            'certificate_score': 0.0,
-            'port_exposure_score': 0.0,
-            'service_security_score': 0.0,
-            'asset_age_score': 0.0,
-            'threat_intel': {
+                'max_finding_score': 0.0,
+                'finding_scores': [],
+                'severity_counts': {'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'info': 0},
                 'kev_count': 0,
                 'high_epss_count': 0,
+                'recommendations': [],
             }
-        }
 
-        recommendations = []
+        threat_svc = self._get_threat_intel() if any(f.cve_id for f in findings) else None
 
-        # 1. Findings Score (Nuclei vulnerabilities + EPSS/KEV boosts)
-        findings_data = self._score_findings(asset)
-        components['findings_score'] = findings_data['score']
-        components['threat_intel']['kev_count'] = findings_data.get('kev_count', 0)
-        components['threat_intel']['high_epss_count'] = findings_data.get('high_epss_count', 0)
-        recommendations.extend(findings_data.get('recommendations', []))
-
-        # 2. Certificate/TLS Score
-        cert_data = self._score_certificates(asset)
-        components['certificate_score'] = cert_data['score']
-        recommendations.extend(cert_data.get('recommendations', []))
-
-        # 3. Port Exposure Score
-        port_data = self._score_port_exposure(asset)
-        components['port_exposure_score'] = port_data['score']
-        recommendations.extend(port_data.get('recommendations', []))
-
-        # 4. Service Security Score (login pages, HTTP vs HTTPS, etc.)
-        service_data = self._score_service_security(asset)
-        components['service_security_score'] = service_data['score']
-        recommendations.extend(service_data.get('recommendations', []))
-
-        # 5. Asset Age Score (new assets get bonus)
-        age_data = self._score_asset_age(asset)
-        components['asset_age_score'] = age_data['score']
-        recommendations.extend(age_data.get('recommendations', []))
-
-        # Calculate total score (capped at 100.0)
-        # Only sum numeric component values (skip nested dicts like threat_intel)
-        total_score = sum(
-            v for v in components.values() if isinstance(v, (int, float))
-        )
-        total_score = min(total_score, 100.0)
-
-        # Determine risk level
-        risk_level = self._get_risk_level(total_score)
-
-        return {
-            'asset_id': asset_id,
-            'asset_identifier': asset.identifier,
-            'risk_score': round(total_score, 2),
-            'risk_level': risk_level,
-            'components': components,
-            'recommendations': recommendations,
-            'last_calculated': datetime.now(timezone.utc).isoformat()
-        }
-
-    def _score_findings(self, asset: Asset) -> Dict:
-        """Score based on vulnerability findings, boosted by EPSS/KEV threat intel.
-
-        For each open finding:
-        - Base score from severity weight (critical=15, high=10, medium=5, low=2, info=0.5)
-        - EPSS boost: adds extra points based on exploit probability score
-        - KEV boost: adds 15 points if CVE is in CISA Known Exploited Vulnerabilities
-
-        Threat intel data is read from the finding's evidence.threat_intel field
-        (populated by the threat_intel_sync task) or fetched live from the
-        ThreatIntelService if not cached in the finding.
-        """
-        from app.models.database import FindingStatus
-
-        findings = self.db.query(Finding).filter_by(
-            asset_id=asset.id,
-        ).filter(
-            Finding.status == FindingStatus.OPEN
-        ).all()
-
-        score = 0.0
-        recommendations = []
+        max_score = 0.0
+        per_finding: List[Dict] = []
         severity_counts = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'info': 0}
-        kev_findings = []
-        high_epss_findings = []
-
-        # Lazy-load threat intel service only if we have findings with CVEs
-        threat_intel_service = None
-        cve_findings = [f for f in findings if f.cve_id]
-        if cve_findings:
-            try:
-                from app.services.threat_intel import ThreatIntelService
-                threat_intel_service = ThreatIntelService()
-            except Exception as exc:
-                logger.warning(
-                    "Could not initialize ThreatIntelService for risk scoring: %s", exc
-                )
+        kev_findings: List[Finding] = []
+        high_epss_findings: List[tuple] = []
+        recommendations: List[Dict] = []
 
         for finding in findings:
-            severity = finding.severity.value.lower() if finding.severity else 'info'
-            weight = self.FINDING_WEIGHTS.get(severity, 0.0)
+            epss, is_kev = _get_finding_threat_intel(finding, threat_svc)
+            score = compute_finding_score(finding, epss_score=epss, is_kev=is_kev)
 
-            # Get threat intel data from evidence cache or live lookup
-            epss_score = 0.0
-            is_kev = False
-
-            if finding.cve_id:
-                # Try cached threat intel in evidence field first
-                evidence = finding.evidence or {}
-                threat_intel_data = evidence.get("threat_intel", {})
-
-                if threat_intel_data:
-                    epss_score = float(threat_intel_data.get("epss_score", 0.0))
-                    is_kev = bool(threat_intel_data.get("is_kev", False))
-                elif threat_intel_service:
-                    # Live lookup as fallback
-                    try:
-                        epss_score = threat_intel_service.get_epss_score(finding.cve_id)
-                        is_kev = threat_intel_service.is_in_kev(finding.cve_id)
-                    except Exception as exc:
-                        logger.debug(
-                            "Threat intel lookup failed for %s: %s",
-                            finding.cve_id, exc
-                        )
-
-            # Apply EPSS boost
-            epss_boost = 0.0
-            if epss_score >= 0.7:
-                epss_boost = self.EPSS_HIGH_BOOST
-            elif epss_score >= 0.4:
-                epss_boost = self.EPSS_MEDIUM_BOOST
-            elif epss_score >= 0.1:
-                epss_boost = self.EPSS_LOW_BOOST
-
-            # Apply KEV boost
-            kev_boost = self.KEV_BOOST if is_kev else 0.0
-
-            finding_score = weight + epss_boost + kev_boost
-            score += finding_score
-
+            severity = _normalize_severity(finding.severity)
             if severity in severity_counts:
                 severity_counts[severity] += 1
 
+            per_finding.append({
+                'finding_id': finding.id,
+                'name': finding.name,
+                'severity': severity,
+                'cvss': finding.cvss_score,
+                'cve_id': finding.cve_id,
+                'epss_score': epss,
+                'is_kev': is_kev,
+                'score': round(score, 2),
+            })
+
+            if score > max_score:
+                max_score = score
+
             if is_kev:
                 kev_findings.append(finding)
+            if epss > 0.5:
+                high_epss_findings.append((finding, epss))
 
-            if epss_score >= 0.5:
-                high_epss_findings.append((finding, epss_score))
-
-        # Add recommendations based on findings
+        # Build recommendations
         if severity_counts['critical'] > 0:
             recommendations.append({
                 'priority': 'critical',
-                'message': f"{severity_counts['critical']} critical vulnerabilities require immediate remediation"
+                'message': (
+                    f"{severity_counts['critical']} critical vulnerabilities "
+                    "require immediate remediation"
+                ),
             })
 
         if severity_counts['high'] > 0:
             recommendations.append({
                 'priority': 'high',
-                'message': f"{severity_counts['high']} high-severity vulnerabilities need urgent attention"
+                'message': (
+                    f"{severity_counts['high']} high-severity vulnerabilities "
+                    "need urgent attention"
+                ),
             })
 
-        # Add threat intel recommendations
         if kev_findings:
-            cve_list = ", ".join(
-                f.cve_id for f in kev_findings[:5] if f.cve_id
-            )
+            cve_list = ", ".join(f.cve_id for f in kev_findings[:5] if f.cve_id)
             recommendations.append({
                 'priority': 'critical',
                 'message': (
-                    f"{len(kev_findings)} finding(s) with actively exploited CVEs "
-                    f"(CISA KEV): {cve_list}. Immediate patching required."
-                )
+                    f"{len(kev_findings)} finding(s) with actively exploited "
+                    f"CVEs (CISA KEV): {cve_list}. Immediate patching required."
+                ),
             })
 
         if high_epss_findings:
-            top_epss = sorted(high_epss_findings, key=lambda x: x[1], reverse=True)[:3]
-            epss_list = ", ".join(
-                f"{f.cve_id} ({s:.0%})" for f, s in top_epss if f.cve_id
-            )
+            top = sorted(high_epss_findings, key=lambda x: x[1], reverse=True)[:3]
+            epss_list = ", ".join(f"{f.cve_id} ({s:.0%})" for f, s in top if f.cve_id)
             recommendations.append({
                 'priority': 'high',
                 'message': (
                     f"{len(high_epss_findings)} finding(s) with high exploitation "
-                    f"probability (EPSS >= 50%): {epss_list}"
-                )
+                    f"probability (EPSS > 50%): {epss_list}"
+                ),
             })
 
         return {
-            'score': min(score, 50.0),  # Cap findings score at 50
+            'max_finding_score': round(max_score, 2),
+            'finding_scores': sorted(per_finding, key=lambda d: d['score'], reverse=True),
             'severity_counts': severity_counts,
             'kev_count': len(kev_findings),
             'high_epss_count': len(high_epss_findings),
-            'recommendations': recommendations
+            'recommendations': recommendations,
         }
 
+    # -- Certificate scoring -------------------------------------------------
+
     def _score_certificates(self, asset: Asset) -> Dict:
-        """Score based on TLS certificate security"""
-        # Query certificates using raw SQL since there's no ORM model
-        query = text("""
-            SELECT id, subject_cn, is_expired, days_until_expiry
-            FROM certificates
-            WHERE asset_id = :asset_id
-        """)
+        """Score based on TLS certificate security."""
+        try:
+            result = self.db.execute(
+                text("""
+                    SELECT id, subject_cn, is_expired, days_until_expiry
+                    FROM certificates
+                    WHERE asset_id = :asset_id
+                """),
+                {'asset_id': asset.id},
+            )
+            certificates = result.fetchall()
+        except Exception:
+            # certificates table may not exist yet
+            return {'has_expired': False, 'score': 0.0, 'issues': [], 'recommendations': []}
 
-        result = self.db.execute(query, {'asset_id': asset.id})
-        certificates = result.fetchall()
-
+        has_expired = False
         score = 0.0
-        recommendations = []
-        issues = []
+        issues: List[str] = []
+        recommendations: List[Dict] = []
 
         for cert in certificates:
             cert_id, subject_cn, is_expired, days_until_expiry = cert
 
-            # Check for expired certificates
             if is_expired:
-                score += self.EXPIRED_CERT_PENALTY
+                has_expired = True
                 issues.append('expired_certificate')
                 recommendations.append({
                     'priority': 'critical',
-                    'message': f"Certificate expired for {asset.identifier}"
+                    'message': f"Certificate expired for {asset.identifier}",
                 })
-
-            # Check for expiring certificates (< 30 days)
             elif days_until_expiry is not None and days_until_expiry < 30:
-                score += self.EXPIRING_CERT_PENALTY
                 issues.append('expiring_certificate')
                 recommendations.append({
                     'priority': 'medium',
-                    'message': f"Certificate expires in {days_until_expiry} days for {asset.identifier}"
+                    'message': (
+                        f"Certificate expires in {days_until_expiry} days "
+                        f"for {asset.identifier}"
+                    ),
                 })
 
-            # Check for certificate CN mismatch
             if subject_cn and asset.identifier:
-                # Simple mismatch check
                 cn_clean = subject_cn.replace('*.', '')
                 if cn_clean not in asset.identifier and asset.identifier not in cn_clean:
-                    score += self.CERT_MISMATCH_PENALTY
                     issues.append('certificate_mismatch')
                     recommendations.append({
                         'priority': 'high',
-                        'message': f"Certificate CN '{subject_cn}' doesn't match '{asset.identifier}'"
+                        'message': (
+                            f"Certificate CN '{subject_cn}' doesn't match "
+                            f"'{asset.identifier}'"
+                        ),
                     })
 
         return {
-            'score': min(score, 30.0),  # Cap certificate score at 30
+            'has_expired': has_expired,
+            'score': score,
             'issues': issues,
-            'recommendations': recommendations
+            'recommendations': recommendations,
         }
 
+    # -- Port exposure scoring -----------------------------------------------
+
     def _score_port_exposure(self, asset: Asset) -> Dict:
-        """Score based on exposed high-risk ports"""
+        """Score based on exposed high-risk ports."""
         services = self.db.query(Service).filter_by(asset_id=asset.id).all()
 
-        score = 0.0
-        recommendations = []
-        exposed_ports = []
+        is_internet_exposed = False
+        exposed_high_risk: List[Dict] = []
+        recommendations: List[Dict] = []
 
         for service in services:
-            if service.port in self.HIGH_RISK_PORTS:
-                port_penalty = self.HIGH_RISK_PORTS[service.port]
-                score += port_penalty
-                exposed_ports.append(service.port)
+            if service.port in INTERNET_EXPOSED_PORTS:
+                is_internet_exposed = True
 
-                port_names = {
-                    22: 'SSH', 23: 'Telnet', 445: 'SMB',
-                    1433: 'MSSQL', 3306: 'MySQL', 3389: 'RDP',
-                    5432: 'PostgreSQL', 5984: 'CouchDB',
-                    6379: 'Redis', 7001: 'WebLogic',
-                    8089: 'Splunk', 9200: 'Elasticsearch',
-                    27017: 'MongoDB'
-                }
-
-                port_name = port_names.get(service.port, f'Port {service.port}')
-
+            if service.port in HIGH_RISK_PORTS:
+                port_name, _penalty = HIGH_RISK_PORTS[service.port]
+                exposed_high_risk.append({
+                    'port': service.port,
+                    'name': port_name,
+                })
                 recommendations.append({
-                    'priority': 'high' if service.port in [23, 3389] else 'medium',
-                    'message': f"High-risk {port_name} service exposed on {asset.identifier}"
+                    'priority': 'high' if service.port in (23, 3389) else 'medium',
+                    'message': (
+                        f"High-risk {port_name} service exposed on "
+                        f"{asset.identifier}:{service.port}"
+                    ),
                 })
 
         return {
-            'score': min(score, 40.0),  # Cap port exposure score at 40
-            'exposed_high_risk_ports': exposed_ports,
-            'recommendations': recommendations
+            'is_internet_exposed': is_internet_exposed,
+            'exposed_high_risk_ports': exposed_high_risk,
+            'recommendations': recommendations,
         }
 
+    # -- Service security scoring --------------------------------------------
+
     def _score_service_security(self, asset: Asset) -> Dict:
-        """Score based on service security (login pages, HTTP, etc.)"""
+        """Score based on service security (login pages, HTTP without TLS)."""
         services = self.db.query(Service).filter_by(asset_id=asset.id).all()
 
-        score = 0.0
-        recommendations = []
-        issues = []
+        issues: List[str] = []
+        recommendations: List[Dict] = []
 
         for service in services:
-            # Check for login pages
-            is_login_page = False
             title = (service.http_title or '').lower()
+            is_login = any(indicator in title for indicator in LOGIN_INDICATORS)
 
-            for indicator in self.LOGIN_INDICATORS:
-                if indicator in title:
-                    is_login_page = True
-                    break
-
-            if is_login_page:
-                # Check if it's over HTTP (no TLS)
+            if is_login:
                 if service.protocol == 'http' and not service.has_tls:
-                    score += self.HTTP_LOGIN_EXPOSED
                     issues.append('http_login_exposed')
                     recommendations.append({
                         'priority': 'critical',
-                        'message': f"Login page '{service.http_title}' exposed over HTTP (no encryption) on {asset.identifier}"
+                        'message': (
+                            f"Login page '{service.http_title}' exposed over "
+                            f"HTTP (no encryption) on {asset.identifier}"
+                        ),
                     })
                 else:
-                    # HTTPS login page
-                    score += self.LOGIN_PAGE_EXPOSED
+                    issues.append('https_login_exposed')
                     recommendations.append({
                         'priority': 'medium',
-                        'message': f"Login page '{service.http_title}' exposed to internet on {asset.identifier}"
+                        'message': (
+                            f"Login page '{service.http_title}' exposed to "
+                            f"internet on {asset.identifier}"
+                        ),
                     })
 
         return {
-            'score': min(score, 25.0),  # Cap service security score at 25
             'issues': issues,
-            'recommendations': recommendations
+            'recommendations': recommendations,
         }
+
+    # -- Asset age scoring ---------------------------------------------------
 
     def _score_asset_age(self, asset: Asset) -> Dict:
-        """Score based on asset age (new assets get bonus for monitoring)"""
-        score = 0.0
-        recommendations = []
+        """Score based on asset age (new assets are higher risk)."""
+        is_new = _is_asset_new(asset)
+        recommendations: List[Dict] = []
 
-        if asset.first_seen:
-            days_since_discovery = (datetime.now(timezone.utc) - asset.first_seen).days
-
-            if days_since_discovery <= 7:
-                score += self.NEW_ASSET_BONUS
-                recommendations.append({
-                    'priority': 'high',
-                    'message': f"New asset discovered {days_since_discovery} days ago - requires additional monitoring"
-                })
+        if is_new and asset.first_seen:
+            first_seen = asset.first_seen
+            if first_seen.tzinfo is None:
+                first_seen = first_seen.replace(tzinfo=timezone.utc)
+            days = (datetime.now(timezone.utc) - first_seen).days
+            recommendations.append({
+                'priority': 'high',
+                'message': (
+                    f"New asset discovered {days} days ago - requires "
+                    "additional monitoring"
+                ),
+            })
 
         return {
-            'score': score,
-            'recommendations': recommendations
+            'is_new': is_new,
+            'recommendations': recommendations,
         }
 
-    def _get_risk_level(self, score: float) -> str:
-        """Determine risk level from score"""
-        if score >= 71.0:
-            return 'critical'
-        elif score >= 41.0:
-            return 'high'
-        elif score >= 21.0:
-            return 'medium'
-        else:
-            return 'low'
+    # -- Main entry point ----------------------------------------------------
 
-    def calculate_tenant_risk_scorecard(self, tenant_id: int) -> Dict:
-        """
-        Calculate risk scorecard for entire tenant
+    def calculate_asset_risk(self, asset_id: int) -> Dict:
+        """Calculate comprehensive risk score for an asset.
+
+        Algorithm:
+            1. Compute finding-level scores for every open finding.
+            2. Take the highest finding score as the base.
+            3. Add environmental modifiers:
+               - Internet-exposed (ports 80/443/8080/8443): +5
+               - Expired TLS certificate: +10
+               - New asset (< 7 days): +10
+            4. Cap at 100.
 
         Args:
-            tenant_id: Tenant ID
+            asset_id: Asset ID to score.
 
         Returns:
-            Aggregated risk metrics for tenant
+            Dict with risk_score, risk_level, components, and recommendations.
+        """
+        asset = self.db.query(Asset).filter_by(id=asset_id).first()
+        if not asset:
+            logger.warning("Asset %d not found for risk scoring", asset_id)
+            return {
+                'asset_id': asset_id,
+                'risk_score': 0.0,
+                'error': 'asset_not_found',
+            }
+
+        # 1. Findings analysis
+        findings_data = self._score_all_findings(asset)
+        max_finding_score = findings_data['max_finding_score']
+
+        # 2. Certificate analysis
+        cert_data = self._score_certificates(asset)
+
+        # 3. Port exposure analysis
+        port_data = self._score_port_exposure(asset)
+
+        # 4. Service security analysis
+        service_data = self._score_service_security(asset)
+
+        # 5. Asset age analysis
+        age_data = self._score_asset_age(asset)
+
+        # Compute asset-level score
+        asset_score = max_finding_score
+
+        internet_exposed_bonus = 0.0
+        if port_data['is_internet_exposed']:
+            internet_exposed_bonus = INTERNET_EXPOSED_BONUS
+            asset_score += internet_exposed_bonus
+
+        expired_cert_bonus = 0.0
+        if cert_data['has_expired']:
+            expired_cert_bonus = EXPIRED_CERT_BONUS
+            asset_score += expired_cert_bonus
+
+        new_asset_bonus = 0.0
+        if age_data['is_new']:
+            new_asset_bonus = NEW_ASSET_BONUS
+            asset_score += new_asset_bonus
+
+        asset_score = min(asset_score, 100.0)
+        asset_score = round(asset_score, 2)
+
+        risk_level = _get_risk_level(asset_score)
+
+        # Collect all recommendations
+        recommendations: List[Dict] = []
+        recommendations.extend(findings_data.get('recommendations', []))
+        recommendations.extend(cert_data.get('recommendations', []))
+        recommendations.extend(port_data.get('recommendations', []))
+        recommendations.extend(service_data.get('recommendations', []))
+        recommendations.extend(age_data.get('recommendations', []))
+
+        # Build components breakdown
+        components = {
+            'max_finding_score': max_finding_score,
+            'internet_exposed_bonus': internet_exposed_bonus,
+            'expired_cert_bonus': expired_cert_bonus,
+            'new_asset_bonus': new_asset_bonus,
+            'finding_count': len(findings_data['finding_scores']),
+            'severity_counts': findings_data['severity_counts'],
+            'threat_intel': {
+                'kev_count': findings_data['kev_count'],
+                'high_epss_count': findings_data['high_epss_count'],
+            },
+            'top_findings': findings_data['finding_scores'][:5],
+            'exposed_high_risk_ports': port_data['exposed_high_risk_ports'],
+            'cert_issues': cert_data.get('issues', []),
+            'service_issues': service_data.get('issues', []),
+        }
+
+        return {
+            'asset_id': asset_id,
+            'asset_identifier': asset.identifier,
+            'risk_score': asset_score,
+            'risk_level': risk_level,
+            'components': components,
+            'recommendations': recommendations,
+            'last_calculated': datetime.now(timezone.utc).isoformat(),
+        }
+
+    # -- Tenant scorecard ----------------------------------------------------
+
+    def calculate_tenant_risk_scorecard(self, tenant_id: int) -> Dict:
+        """Calculate aggregated risk scorecard for a tenant.
+
+        Reads the already-persisted ``asset.risk_score`` values (set by
+        ``recalculate_asset_risk`` or the pipeline). Does NOT recompute
+        individual asset scores.
+
+        Args:
+            tenant_id: Tenant ID.
+
+        Returns:
+            Summary dict with distribution, average, and top-risk assets.
         """
         assets = self.db.query(Asset).filter_by(
             tenant_id=tenant_id,
-            is_active=True
+            is_active=True,
         ).all()
 
         if not assets:
@@ -490,96 +686,221 @@ class RiskScoringEngine:
                 'tenant_id': tenant_id,
                 'total_assets': 0,
                 'average_risk_score': 0.0,
-                'risk_distribution': {}
+                'risk_distribution': {},
             }
 
         risk_levels = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}
         total_score = 0.0
-        high_risk_assets = []
+        high_risk_assets: List[Dict] = []
 
         for asset in assets:
-            if asset.risk_score is not None:
-                total_score += asset.risk_score
-                level = self._get_risk_level(asset.risk_score)
-                risk_levels[level] += 1
+            score = asset.risk_score if asset.risk_score is not None else 0.0
+            total_score += score
+            level = _get_risk_level(score)
+            risk_levels[level] += 1
 
-                if asset.risk_score >= 70.0:
-                    high_risk_assets.append({
-                        'identifier': asset.identifier,
-                        'risk_score': asset.risk_score
-                    })
+            if score >= 70.0:
+                high_risk_assets.append({
+                    'identifier': asset.identifier,
+                    'risk_score': score,
+                })
 
-        average_score = total_score / len(assets) if assets else 0.0
+        average_score = total_score / len(assets)
 
         return {
             'tenant_id': tenant_id,
             'total_assets': len(assets),
             'average_risk_score': round(average_score, 2),
             'risk_distribution': risk_levels,
-            'high_risk_assets': sorted(high_risk_assets, key=lambda x: x['risk_score'], reverse=True)[:10],
-            'last_calculated': datetime.now(timezone.utc).isoformat()
+            'high_risk_assets': sorted(
+                high_risk_assets,
+                key=lambda x: x['risk_score'],
+                reverse=True,
+            )[:10],
+            'last_calculated': datetime.now(timezone.utc).isoformat(),
         }
 
 
-def batch_calculate_risk_scores(db: Session, tenant_id: int, batch_size: int = 100) -> Dict:
-    """
-    Calculate risk scores for all assets in a tenant (batch operation)
+# ---------------------------------------------------------------------------
+# Shared utility
+# ---------------------------------------------------------------------------
+
+def _get_risk_level(score: float) -> str:
+    """Map a numeric score to a human-readable risk level."""
+    if score >= 71.0:
+        return 'critical'
+    if score >= 41.0:
+        return 'high'
+    if score >= 21.0:
+        return 'medium'
+    return 'low'
+
+
+# ---------------------------------------------------------------------------
+# Top-level convenience functions (importable from tasks/pipeline)
+# ---------------------------------------------------------------------------
+
+def recalculate_asset_risk(asset_id: int, db: Session) -> Dict:
+    """Recalculate and persist the risk score for a single asset.
+
+    This is the primary entry point for the pipeline and ad-hoc rescoring.
+    It computes the full finding-level + asset-level score, persists the
+    result on the Asset row, and returns the full breakdown.
 
     Args:
-        db: Database session
-        tenant_id: Tenant ID
-        batch_size: Number of assets to process per batch
+        asset_id: ID of the asset to score.
+        db: Active SQLAlchemy session (caller manages commit).
 
     Returns:
-        Summary of risk score calculations
+        Full score breakdown dict (same shape as
+        ``RiskScoringEngine.calculate_asset_risk``).  If the asset is not
+        found, returns ``{'asset_id': ..., 'risk_score': 0.0, 'error': ...}``.
     """
-    from app.repositories.asset_repository import AssetRepository
-
-    logger.info(f"Starting batch risk score calculation for tenant {tenant_id}")
-
     engine = RiskScoringEngine(db)
-    asset_repo = AssetRepository(db)
+    result = engine.calculate_asset_risk(asset_id)
 
-    # Get all active assets for tenant
-    assets = db.query(Asset).filter_by(
-        tenant_id=tenant_id,
-        is_active=True
-    ).all()
+    if 'error' not in result:
+        asset = db.query(Asset).filter_by(id=asset_id).first()
+        if asset is not None:
+            asset.risk_score = result['risk_score']
+            db.flush()
+            logger.debug(
+                "Asset %d (%s) risk score updated to %.2f",
+                asset_id,
+                asset.identifier,
+                result['risk_score'],
+            )
 
-    total_assets = len(assets)
+    return result
+
+
+def recalculate_tenant_risk(
+    tenant_id: int,
+    db: Session,
+    batch_size: int = 100,
+) -> Dict:
+    """Recalculate risk scores for every active asset in a tenant.
+
+    Processes assets in batches and commits after each batch so that
+    long-running rescoring does not hold a single oversized transaction.
+
+    Args:
+        tenant_id: Tenant ID.
+        db: Active SQLAlchemy session.
+        batch_size: Number of assets to process per commit cycle.
+
+    Returns:
+        Summary dict::
+
+            {
+                "tenant_id": 1,
+                "total_assets": 150,
+                "processed": 148,
+                "updated": 148,
+                "failed": 2,
+                "score_distribution": {"critical": 5, "high": 23, ...},
+                "average_risk_score": 42.7,
+                "max_risk_score": 98.0
+            }
+    """
+    logger.info("Starting tenant risk recalculation for tenant %d", tenant_id)
+
+    assets = (
+        db.query(Asset)
+        .filter_by(tenant_id=tenant_id, is_active=True)
+        .all()
+    )
+
+    total = len(assets)
     processed = 0
     updated = 0
+    failed = 0
+    distribution = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}
+    all_scores: List[float] = []
 
-    logger.info(f"Processing {total_assets} assets for risk scoring")
+    engine = RiskScoringEngine(db)
 
-    # Process in batches
-    for i in range(0, total_assets, batch_size):
-        batch = assets[i:i + batch_size]
+    for batch_start in range(0, total, batch_size):
+        batch = assets[batch_start:batch_start + batch_size]
 
         for asset in batch:
             try:
-                # Calculate risk score
                 result = engine.calculate_asset_risk(asset.id)
+                score = result.get('risk_score', 0.0)
 
-                # Update asset risk score
-                if 'risk_score' in result:
-                    asset_repo.update_risk_score(asset.id, result['risk_score'])
+                if 'error' not in result:
+                    asset.risk_score = score
                     updated += 1
+                    level = _get_risk_level(score)
+                    distribution[level] += 1
+                    all_scores.append(score)
+                else:
+                    failed += 1
 
                 processed += 1
 
-            except Exception as e:
-                logger.error(f"Error calculating risk for asset {asset.id}: {e}", exc_info=True)
+            except Exception as exc:
+                logger.error(
+                    "Risk scoring failed for asset %d: %s",
+                    asset.id,
+                    exc,
+                    exc_info=True,
+                )
+                failed += 1
+                processed += 1
 
-        # Commit batch
         db.commit()
-        logger.debug(f"Processed batch {i//batch_size + 1}: {len(batch)} assets")
+        logger.debug(
+            "Tenant %d risk scoring batch %d/%d complete",
+            tenant_id,
+            batch_start // batch_size + 1,
+            (total + batch_size - 1) // batch_size,
+        )
 
-    logger.info(f"Risk scoring complete: {updated}/{total_assets} assets updated")
+    avg_score = sum(all_scores) / len(all_scores) if all_scores else 0.0
+    max_score = max(all_scores) if all_scores else 0.0
+
+    logger.info(
+        "Tenant %d risk scoring complete: %d/%d updated, %d failed, avg=%.1f max=%.1f",
+        tenant_id,
+        updated,
+        total,
+        failed,
+        avg_score,
+        max_score,
+    )
 
     return {
         'tenant_id': tenant_id,
-        'total_assets': total_assets,
+        'total_assets': total,
         'processed': processed,
-        'updated': updated
+        'updated': updated,
+        'failed': failed,
+        'score_distribution': distribution,
+        'average_risk_score': round(avg_score, 2),
+        'max_risk_score': round(max_score, 2),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible alias
+# ---------------------------------------------------------------------------
+
+def batch_calculate_risk_scores(
+    db: Session,
+    tenant_id: int,
+    batch_size: int = 100,
+) -> Dict:
+    """Backward-compatible wrapper around recalculate_tenant_risk.
+
+    Existing callers (e.g., older Celery tasks) can continue to import and
+    call this function without changes.
+    """
+    result = recalculate_tenant_risk(tenant_id, db, batch_size=batch_size)
+    # Map to the legacy return shape expected by older callers
+    return {
+        'tenant_id': result['tenant_id'],
+        'total_assets': result['total_assets'],
+        'processed': result['processed'],
+        'updated': result['updated'],
     }

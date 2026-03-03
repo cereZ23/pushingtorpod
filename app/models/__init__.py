@@ -23,6 +23,43 @@ from app.models.auth import (
     User,
     TenantMembership,
     APIKey,
+    UserInvitation,
+)
+
+from app.models.scanning import (
+    Project,
+    Scope,
+    ScanProfile,
+    ScanRun,
+    ScanRunStatus,
+    PhaseResult,
+    PhaseStatus,
+    Observation,
+)
+
+from app.models.issues import (
+    Issue,
+    IssueStatus,
+    IssueFinding,
+    IssueActivity,
+)
+
+from app.models.risk import (
+    RiskScore,
+    Alert,
+    AlertStatus,
+    AlertPolicy,
+    Relationship,
+    AuditLog,
+)
+
+from app.models.ticketing import (
+    TicketingConfig,
+    Ticket,
+)
+
+from app.models.report_schedule import (
+    ReportSchedule,
 )
 
 __all__ = [
@@ -40,4 +77,26 @@ __all__ = [
     'User',
     'TenantMembership',
     'APIKey',
+    'Project',
+    'Scope',
+    'ScanProfile',
+    'ScanRun',
+    'ScanRunStatus',
+    'PhaseResult',
+    'PhaseStatus',
+    'Observation',
+    'Issue',
+    'IssueStatus',
+    'IssueFinding',
+    'IssueActivity',
+    'RiskScore',
+    'Alert',
+    'AlertStatus',
+    'AlertPolicy',
+    'Relationship',
+    'Ticket',
+    'AuditLog',
+    'TicketingConfig',
+    'ReportSchedule',
+    'UserInvitation',
 ]

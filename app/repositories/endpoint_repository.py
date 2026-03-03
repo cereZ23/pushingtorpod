@@ -339,6 +339,9 @@ class EndpointRepository:
         created = 0
         for row in returned_rows:
             endpoint_id, first_seen = row
+            if first_seen:
+                if first_seen.tzinfo is None:
+                    first_seen = first_seen.replace(tzinfo=timezone.utc)
             if first_seen and (current_time - first_seen).total_seconds() < 2:
                 created += 1
 

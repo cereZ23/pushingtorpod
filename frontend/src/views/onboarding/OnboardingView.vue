@@ -357,7 +357,7 @@ const stepClasses = computed(() => (step: number) => {
                 Enter your root domains (e.g., example.com). We'll automatically discover all subdomains.
               </p>
 
-              <div v-for="(domain, index) in formData.domains" :key="index" class="flex items-center space-x-2 mb-3">
+              <div v-for="(_domain, index) in formData.domains" :key="index" class="flex items-center space-x-2 mb-3">
                 <input
                   v-model="formData.domains[index]"
                   type="text"

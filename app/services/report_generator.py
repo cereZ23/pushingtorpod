@@ -60,6 +60,178 @@ _REMEDIATION_MAP: Dict[str, str] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Compliance framework mapping
+# ---------------------------------------------------------------------------
+
+class _FrameworkCategory:
+    """Lightweight container for a compliance framework category."""
+
+    __slots__ = ("id", "name", "description")
+
+    def __init__(self, id: str, name: str, description: str = ""):
+        self.id = id
+        self.name = name
+        self.description = description
+
+
+# SOC 2 Trust Service Criteria categories
+TSC_CATEGORIES: List[_FrameworkCategory] = [
+    _FrameworkCategory("CC1", "Control Environment",
+                       "Management's commitment to integrity and ethical values, governance oversight, and organizational structure."),
+    _FrameworkCategory("CC2", "Communication and Information",
+                       "Information needed to carry out internal control responsibilities and communication of objectives."),
+    _FrameworkCategory("CC3", "Risk Assessment",
+                       "Identification and assessment of risks to the achievement of the entity's objectives."),
+    _FrameworkCategory("CC4", "Monitoring Activities",
+                       "Selection, development, and performance of ongoing and/or separate evaluations."),
+    _FrameworkCategory("CC5", "Control Activities",
+                       "Selection and development of control activities that mitigate risks."),
+    _FrameworkCategory("CC6", "Logical and Physical Access Controls",
+                       "Logical access security, physical access restrictions, and data protection."),
+    _FrameworkCategory("CC7", "System Operations",
+                       "Detection and monitoring of anomalies, including security incidents and vulnerabilities."),
+    _FrameworkCategory("CC8", "Change Management",
+                       "Authorized, tested, and approved system changes, including emergency changes."),
+    _FrameworkCategory("CC9", "Risk Mitigation",
+                       "Risk mitigation through business continuity and vendor management activities."),
+]
+
+# ISO 27001:2022 Annex A control domains
+ANNEX_A_DOMAINS: List[_FrameworkCategory] = [
+    _FrameworkCategory("A.5", "Information Security Policies",
+                       "Management direction for information security in accordance with business requirements and relevant laws."),
+    _FrameworkCategory("A.6", "Organization of Information Security",
+                       "Internal organization, mobile devices, and teleworking security controls."),
+    _FrameworkCategory("A.7", "Human Resource Security",
+                       "Security controls for before, during, and termination of employment."),
+    _FrameworkCategory("A.8", "Asset Management",
+                       "Responsibility for assets, information classification, and media handling."),
+    _FrameworkCategory("A.9", "Access Control",
+                       "Business requirements, user access management, and system/application access control."),
+    _FrameworkCategory("A.10", "Cryptography",
+                       "Cryptographic controls for protection of information confidentiality, integrity, and authenticity."),
+    _FrameworkCategory("A.11", "Physical and Environmental Security",
+                       "Secure areas, equipment security, and environmental controls."),
+    _FrameworkCategory("A.12", "Operations Security",
+                       "Operational procedures, malware protection, backup, logging, and technical vulnerability management."),
+    _FrameworkCategory("A.13", "Communications Security",
+                       "Network security management, information transfer policies, and controls."),
+    _FrameworkCategory("A.14", "System Acquisition, Development and Maintenance",
+                       "Security requirements, development/support processes, and test data protection."),
+    _FrameworkCategory("A.15", "Supplier Relationships",
+                       "Information security in supplier relationships and service delivery management."),
+    _FrameworkCategory("A.16", "Information Security Incident Management",
+                       "Management of incidents, reporting, and collection of evidence."),
+    _FrameworkCategory("A.17", "Business Continuity Management",
+                       "Information security continuity and redundancies."),
+    _FrameworkCategory("A.18", "Compliance",
+                       "Compliance with legal, contractual, and policy requirements; information security reviews."),
+]
+
+# Mapping: Nuclei template prefix → (SOC2 TSC ID, ISO 27001 Annex A ID)
+# This maps common EASM finding types to the most relevant compliance controls.
+_TEMPLATE_COMPLIANCE_MAP: Dict[str, Dict[str, str]] = {
+    # TLS/SSL findings → Cryptography / Logical Access
+    "ssl-": {"tsc": "CC6", "annex": "A.10"},
+    "tls-": {"tsc": "CC6", "annex": "A.10"},
+    "weak-cipher": {"tsc": "CC6", "annex": "A.10"},
+    "expired-ssl": {"tsc": "CC6", "annex": "A.10"},
+    # HTTP security headers → System Operations / Communications
+    "http-missing-security-headers": {"tsc": "CC7", "annex": "A.14"},
+    "strict-transport-security": {"tsc": "CC6", "annex": "A.10"},
+    "content-security-policy": {"tsc": "CC7", "annex": "A.14"},
+    "x-frame-options": {"tsc": "CC7", "annex": "A.14"},
+    "x-content-type": {"tsc": "CC7", "annex": "A.14"},
+    "permissions-policy": {"tsc": "CC7", "annex": "A.14"},
+    # Exposed panels / Default credentials → Access Control
+    "exposed-panels": {"tsc": "CC6", "annex": "A.9"},
+    "default-login": {"tsc": "CC6", "annex": "A.9"},
+    "default-credentials": {"tsc": "CC6", "annex": "A.9"},
+    "admin-panel": {"tsc": "CC6", "annex": "A.9"},
+    "login-panel": {"tsc": "CC6", "annex": "A.9"},
+    # Misconfigurations → Change Management / Operations
+    "misconfiguration": {"tsc": "CC8", "annex": "A.12"},
+    "misconfig": {"tsc": "CC8", "annex": "A.12"},
+    "debug-enabled": {"tsc": "CC8", "annex": "A.12"},
+    "directory-listing": {"tsc": "CC6", "annex": "A.12"},
+    "cors-misconfig": {"tsc": "CC7", "annex": "A.14"},
+    # CVEs / Known vulnerabilities → Risk Assessment / Vulnerability Management
+    "cve-": {"tsc": "CC3", "annex": "A.12"},
+    "CVE-": {"tsc": "CC3", "annex": "A.12"},
+    # Information disclosure → Monitoring
+    "information-disclosure": {"tsc": "CC7", "annex": "A.12"},
+    "tech-detect": {"tsc": "CC7", "annex": "A.8"},
+    "wappalyzer": {"tsc": "CC7", "annex": "A.8"},
+    # DNS / Network findings → Communications Security
+    "dns-": {"tsc": "CC7", "annex": "A.13"},
+    "zone-transfer": {"tsc": "CC6", "annex": "A.13"},
+    "subdomain-takeover": {"tsc": "CC6", "annex": "A.13"},
+    "open-redirect": {"tsc": "CC7", "annex": "A.14"},
+    # Cloud / Infrastructure → Risk Mitigation
+    "cloud-": {"tsc": "CC9", "annex": "A.15"},
+    "s3-bucket": {"tsc": "CC6", "annex": "A.9"},
+    "azure-": {"tsc": "CC9", "annex": "A.15"},
+    "gcp-": {"tsc": "CC9", "annex": "A.15"},
+    # Email / DMARC / SPF → Communications
+    "dmarc": {"tsc": "CC7", "annex": "A.13"},
+    "spf": {"tsc": "CC7", "annex": "A.13"},
+    "dkim": {"tsc": "CC7", "annex": "A.13"},
+    # Sensitive paths / Files → Access Control
+    "sensitive-": {"tsc": "CC6", "annex": "A.9"},
+    "backup-file": {"tsc": "CC6", "annex": "A.9"},
+    "git-config": {"tsc": "CC6", "annex": "A.9"},
+    "env-file": {"tsc": "CC6", "annex": "A.9"},
+    ".env": {"tsc": "CC6", "annex": "A.9"},
+}
+
+# Severity-based fallback mapping for findings without template match
+_SEVERITY_COMPLIANCE_FALLBACK: Dict[str, Dict[str, str]] = {
+    "critical": {"tsc": "CC3", "annex": "A.12"},
+    "high": {"tsc": "CC7", "annex": "A.12"},
+    "medium": {"tsc": "CC7", "annex": "A.14"},
+    "low": {"tsc": "CC4", "annex": "A.12"},
+    "info": {"tsc": "CC4", "annex": "A.8"},
+}
+
+
+def _map_finding_to_framework(
+    template_id: Optional[str],
+    name: str,
+    severity: str,
+    framework: str,
+) -> str:
+    """Map a finding to a compliance framework control ID.
+
+    Tries template_id prefix matching first, then falls back to name-based
+    matching, then severity-based default.
+
+    Args:
+        template_id: Nuclei template ID.
+        name: Finding name.
+        severity: Finding severity string.
+        framework: ``"tsc"`` for SOC 2 or ``"annex"`` for ISO 27001.
+
+    Returns:
+        Control ID string (e.g. ``"CC6"`` or ``"A.12"``).
+    """
+    # Try template_id prefix match
+    if template_id:
+        for prefix, mapping in _TEMPLATE_COMPLIANCE_MAP.items():
+            if template_id.startswith(prefix) or prefix in template_id:
+                return mapping[framework]
+
+    # Try name-based match
+    name_lower = name.lower() if name else ""
+    for prefix, mapping in _TEMPLATE_COMPLIANCE_MAP.items():
+        if prefix.lower().rstrip("-") in name_lower:
+            return mapping[framework]
+
+    # Fallback to severity-based mapping
+    fallback = _SEVERITY_COMPLIANCE_FALLBACK.get(severity, _SEVERITY_COMPLIANCE_FALLBACK["info"])
+    return fallback[framework]
+
+
 def _get_remediation(template_id: Optional[str]) -> Optional[str]:
     if not template_id:
         return None
@@ -345,6 +517,99 @@ class ReportGenerator:
         return recs
 
     # ------------------------------------------------------------------
+    # Compliance report data collection
+    # ------------------------------------------------------------------
+
+    def _collect_compliance_data(self, framework: str) -> Dict[str, Any]:
+        """Collect data for a compliance report (SOC 2 or ISO 27001).
+
+        Reuses executive data as a base, then maps every open finding to the
+        relevant framework control and builds the compliance-specific context
+        expected by the Jinja2 templates.
+
+        Args:
+            framework: ``"soc2"`` or ``"iso27001"``.
+
+        Returns:
+            Template context dict with compliance mapping, gap analysis,
+            non-conformity lists, and all shared executive data.
+        """
+        base = self._collect_executive_data()
+
+        # Fetch all findings (open + suppressed, excluding fixed)
+        findings = self._collect_findings(finding_status=None, limit=5000)
+
+        # Determine framework-specific structures
+        if framework == "soc2":
+            categories = TSC_CATEGORIES
+            fw_key = "tsc"
+            ctrl_id_key = "tsc_id"
+        else:
+            categories = ANNEX_A_DOMAINS
+            fw_key = "annex"
+            ctrl_id_key = "annex_id"
+
+        # Map findings to controls
+        compliance_map: Dict[str, Dict[str, Any]] = {}
+        for cat in categories:
+            compliance_map[cat.id] = {"findings": []}
+
+        for f in findings:
+            ctrl = _map_finding_to_framework(
+                template_id=f.get("template_id"),
+                name=f.get("name", ""),
+                severity=f.get("severity", "info"),
+                framework=fw_key,
+            )
+            f[ctrl_id_key] = ctrl
+            if ctrl in compliance_map:
+                compliance_map[ctrl]["findings"].append(f)
+
+        # Gap analysis (SOC 2) / Non-conformities (ISO 27001)
+        control_failures = [f for f in findings if f.get("severity") == "critical"]
+        control_weaknesses = [f for f in findings if f.get("severity") == "high"]
+        observations = [f for f in findings if f.get("severity") == "medium"]
+
+        # Count controls with issues
+        gap_count = sum(
+            1 for cat_data in compliance_map.values()
+            if any(
+                f.get("severity") in ("critical", "high", "medium")
+                for f in cat_data["findings"]
+            )
+        )
+
+        context = {
+            **base,
+            "compliance_map": compliance_map,
+        }
+
+        if framework == "soc2":
+            context.update({
+                "tsc_categories": categories,
+                "tsc_total_controls": len(categories),
+                "tsc_gap_count": gap_count,
+                "gap_analysis": {
+                    "control_failures": control_failures,
+                    "control_weaknesses": control_weaknesses,
+                    "observations": observations,
+                },
+            })
+        else:
+            context.update({
+                "annex_a_domains": categories,
+                "annex_a_total_controls": len(categories),
+                "annex_a_nc_count": gap_count,
+                "nonconformities": {
+                    "major": control_failures,
+                    "minor": control_weaknesses,
+                    "observations": observations,
+                },
+            })
+
+        return context
+
+    # ------------------------------------------------------------------
     # Chart generation
     # ------------------------------------------------------------------
 
@@ -384,7 +649,8 @@ class ReportGenerator:
         Generate a PDF report.
 
         Args:
-            report_type: ``"executive"`` or ``"technical"``.
+            report_type: ``"executive"``, ``"technical"``, ``"soc2"``,
+                         or ``"iso27001"``.
             severity: Optional severity filter (technical only).
             finding_status: Optional status filter (technical only).
             limit: Max findings (technical only).
@@ -394,7 +660,15 @@ class ReportGenerator:
         """
         from weasyprint import HTML
 
-        data = self._collect_executive_data()
+        is_compliance = report_type in ("soc2", "iso27001")
+
+        if is_compliance:
+            data = self._collect_compliance_data(
+                framework="soc2" if report_type == "soc2" else "iso27001",
+            )
+        else:
+            data = self._collect_executive_data()
+
         charts = self._generate_charts(data, fmt="svg")
 
         # Load CSS
@@ -422,6 +696,7 @@ class ReportGenerator:
 
         # Choose template
         template_name = f"pdf/{report_type}.html"
+
         if report_type == "technical":
             findings = self._collect_findings(severity, finding_status, limit)
             # Prepare evidence text for each finding
@@ -437,6 +712,14 @@ class ReportGenerator:
                     grouped[sev].append(f)
             context["severity_order"] = severity_order
             context["grouped_findings"] = grouped
+
+        elif is_compliance:
+            # Merge compliance-specific context (categories, mappings, etc.)
+            context.update({
+                k: v for k, v in data.items()
+                if k not in context
+            })
+            context["asset_counts"] = data["asset_counts"]
 
         env = Environment(
             loader=FileSystemLoader(str(TEMPLATE_DIR)),
@@ -470,8 +753,13 @@ class ReportGenerator:
         with page numbers and confidentiality markings, and full chart
         embedding.
 
+        For compliance report types (``soc2``, ``iso27001``), the DOCX
+        output uses the executive template layout. Use PDF export for
+        full compliance-specific formatting with TSC/Annex A control mappings.
+
         Args:
-            report_type: ``"executive"`` or ``"technical"``.
+            report_type: ``"executive"``, ``"technical"``, ``"soc2"``,
+                         or ``"iso27001"``.
             severity: Optional severity filter (technical only).
             finding_status: Optional status filter (technical only).
             limit: Max findings (technical only).
@@ -479,6 +767,10 @@ class ReportGenerator:
         Returns:
             DOCX bytes.
         """
+        # Compliance types use executive layout for DOCX
+        # (full compliance formatting is in PDF templates)
+        if report_type in ("soc2", "iso27001"):
+            report_type = "executive"
         from docx import Document
         from docx.shared import Inches, Pt, Cm, RGBColor, Emu
         from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -487,17 +779,21 @@ class ReportGenerator:
         from docx.oxml import parse_xml
 
         # -- Color palette -------------------------------------------------
-        BRAND_HEX = "4F46E5"
-        BRAND = RGBColor(0x4F, 0x46, 0xE5)
-        BRAND_DARK = RGBColor(0x3B, 0x35, 0xC4)
+        BRAND_HEX = "6366F1"
+        BRAND = RGBColor(0x63, 0x66, 0xF1)
+        BRAND_LIGHT = RGBColor(0xA5, 0xB4, 0xFC)
+        COVER_BG_HEX = "F8FAFC"
+        COVER_BG = RGBColor(0xF8, 0xFA, 0xFC)
+        CARD_BG_HEX = "F8FAFC"
+        CARD_BG = RGBColor(0xF8, 0xFA, 0xFC)
         WHITE = RGBColor(0xFF, 0xFF, 0xFF)
-        DARK_TEXT = RGBColor(0x11, 0x18, 0x27)
-        BODY_TEXT = RGBColor(0x1F, 0x29, 0x37)
+        NEAR_WHITE = RGBColor(0xF8, 0xFA, 0xFC)
+        DARK_TEXT = RGBColor(0x0F, 0x17, 0x2A)
+        BODY_TEXT = RGBColor(0x1E, 0x29, 0x3B)
         MUTED_TEXT = RGBColor(0x6B, 0x72, 0x80)
-        LIGHT_MUTED = RGBColor(0x9C, 0xA3, 0xAF)
-        DESC_TEXT = RGBColor(0x4B, 0x55, 0x63)
-        ROW_ALT_HEX = "F9FAFB"
-        ROW_BORDER_HEX = "E5E7EB"
+        LIGHT_MUTED = RGBColor(0x94, 0xA3, 0xB8)
+        DESC_TEXT = RGBColor(0x47, 0x55, 0x69)
+        ROW_BORDER_HEX = "E2E8F0"
 
         SEV_COLORS = {
             "critical": RGBColor(0xDC, 0x26, 0x26),
@@ -516,12 +812,19 @@ class ReportGenerator:
         SEV_BG_HEX = {
             "critical": "FEF2F2",
             "high": "FFF7ED",
-            "medium": "FEFCE8",
+            "medium": "FFFBEB",
             "low": "EFF6FF",
-            "info": "F9FAFB",
+            "info": "F8FAFC",
+        }
+        SEV_TEXT_COLORS = {
+            "critical": RGBColor(0x99, 0x1B, 0x1B),
+            "high": RGBColor(0x9A, 0x34, 0x12),
+            "medium": RGBColor(0x85, 0x4D, 0x0E),
+            "low": RGBColor(0x1E, 0x40, 0xAF),
+            "info": RGBColor(0x47, 0x55, 0x69),
         }
         KPI_COLORS_HEX = {
-            "Risk Score": BRAND_HEX,
+            "Risk Score": "6366F1",
             "Security Grade": "059669",
             "Total Assets": "2563EB",
             "Open Findings": "DC2626",
@@ -602,13 +905,13 @@ class ReportGenerator:
                 tbl_pr.remove(existing)
             tbl_pr.append(borders)
 
-        # -- Helper: style a branded header row ----------------------------
+        # -- Helper: style a dark header row (dark bg, light text) -----------
         def _style_header_row(table, headers, col_widths=None):
             hdr_cells = table.rows[0].cells
             for i, h in enumerate(headers):
                 cell = hdr_cells[i]
                 cell.text = ""
-                _shade_cell(cell, BRAND_HEX)
+                _shade_cell(cell, CARD_BG_HEX)
                 _set_cell_valign(cell)
                 _set_cell_margins(cell, top=50, bottom=50, left=80, right=80)
                 if col_widths and i < len(col_widths):
@@ -618,29 +921,26 @@ class ReportGenerator:
                 run = p.add_run(h.upper())
                 run.bold = True
                 run.font.size = Pt(7.5)
-                run.font.color.rgb = WHITE
-                run.font.name = "Calibri"
+                run.font.color.rgb = RGBColor(0x47, 0x55, 0x69)
+                run.font.name = "Inter"
                 p.paragraph_format.space_before = Pt(0)
                 p.paragraph_format.space_after = Pt(0)
 
-        # -- Helper: add an alternating-shaded data row --------------------
+        # -- Helper: add a clean data row (no alternating shading) ----------
         def _add_data_row(table, values, row_idx, font_size=Pt(8),
                           bold_cols=None, color_map=None):
             row_cells = table.add_row().cells
-            is_even = (row_idx % 2 == 0)
             for i, val in enumerate(values):
                 cell = row_cells[i]
                 cell.text = ""
-                if is_even:
-                    _shade_cell(cell, ROW_ALT_HEX)
                 _set_cell_valign(cell)
-                _set_cell_margins(cell, top=35, bottom=35, left=80, right=80)
+                _set_cell_margins(cell, top=40, bottom=40, left=80, right=80)
                 p = cell.paragraphs[0]
                 p.paragraph_format.space_before = Pt(0)
                 p.paragraph_format.space_after = Pt(0)
                 run = p.add_run(str(val))
                 run.font.size = font_size
-                run.font.name = "Calibri"
+                run.font.name = "Inter"
                 run.font.color.rgb = BODY_TEXT
                 if bold_cols and i in bold_cols:
                     run.bold = True
@@ -660,7 +960,7 @@ class ReportGenerator:
                 run = p.add_run(text)
                 run.font.size = size
                 run.font.color.rgb = color
-                run.font.name = "Calibri"
+                run.font.name = "Inter"
                 run.bold = bold
             return p
 
@@ -698,35 +998,25 @@ class ReportGenerator:
         # ==================================================================
         # -- Normal body style
         style_normal = doc.styles["Normal"]
-        style_normal.font.name = "Calibri"
+        style_normal.font.name = "Inter"
         style_normal.font.size = Pt(10)
         style_normal.font.color.rgb = BODY_TEXT
         style_normal.paragraph_format.space_after = Pt(6)
         style_normal.paragraph_format.line_spacing = 1.15
 
-        # -- Heading 1: section headers with brand accent bar
+        # -- Heading 1: section headers with brand color, no border
         h1_style = doc.styles["Heading 1"]
-        h1_style.font.name = "Calibri"
+        h1_style.font.name = "Inter"
         h1_style.font.size = Pt(16)
         h1_style.font.bold = True
-        h1_style.font.color.rgb = DARK_TEXT
-        h1_style.paragraph_format.space_before = Pt(24)
-        h1_style.paragraph_format.space_after = Pt(8)
+        h1_style.font.color.rgb = RGBColor(0x0F, 0x17, 0x2A)
+        h1_style.paragraph_format.space_before = Pt(28)
+        h1_style.paragraph_format.space_after = Pt(10)
         h1_style.paragraph_format.keep_with_next = True
-        # Bottom border on Heading 1
-        pPr = h1_style.element.get_or_add_pPr()
-        pBdr = parse_xml(
-            f'<w:pBdr {nsdecls("w")}>'
-            f'  <w:bottom w:val="single" w:sz="8" w:space="4" w:color="{BRAND_HEX}"/>'
-            f'</w:pBdr>'
-        )
-        for existing in pPr.findall(qn("w:pBdr")):
-            pPr.remove(existing)
-        pPr.append(pBdr)
 
         # -- Heading 2: subsection headers
         h2_style = doc.styles["Heading 2"]
-        h2_style.font.name = "Calibri"
+        h2_style.font.name = "Inter"
         h2_style.font.size = Pt(13)
         h2_style.font.bold = True
         h2_style.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
@@ -736,7 +1026,7 @@ class ReportGenerator:
 
         # -- Heading 3: chart/sub-subsection labels
         h3_style = doc.styles["Heading 3"]
-        h3_style.font.name = "Calibri"
+        h3_style.font.name = "Inter"
         h3_style.font.size = Pt(11)
         h3_style.font.bold = True
         h3_style.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
@@ -768,12 +1058,12 @@ class ReportGenerator:
         run_left = h_para.add_run(f"EASM {subtitle_text}")
         run_left.font.size = Pt(7.5)
         run_left.font.color.rgb = LIGHT_MUTED
-        run_left.font.name = "Calibri"
+        run_left.font.name = "Inter"
         h_para.add_run("  |  ").font.color.rgb = RGBColor(0xD1, 0xD5, 0xDB)
         run_tenant = h_para.add_run(tenant_name)
         run_tenant.font.size = Pt(7.5)
         run_tenant.font.color.rgb = LIGHT_MUTED
-        run_tenant.font.name = "Calibri"
+        run_tenant.font.name = "Inter"
         # Header bottom border
         h_pPr = h_para._p.get_or_add_pPr()
         h_bdr = parse_xml(
@@ -806,14 +1096,14 @@ class ReportGenerator:
         run_conf = f_para.add_run("CONFIDENTIAL")
         run_conf.font.size = Pt(6.5)
         run_conf.font.color.rgb = RGBColor(0xD1, 0xD5, 0xDB)
-        run_conf.font.name = "Calibri"
+        run_conf.font.name = "Inter"
         run_conf.font.all_caps = True
         f_para.add_run("    ").font.size = Pt(6.5)
 
         run_pre = f_para.add_run("Page ")
         run_pre.font.size = Pt(7.5)
         run_pre.font.color.rgb = LIGHT_MUTED
-        run_pre.font.name = "Calibri"
+        run_pre.font.name = "Inter"
         # Insert PAGE field
         fld_char_begin = parse_xml(f'<w:fldChar {nsdecls("w")} w:fldCharType="begin"/>')
         fld_instr = parse_xml(f'<w:instrText {nsdecls("w")} xml:space="preserve"> PAGE </w:instrText>')
@@ -828,7 +1118,7 @@ class ReportGenerator:
         run_of = f_para.add_run(" of ")
         run_of.font.size = Pt(7.5)
         run_of.font.color.rgb = LIGHT_MUTED
-        run_of.font.name = "Calibri"
+        run_of.font.name = "Inter"
         # Insert NUMPAGES field
         fld_char_begin2 = parse_xml(f'<w:fldChar {nsdecls("w")} w:fldCharType="begin"/>')
         fld_instr2 = parse_xml(f'<w:instrText {nsdecls("w")} xml:space="preserve"> NUMPAGES </w:instrText>')
@@ -844,7 +1134,7 @@ class ReportGenerator:
         run_date = f_para.add_run(now_short)
         run_date.font.size = Pt(6.5)
         run_date.font.color.rgb = RGBColor(0xD1, 0xD5, 0xDB)
-        run_date.font.name = "Calibri"
+        run_date.font.name = "Inter"
 
         # -- First page footer: empty (cover page)
         first_footer = section.first_page_footer
@@ -852,119 +1142,111 @@ class ReportGenerator:
         first_footer.paragraphs[0].text = ""
 
         # ==================================================================
-        # COVER PAGE
+        # COVER PAGE (dark theme, PushingTorPod identity)
         # ==================================================================
-        # Top spacer
-        for _ in range(4):
-            sp = doc.add_paragraph()
-            sp.paragraph_format.space_before = Pt(0)
-            sp.paragraph_format.space_after = Pt(0)
+        # Full-page dark cover via a single-cell table
+        cover_tbl = doc.add_table(rows=1, cols=1)
+        cover_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+        _remove_table_borders(cover_tbl)
+        cover_cell = cover_tbl.rows[0].cells[0]
+        _shade_cell(cover_cell, COVER_BG_HEX)
+        _set_cell_margins(cover_cell, top=600, bottom=400, left=400, right=400)
 
-        # Brand accent line (simulated with a narrow colored table)
-        accent_tbl = doc.add_table(rows=1, cols=1)
-        accent_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-        _remove_table_borders(accent_tbl)
-        accent_cell = accent_tbl.rows[0].cells[0]
-        _shade_cell(accent_cell, BRAND_HEX)
-        _set_cell_width(accent_cell, 1.5)
-        accent_cell.text = ""
-        accent_p = accent_cell.paragraphs[0]
-        accent_p.paragraph_format.space_before = Pt(0)
-        accent_p.paragraph_format.space_after = Pt(0)
-        run_spacer = accent_p.add_run(" ")
-        run_spacer.font.size = Pt(3)
-
-        _add_spaced_para(doc, before=16, after=0)
+        # Brand label
+        brand_p = cover_cell.paragraphs[0]
+        brand_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        brand_p.paragraph_format.space_before = Pt(80)
+        brand_p.paragraph_format.space_after = Pt(12)
+        brand_run = brand_p.add_run("PUSHINGTORPOD // EXTERNAL ATTACK SURFACE MANAGEMENT")
+        brand_run.font.size = Pt(7.5)
+        brand_run.font.color.rgb = BRAND
+        brand_run.font.name = "Inter"
+        brand_run.bold = True
 
         # Title
-        title_p = doc.add_paragraph()
-        title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        title_p = cover_cell.add_paragraph()
+        title_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         title_p.paragraph_format.space_before = Pt(0)
         title_p.paragraph_format.space_after = Pt(4)
-        run_t = title_p.add_run("External Attack Surface")
-        run_t.font.size = Pt(32)
-        run_t.font.color.rgb = BRAND
+        run_t = title_p.add_run("Security Assessment")
+        run_t.font.size = Pt(36)
+        run_t.font.color.rgb = DARK_TEXT
         run_t.bold = True
-        run_t.font.name = "Calibri"
-
-        title_p2 = doc.add_paragraph()
-        title_p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        title_p2.paragraph_format.space_before = Pt(0)
-        title_p2.paragraph_format.space_after = Pt(2)
-        run_t2 = title_p2.add_run("Management Report")
-        run_t2.font.size = Pt(32)
-        run_t2.font.color.rgb = BRAND
-        run_t2.bold = True
-        run_t2.font.name = "Calibri"
+        run_t.font.name = "Inter"
 
         # Subtitle (report type)
-        sub_p = doc.add_paragraph()
-        sub_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        sub_p.paragraph_format.space_before = Pt(8)
-        sub_p.paragraph_format.space_after = Pt(20)
+        sub_p = cover_cell.add_paragraph()
+        sub_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        sub_p.paragraph_format.space_before = Pt(4)
+        sub_p.paragraph_format.space_after = Pt(16)
         run_sub = sub_p.add_run(subtitle_text)
         run_sub.font.size = Pt(14)
-        run_sub.font.color.rgb = MUTED_TEXT
-        run_sub.font.name = "Calibri"
+        run_sub.font.color.rgb = BRAND
+        run_sub.font.name = "Inter"
 
-        # Second accent line
-        accent_tbl2 = doc.add_table(rows=1, cols=1)
-        accent_tbl2.alignment = WD_TABLE_ALIGNMENT.CENTER
-        _remove_table_borders(accent_tbl2)
-        accent_cell2 = accent_tbl2.rows[0].cells[0]
-        _shade_cell(accent_cell2, BRAND_HEX)
-        _set_cell_width(accent_cell2, 1.0)
-        accent_cell2.text = ""
-        accent_p2 = accent_cell2.paragraphs[0]
-        accent_p2.paragraph_format.space_before = Pt(0)
-        accent_p2.paragraph_format.space_after = Pt(0)
-        run_spacer2 = accent_p2.add_run(" ")
-        run_spacer2.font.size = Pt(2)
+        # Thin separator line
+        div_p = cover_cell.add_paragraph()
+        div_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        div_p.paragraph_format.space_before = Pt(4)
+        div_p.paragraph_format.space_after = Pt(16)
+        pPr = div_p._p.get_or_add_pPr()
+        pBdr = parse_xml(
+            f'<w:pBdr {nsdecls("w")}>'
+            f'  <w:bottom w:val="single" w:sz="12" w:space="1" w:color="{BRAND_HEX}"/>'
+            f'</w:pBdr>'
+        )
+        pPr.append(pBdr)
 
-        _add_spaced_para(doc, before=20, after=0)
+        # Risk score prominent display
+        score_p = cover_cell.add_paragraph()
+        score_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        score_p.paragraph_format.space_before = Pt(8)
+        score_p.paragraph_format.space_after = Pt(2)
+        score_run = score_p.add_run(f"{data['risk_score']:.0f}")
+        score_run.font.size = Pt(48)
+        score_run.font.color.rgb = DARK_TEXT
+        score_run.bold = True
+        score_run.font.name = "Inter"
+        score_label_p = cover_cell.add_paragraph()
+        score_label_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        score_label_p.paragraph_format.space_before = Pt(0)
+        score_label_p.paragraph_format.space_after = Pt(20)
+        score_label_run = score_label_p.add_run("RISK SCORE / 100")
+        score_label_run.font.size = Pt(8)
+        score_label_run.font.color.rgb = LIGHT_MUTED
+        score_label_run.font.name = "Inter"
+        score_label_run.bold = True
 
-        # Metadata block (borderless table for alignment)
-        meta_tbl = doc.add_table(rows=4, cols=2)
-        meta_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-        _remove_table_borders(meta_tbl)
+        # Metadata lines on dark background
         meta_items = [
-            ("Prepared for:", tenant_name),
-            ("Date:", now_display),
-            ("Report ID:", report_id),
-            ("Classification:", "CONFIDENTIAL"),
+            ("Organization", tenant_name),
+            ("Date", now_display),
+            ("Report ID", report_id),
+            ("Classification", "CONFIDENTIAL"),
         ]
-        for row_idx, (label, value) in enumerate(meta_items):
-            lbl_cell = meta_tbl.rows[row_idx].cells[0]
-            val_cell = meta_tbl.rows[row_idx].cells[1]
-            _set_cell_width(lbl_cell, 1.8)
-            _set_cell_width(val_cell, 3.5)
-
-            lbl_cell.text = ""
-            lbl_p = lbl_cell.paragraphs[0]
-            lbl_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            lbl_p.paragraph_format.space_before = Pt(2)
-            lbl_p.paragraph_format.space_after = Pt(2)
-            lbl_run = lbl_p.add_run(label)
+        for label, value in meta_items:
+            mp = cover_cell.add_paragraph()
+            mp.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            mp.paragraph_format.space_before = Pt(2)
+            mp.paragraph_format.space_after = Pt(2)
+            lbl_run = mp.add_run(f"{label}:  ")
             lbl_run.font.size = Pt(9)
             lbl_run.font.color.rgb = LIGHT_MUTED
-            lbl_run.font.name = "Calibri"
-
-            val_cell.text = ""
-            val_p = val_cell.paragraphs[0]
-            val_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            val_p.paragraph_format.space_before = Pt(2)
-            val_p.paragraph_format.space_after = Pt(2)
-            val_run = val_p.add_run(f"  {value}")
+            lbl_run.font.name = "Inter"
+            val_run = mp.add_run(value)
             val_run.font.size = Pt(9)
-            val_run.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
-            val_run.font.name = "Calibri"
+            val_run.font.color.rgb = DARK_TEXT
+            val_run.font.name = "Inter"
             val_run.bold = True
 
-        _add_spaced_para(doc, before=30, after=0)
+        # Spacer
+        sp = cover_cell.add_paragraph()
+        sp.paragraph_format.space_before = Pt(20)
+        sp.paragraph_format.space_after = Pt(0)
 
         # Confidentiality notice
-        conf_p = doc.add_paragraph()
-        conf_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        conf_p = cover_cell.add_paragraph()
+        conf_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         conf_p.paragraph_format.space_before = Pt(0)
         conf_p.paragraph_format.space_after = Pt(0)
         run_c = conf_p.add_run(
@@ -972,8 +1254,8 @@ class ReportGenerator:
             "Distribution is restricted to authorized recipients only."
         )
         run_c.font.size = Pt(7.5)
-        run_c.font.color.rgb = LIGHT_MUTED
-        run_c.font.name = "Calibri"
+        run_c.font.color.rgb = MUTED_TEXT
+        run_c.font.name = "Inter"
         run_c.italic = True
 
         doc.add_page_break()
@@ -1004,11 +1286,11 @@ class ReportGenerator:
             run_num.font.size = Pt(10) if not is_indent else Pt(9.5)
             run_num.font.color.rgb = BRAND
             run_num.bold = True
-            run_num.font.name = "Calibri"
+            run_num.font.name = "Inter"
             run_lbl = p.add_run(label)
             run_lbl.font.size = Pt(10) if not is_indent else Pt(9.5)
             run_lbl.font.color.rgb = BODY_TEXT if not is_indent else DESC_TEXT
-            run_lbl.font.name = "Calibri"
+            run_lbl.font.name = "Inter"
 
         doc.add_page_break()
 
@@ -1025,11 +1307,11 @@ class ReportGenerator:
             "This report provides an assessment of the external attack surface for "
         )
         r1.font.size = Pt(10)
-        r1.font.name = "Calibri"
+        r1.font.name = "Inter"
         r2 = p.add_run(tenant_name)
         r2.bold = True
         r2.font.size = Pt(10)
-        r2.font.name = "Calibri"
+        r2.font.name = "Inter"
         r3 = p.add_run(
             f". The organization manages {data['total_assets']:,} monitored assets "
             f"with {data['open_findings']:,} open "
@@ -1037,21 +1319,21 @@ class ReportGenerator:
             f"The overall risk score is "
         )
         r3.font.size = Pt(10)
-        r3.font.name = "Calibri"
+        r3.font.name = "Inter"
         r4 = p.add_run(f"{data['risk_score']:.0f}/100")
         r4.bold = True
         r4.font.size = Pt(10)
-        r4.font.name = "Calibri"
+        r4.font.name = "Inter"
         r5 = p.add_run(f" (Grade ")
         r5.font.size = Pt(10)
-        r5.font.name = "Calibri"
+        r5.font.name = "Inter"
         r6 = p.add_run(f"{data['risk_grade']}")
         r6.bold = True
         r6.font.size = Pt(10)
-        r6.font.name = "Calibri"
+        r6.font.name = "Inter"
         r7 = p.add_run(").")
         r7.font.size = Pt(10)
-        r7.font.name = "Calibri"
+        r7.font.name = "Inter"
 
         # -- KPI Summary Cards (4-column table, 2 rows) --------------------
         doc.add_heading("Key Performance Indicators", level=3)
@@ -1067,12 +1349,18 @@ class ReportGenerator:
         _remove_table_borders(kpi_tbl)
 
         for i, (kpi_label, kpi_value, kpi_suffix) in enumerate(kpi_data):
-            # Header cell (label)
+            kpi_color = list(KPI_COLORS_HEX.values())[i]
+            kpi_rgb = RGBColor(
+                int(kpi_color[0:2], 16),
+                int(kpi_color[2:4], 16),
+                int(kpi_color[4:6], 16),
+            )
+
+            # Label cell (dark background, muted text)
             hdr_cell = kpi_tbl.rows[0].cells[i]
-            kpi_hex = list(KPI_COLORS_HEX.values())[i]
-            _shade_cell(hdr_cell, kpi_hex)
+            _shade_cell(hdr_cell, CARD_BG_HEX)
             _set_cell_valign(hdr_cell)
-            _set_cell_margins(hdr_cell, top=50, bottom=50, left=60, right=60)
+            _set_cell_margins(hdr_cell, top=50, bottom=30, left=60, right=60)
             hdr_cell.text = ""
             hp = hdr_cell.paragraphs[0]
             hp.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -1081,14 +1369,14 @@ class ReportGenerator:
             hr = hp.add_run(kpi_label.upper())
             hr.bold = True
             hr.font.size = Pt(7)
-            hr.font.color.rgb = WHITE
-            hr.font.name = "Calibri"
+            hr.font.color.rgb = LIGHT_MUTED
+            hr.font.name = "Inter"
 
-            # Value cell
+            # Value cell (dark background, near-white value)
             val_cell = kpi_tbl.rows[1].cells[i]
-            _shade_cell(val_cell, "F8FAFC")
+            _shade_cell(val_cell, CARD_BG_HEX)
             _set_cell_valign(val_cell)
-            _set_cell_margins(val_cell, top=70, bottom=70, left=60, right=60)
+            _set_cell_margins(val_cell, top=30, bottom=70, left=60, right=60)
             val_cell.text = ""
             vp = val_cell.paragraphs[0]
             vp.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -1098,12 +1386,12 @@ class ReportGenerator:
             vr.bold = True
             vr.font.size = Pt(22)
             vr.font.color.rgb = DARK_TEXT
-            vr.font.name = "Calibri"
+            vr.font.name = "Inter"
             if kpi_suffix:
                 sr = vp.add_run(f" {kpi_suffix}")
                 sr.font.size = Pt(8)
-                sr.font.color.rgb = MUTED_TEXT
-                sr.font.name = "Calibri"
+                sr.font.color.rgb = LIGHT_MUTED
+                sr.font.name = "Inter"
 
         _add_spaced_para(doc, before=10, after=6)
 
@@ -1128,13 +1416,10 @@ class ReportGenerator:
             count = data["severity_counts"].get(sev, 0)
             pct = f"{count / total_findings * 100:.1f}%" if total_findings > 0 else "0.0%"
             row_cells = sev_tbl.add_row().cells
-            is_even = (row_idx % 2 == 0)
 
             for ci, cell in enumerate(row_cells):
-                if is_even:
-                    _shade_cell(cell, ROW_ALT_HEX)
                 _set_cell_valign(cell)
-                _set_cell_margins(cell, top=35, bottom=35, left=80, right=80)
+                _set_cell_margins(cell, top=40, bottom=40, left=80, right=80)
 
             # Severity name with left color indicator
             row_cells[0].text = ""
@@ -1149,7 +1434,7 @@ class ReportGenerator:
             sev_run.bold = True
             sev_run.font.size = Pt(8.5)
             sev_run.font.color.rgb = SEV_COLORS[sev]
-            sev_run.font.name = "Calibri"
+            sev_run.font.name = "Inter"
 
             # Count
             row_cells[1].text = ""
@@ -1160,7 +1445,7 @@ class ReportGenerator:
             cr = cp.add_run(str(count))
             cr.bold = True
             cr.font.size = Pt(9)
-            cr.font.name = "Calibri"
+            cr.font.name = "Inter"
             cr.font.color.rgb = BODY_TEXT
 
             # Percentage
@@ -1171,7 +1456,7 @@ class ReportGenerator:
             pp.paragraph_format.space_after = Pt(0)
             pr = pp.add_run(pct)
             pr.font.size = Pt(9)
-            pr.font.name = "Calibri"
+            pr.font.name = "Inter"
             pr.font.color.rgb = BODY_TEXT
 
             # Risk level label
@@ -1181,16 +1466,23 @@ class ReportGenerator:
             rp.paragraph_format.space_after = Pt(0)
             rr = rp.add_run(risk_labels[sev])
             rr.font.size = Pt(8)
-            rr.font.name = "Calibri"
+            rr.font.name = "Inter"
             rr.italic = True
             rr.font.color.rgb = DESC_TEXT
 
-        # Totals row
+        # Totals row (light top border, no background)
         total_cells = sev_tbl.add_row().cells
         for cell in total_cells:
-            _shade_cell(cell, "E5E7EB")
             _set_cell_valign(cell)
             _set_cell_margins(cell, top=40, bottom=40, left=80, right=80)
+            # Top border for totals separation
+            tc_pr = cell._tc.get_or_add_tcPr()
+            top_bdr = parse_xml(
+                f'<w:tcBorders {nsdecls("w")}>'
+                f'  <w:top w:val="single" w:sz="8" w:space="0" w:color="CBD5E1"/>'
+                f'</w:tcBorders>'
+            )
+            tc_pr.append(top_bdr)
 
         total_cells[0].text = ""
         tp = total_cells[0].paragraphs[0]
@@ -1199,7 +1491,7 @@ class ReportGenerator:
         tr = tp.add_run("TOTAL")
         tr.bold = True
         tr.font.size = Pt(8.5)
-        tr.font.name = "Calibri"
+        tr.font.name = "Inter"
         tr.font.color.rgb = DARK_TEXT
 
         total_cells[1].text = ""
@@ -1210,7 +1502,7 @@ class ReportGenerator:
         tc_r = tc_p.add_run(str(data["total_findings"]))
         tc_r.bold = True
         tc_r.font.size = Pt(9)
-        tc_r.font.name = "Calibri"
+        tc_r.font.name = "Inter"
         tc_r.font.color.rgb = DARK_TEXT
 
         total_cells[2].text = ""
@@ -1221,7 +1513,7 @@ class ReportGenerator:
         tr2 = tp2.add_run("100.0%")
         tr2.bold = True
         tr2.font.size = Pt(9)
-        tr2.font.name = "Calibri"
+        tr2.font.name = "Inter"
         tr2.font.color.rgb = DARK_TEXT
 
         total_cells[3].text = ""
@@ -1312,12 +1604,10 @@ class ReportGenerator:
                     bold_cols={2},
                     color_map={2: sev_color},
                 )
-                # Severity cell background tint
-                _shade_cell(
-                    row_cells[2],
-                    SEV_BG_HEX.get(sev, ROW_ALT_HEX) if idx % 2 != 0
-                    else SEV_BG_HEX.get(sev, ROW_ALT_HEX)
-                )
+                # Severity cell dark background + light text
+                _shade_cell(row_cells[2], SEV_BG_HEX.get(sev, "1E293B"))
+                for run in row_cells[2].paragraphs[0].runs:
+                    run.font.color.rgb = SEV_TEXT_COLORS.get(sev, LIGHT_MUTED)
         else:
             _add_spaced_para(
                 doc,
@@ -1345,10 +1635,10 @@ class ReportGenerator:
             rec_tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
             _remove_table_borders(rec_tbl)
 
-            # Priority badge cell
+            # Priority badge cell (dark, brand indigo text)
             badge_cell = rec_tbl.rows[0].cells[0]
             _set_cell_width(badge_cell, 0.45)
-            _shade_cell(badge_cell, BRAND_HEX)
+            _shade_cell(badge_cell, COVER_BG_HEX)
             _set_cell_valign(badge_cell, "center")
             _set_cell_margins(badge_cell, top=50, bottom=50, left=50, right=50)
             badge_cell.text = ""
@@ -1359,8 +1649,8 @@ class ReportGenerator:
             br_run = bp.add_run(str(rec["priority"]))
             br_run.bold = True
             br_run.font.size = Pt(11)
-            br_run.font.color.rgb = WHITE
-            br_run.font.name = "Calibri"
+            br_run.font.color.rgb = BRAND_LIGHT
+            br_run.font.name = "Inter"
 
             # Content cell
             content_cell = rec_tbl.rows[0].cells[1]
@@ -1378,7 +1668,7 @@ class ReportGenerator:
             title_run.bold = True
             title_run.font.size = Pt(10)
             title_run.font.color.rgb = DARK_TEXT
-            title_run.font.name = "Calibri"
+            title_run.font.name = "Inter"
 
             # Description
             desc_p = content_cell.add_paragraph()
@@ -1387,7 +1677,7 @@ class ReportGenerator:
             desc_run = desc_p.add_run(rec["description"])
             desc_run.font.size = Pt(9)
             desc_run.font.color.rgb = DESC_TEXT
-            desc_run.font.name = "Calibri"
+            desc_run.font.name = "Inter"
 
             # Affected count tag (if nonzero)
             if rec.get("affected_count", 0) > 0:
@@ -1400,7 +1690,7 @@ class ReportGenerator:
                 tag_run.font.size = Pt(7.5)
                 tag_run.font.color.rgb = BRAND
                 tag_run.bold = True
-                tag_run.font.name = "Calibri"
+                tag_run.font.name = "Inter"
 
             # Spacer after each recommendation
             sp = doc.add_paragraph()
@@ -1440,22 +1730,20 @@ class ReportGenerator:
                     if not sev_findings:
                         continue
 
-                    # -- Severity group header (colored banner) ------------
+                    # -- Severity group header (dark banner) ----------------
+                    SEV_BANNER_BG = {
+                        "critical": "7F1D1D",
+                        "high": "7C2D12",
+                        "medium": "713F12",
+                        "low": "1E3A5F",
+                        "info": "334155",
+                    }
                     banner_tbl = doc.add_table(rows=1, cols=1)
                     banner_tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
                     _remove_table_borders(banner_tbl)
                     banner_cell = banner_tbl.rows[0].cells[0]
-                    _shade_cell(banner_cell, SEV_BG_HEX[sev])
+                    _shade_cell(banner_cell, SEV_BANNER_BG.get(sev, "334155"))
                     _set_cell_margins(banner_cell, top=50, bottom=50, left=100, right=80)
-
-                    # Left-border simulation via cell border override
-                    tc_pr = banner_cell._tc.get_or_add_tcPr()
-                    left_border = parse_xml(
-                        f'<w:tcBorders {nsdecls("w")}>'
-                        f'  <w:left w:val="single" w:sz="24" w:space="0" w:color="{SEV_HEX[sev]}"/>'
-                        f'</w:tcBorders>'
-                    )
-                    tc_pr.append(left_border)
 
                     banner_cell.text = ""
                     bp = banner_cell.paragraphs[0]
@@ -1470,21 +1758,21 @@ class ReportGenerator:
                     }
                     icon_run = bp.add_run(f"{sev_icon.get(sev, '')} ")
                     icon_run.font.size = Pt(11)
-                    icon_run.font.color.rgb = SEV_COLORS[sev]
+                    icon_run.font.color.rgb = WHITE
                     sev_title_run = bp.add_run(
                         f"{sev.upper()} SEVERITY"
                     )
                     sev_title_run.bold = True
                     sev_title_run.font.size = Pt(12)
-                    sev_title_run.font.color.rgb = SEV_COLORS[sev]
-                    sev_title_run.font.name = "Calibri"
+                    sev_title_run.font.color.rgb = WHITE
+                    sev_title_run.font.name = "Inter"
                     count_run = bp.add_run(
                         f"  --  {len(sev_findings)} "
                         f"finding{'s' if len(sev_findings) != 1 else ''}"
                     )
                     count_run.font.size = Pt(10)
-                    count_run.font.color.rgb = DESC_TEXT
-                    count_run.font.name = "Calibri"
+                    count_run.font.color.rgb = RGBColor(0xCB, 0xD5, 0xE1)
+                    count_run.font.name = "Inter"
 
                     _add_spaced_para(doc, before=4, after=2)
 
@@ -1511,7 +1799,6 @@ class ReportGenerator:
                             remediation_text = remediation_text[:77] + "..."
 
                         row_cells = t.add_row().cells
-                        is_even = (fidx % 2 == 0)
 
                         values = [
                             str(f["id"]),
@@ -1524,17 +1811,15 @@ class ReportGenerator:
                         ]
 
                         for ci, cell in enumerate(row_cells):
-                            if is_even:
-                                _shade_cell(cell, ROW_ALT_HEX)
                             _set_cell_valign(cell)
-                            _set_cell_margins(cell, top=30, bottom=30, left=60, right=60)
+                            _set_cell_margins(cell, top=35, bottom=35, left=60, right=60)
                             cell.text = ""
                             cp = cell.paragraphs[0]
                             cp.paragraph_format.space_before = Pt(0)
                             cp.paragraph_format.space_after = Pt(0)
                             run = cp.add_run(values[ci])
                             run.font.size = Pt(7.5)
-                            run.font.name = "Calibri"
+                            run.font.name = "Inter"
                             run.font.color.rgb = BODY_TEXT
 
                         # Bold the finding name (col 1)
@@ -1554,10 +1839,10 @@ class ReportGenerator:
 
                         # Highlight occurrence count > 1
                         if occ > 1:
-                            _shade_cell(row_cells[5], SEV_BG_HEX.get(sev, ROW_ALT_HEX))
+                            _shade_cell(row_cells[5], SEV_BG_HEX.get(sev, "1E293B"))
                             for run in row_cells[5].paragraphs[0].runs:
                                 run.bold = True
-                                run.font.color.rgb = SEV_COLORS[sev]
+                                run.font.color.rgb = SEV_TEXT_COLORS.get(sev, LIGHT_MUTED)
                             row_cells[5].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
                     _add_spaced_para(doc, before=8, after=4)
@@ -1582,9 +1867,9 @@ class ReportGenerator:
         end_p.paragraph_format.space_after = Pt(8)
         end_run = end_p.add_run("End of Report")
         end_run.font.size = Pt(14)
-        end_run.font.color.rgb = BRAND
+        end_run.font.color.rgb = BRAND_LIGHT
         end_run.bold = True
-        end_run.font.name = "Calibri"
+        end_run.font.name = "Inter"
 
         _add_divider(doc)
 
@@ -1606,7 +1891,7 @@ class ReportGenerator:
                 dr = dp.add_run(line)
                 dr.font.size = Pt(8)
                 dr.font.color.rgb = LIGHT_MUTED
-                dr.font.name = "Calibri"
+                dr.font.name = "Inter"
                 dr.italic = True
 
         # ==================================================================
