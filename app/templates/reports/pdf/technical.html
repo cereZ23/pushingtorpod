@@ -19,36 +19,47 @@
      COVER PAGE
      ======================================================================== -->
 <div class="cover">
-    <!-- Indigo vertical spine -- brand signature -->
-    <div class="cover-spine"></div>
+    <!-- Top accent line -->
+    <div class="cover-accent-line-top"></div>
 
-    <!-- Subtle circuit-board grid pattern -->
+    <!-- Node-mesh network topology pattern -->
     <svg class="cover-grid" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 800" preserveAspectRatio="xMidYMid slice">
-        <defs>
-            <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#6366F1" stroke-width="0.5"/>
-            </pattern>
-        </defs>
-        <rect width="100%" height="100%" fill="url(#grid)"/>
-        <circle cx="120" cy="160" r="3" fill="#6366F1"/>
-        <circle cx="280" cy="80" r="2" fill="#6366F1"/>
-        <circle cx="400" cy="240" r="3" fill="#6366F1"/>
-        <circle cx="200" cy="400" r="2" fill="#6366F1"/>
-        <circle cx="480" cy="360" r="3" fill="#6366F1"/>
-        <circle cx="320" cy="560" r="2" fill="#6366F1"/>
-        <circle cx="160" cy="680" r="3" fill="#6366F1"/>
-        <circle cx="440" cy="640" r="2" fill="#6366F1"/>
-        <line x1="120" y1="160" x2="280" y2="80" stroke="#6366F1" stroke-width="0.5"/>
-        <line x1="280" y1="80" x2="400" y2="240" stroke="#6366F1" stroke-width="0.5"/>
-        <line x1="200" y1="400" x2="480" y2="360" stroke="#6366F1" stroke-width="0.5"/>
-        <line x1="320" y1="560" x2="440" y2="640" stroke="#6366F1" stroke-width="0.5"/>
+        <circle cx="80" cy="120" r="3" fill="#6366F1"/><circle cx="220" cy="60" r="2.5" fill="#818CF8"/>
+        <circle cx="380" cy="140" r="3" fill="#6366F1"/><circle cx="520" cy="80" r="2" fill="#818CF8"/>
+        <circle cx="150" cy="280" r="2.5" fill="#6366F1"/><circle cx="340" cy="320" r="3" fill="#818CF8"/>
+        <circle cx="480" cy="260" r="2" fill="#6366F1"/><circle cx="100" cy="460" r="3" fill="#818CF8"/>
+        <circle cx="260" cy="500" r="2.5" fill="#6366F1"/><circle cx="440" cy="440" r="2" fill="#818CF8"/>
+        <circle cx="560" cy="520" r="3" fill="#6366F1"/><circle cx="180" cy="660" r="2" fill="#6366F1"/>
+        <circle cx="360" cy="700" r="3" fill="#818CF8"/><circle cx="500" cy="680" r="2.5" fill="#6366F1"/>
+        <line x1="80" y1="120" x2="220" y2="60" stroke="#6366F1" stroke-width="0.6"/>
+        <line x1="220" y1="60" x2="380" y2="140" stroke="#818CF8" stroke-width="0.5"/>
+        <line x1="380" y1="140" x2="520" y2="80" stroke="#6366F1" stroke-width="0.4"/>
+        <line x1="80" y1="120" x2="150" y2="280" stroke="#818CF8" stroke-width="0.5"/>
+        <line x1="150" y1="280" x2="340" y2="320" stroke="#6366F1" stroke-width="0.6"/>
+        <line x1="340" y1="320" x2="480" y2="260" stroke="#818CF8" stroke-width="0.4"/>
+        <line x1="380" y1="140" x2="340" y2="320" stroke="#6366F1" stroke-width="0.5"/>
+        <line x1="100" y1="460" x2="260" y2="500" stroke="#818CF8" stroke-width="0.6"/>
+        <line x1="260" y1="500" x2="440" y2="440" stroke="#6366F1" stroke-width="0.5"/>
+        <line x1="440" y1="440" x2="560" y2="520" stroke="#818CF8" stroke-width="0.4"/>
+        <line x1="150" y1="280" x2="100" y2="460" stroke="#6366F1" stroke-width="0.5"/>
+        <line x1="180" y1="660" x2="360" y2="700" stroke="#818CF8" stroke-width="0.6"/>
+        <line x1="360" y1="700" x2="500" y2="680" stroke="#6366F1" stroke-width="0.5"/>
+        <line x1="260" y1="500" x2="180" y2="660" stroke="#818CF8" stroke-width="0.4"/>
+        <line x1="560" y1="520" x2="500" y2="680" stroke="#6366F1" stroke-width="0.5"/>
     </svg>
 
     <!-- TLP banner -->
     <div class="cover-tlp tlp-amber">TLP:AMBER &mdash; Limited Distribution</div>
 
+    <!-- Risk grade hero watermark -->
+    <div class="cover-risk-hero">{{ risk_grade }}</div>
+
+    <!-- Bottom accent line -->
+    <div class="cover-accent-line-bottom"></div>
+
     <div class="cover-content">
         <div class="cover-brand">PUSHINGTORPOD</div>
+        <div class="cover-brand-sub">External Attack Surface Management</div>
         <h1>Technical<br>Assessment</h1>
         <p class="cover-subtitle">Detailed Findings Report</p>
         <div class="cover-divider"></div>
@@ -102,7 +113,7 @@
         <div class="toc-item"><a href="#detailed-findings">5. Detailed Findings</a></div>
         {% for sev in severity_order %}
         {% if grouped_findings.get(sev) %}
-        <div class="toc-item toc-sub"><a href="#findings-{{ sev }}">5.{{ loop.index }} {{ sev|capitalize }} Severity ({{ grouped_findings[sev]|length }})</a></div>
+        <div class="toc-item toc-sub"><a href="#findings-{{ sev }}">5.{{ loop.index }} {{ sev|capitalize }} ({{ grouped_findings[sev]|length }} type{{ "s" if grouped_findings[sev]|length != 1 else "" }})</a></div>
         {% endif %}
         {% endfor %}
     </div>
@@ -112,7 +123,7 @@
      1. EXECUTIVE SUMMARY
      ======================================================================== -->
 <h2 id="executive-summary"><span class="section-number">1</span> Executive Summary</h2>
-<div class="section-rule"></div>
+<div class="section-rule"><svg xmlns="http://www.w3.org/2000/svg" width="120" height="16" viewBox="0 0 120 16"><circle cx="4" cy="8" r="2.5" fill="#6366F1" opacity="0.4"/><circle cx="30" cy="4" r="2" fill="#818CF8" opacity="0.3"/><circle cx="58" cy="10" r="2.5" fill="#6366F1" opacity="0.4"/><circle cx="86" cy="6" r="2" fill="#818CF8" opacity="0.3"/><circle cx="114" cy="8" r="2.5" fill="#6366F1" opacity="0.4"/><line x1="4" y1="8" x2="30" y2="4" stroke="#6366F1" stroke-width="1" opacity="0.25"/><line x1="30" y1="4" x2="58" y2="10" stroke="#818CF8" stroke-width="1" opacity="0.25"/><line x1="58" y1="10" x2="86" y2="6" stroke="#6366F1" stroke-width="1" opacity="0.25"/><line x1="86" y1="6" x2="114" y2="8" stroke="#818CF8" stroke-width="1" opacity="0.25"/></svg></div>
 
 <div class="kpi-grid">
     <div class="kpi-card accent-risk">
@@ -164,7 +175,7 @@
      2. RISK OVERVIEW
      ======================================================================== -->
 <h2 id="risk-overview"><span class="section-number">2</span> Risk Overview</h2>
-<div class="section-rule"></div>
+<div class="section-rule"><svg xmlns="http://www.w3.org/2000/svg" width="120" height="16" viewBox="0 0 120 16"><circle cx="4" cy="8" r="2.5" fill="#6366F1" opacity="0.4"/><circle cx="30" cy="4" r="2" fill="#818CF8" opacity="0.3"/><circle cx="58" cy="10" r="2.5" fill="#6366F1" opacity="0.4"/><circle cx="86" cy="6" r="2" fill="#818CF8" opacity="0.3"/><circle cx="114" cy="8" r="2.5" fill="#6366F1" opacity="0.4"/><line x1="4" y1="8" x2="30" y2="4" stroke="#6366F1" stroke-width="1" opacity="0.25"/><line x1="30" y1="4" x2="58" y2="10" stroke="#818CF8" stroke-width="1" opacity="0.25"/><line x1="58" y1="10" x2="86" y2="6" stroke="#6366F1" stroke-width="1" opacity="0.25"/><line x1="86" y1="6" x2="114" y2="8" stroke="#818CF8" stroke-width="1" opacity="0.25"/></svg></div>
 
 <div class="chart-row">
     <div class="chart-box">
@@ -229,7 +240,7 @@
      3. TOP ISSUES
      ======================================================================== -->
 <h2 id="top-issues"><span class="section-number">3</span> Top Issues</h2>
-<div class="section-rule"></div>
+<div class="section-rule"><svg xmlns="http://www.w3.org/2000/svg" width="120" height="16" viewBox="0 0 120 16"><circle cx="4" cy="8" r="2.5" fill="#6366F1" opacity="0.4"/><circle cx="30" cy="4" r="2" fill="#818CF8" opacity="0.3"/><circle cx="58" cy="10" r="2.5" fill="#6366F1" opacity="0.4"/><circle cx="86" cy="6" r="2" fill="#818CF8" opacity="0.3"/><circle cx="114" cy="8" r="2.5" fill="#6366F1" opacity="0.4"/><line x1="4" y1="8" x2="30" y2="4" stroke="#6366F1" stroke-width="1" opacity="0.25"/><line x1="30" y1="4" x2="58" y2="10" stroke="#818CF8" stroke-width="1" opacity="0.25"/><line x1="58" y1="10" x2="86" y2="6" stroke="#6366F1" stroke-width="1" opacity="0.25"/><line x1="86" y1="6" x2="114" y2="8" stroke="#818CF8" stroke-width="1" opacity="0.25"/></svg></div>
 
 {% if top_issues %}
 <p class="section-intro">
@@ -242,7 +253,7 @@
             <th style="width: 4%; text-align: center">#</th>
             <th style="width: 26%">Finding</th>
             <th style="width: 10%">Severity</th>
-            <th style="width: 12%">CVE</th>
+            <th style="width: 12%">CVE / ID</th>
             <th style="width: 7%" class="text-right">CVSS</th>
             <th style="width: 27%">Affected Asset</th>
             <th style="width: 14%">First Seen</th>
@@ -254,8 +265,8 @@
             <td class="rank-cell" style="text-align: center">{{ loop.index }}</td>
             <td style="font-weight: 600; color: #1E293B">{{ issue.name }}</td>
             <td><span class="badge badge-{{ issue.severity }}">{{ issue.severity|upper }}</span></td>
-            <td style="font-size: 8pt; font-weight: 700; color: #991B1B">{{ issue.cve_id if issue.cve_id else "&mdash;" }}</td>
-            <td class="text-right" style="font-weight: 700; color: #475569">{{ "%.1f"|format(issue.cvss_score) if issue.cvss_score else "&mdash;" }}</td>
+            <td style="font-size: 8pt; font-weight: 700; color: {{ '#991B1B' if issue.cve_id else '#64748B' }}">{{ issue.cve_id if issue.cve_id else (issue.template_id.split(':')[0] if issue.template_id and ':' in issue.template_id else (issue.template_id or "N/A")) }}</td>
+            <td class="text-right" style="font-weight: 700; color: #475569">{{ "%.1f"|format(issue.cvss_score) if issue.cvss_score else "N/A" }}</td>
             <td class="asset-cell">{{ issue.asset_identifier }}</td>
             <td style="font-size: 8pt; color: #64748B">{{ issue.first_seen }}</td>
         </tr>
@@ -273,7 +284,7 @@
      4. RECOMMENDATIONS
      ======================================================================== -->
 <h2 id="recommendations"><span class="section-number">4</span> Recommendations</h2>
-<div class="section-rule"></div>
+<div class="section-rule"><svg xmlns="http://www.w3.org/2000/svg" width="120" height="16" viewBox="0 0 120 16"><circle cx="4" cy="8" r="2.5" fill="#6366F1" opacity="0.4"/><circle cx="30" cy="4" r="2" fill="#818CF8" opacity="0.3"/><circle cx="58" cy="10" r="2.5" fill="#6366F1" opacity="0.4"/><circle cx="86" cy="6" r="2" fill="#818CF8" opacity="0.3"/><circle cx="114" cy="8" r="2.5" fill="#6366F1" opacity="0.4"/><line x1="4" y1="8" x2="30" y2="4" stroke="#6366F1" stroke-width="1" opacity="0.25"/><line x1="30" y1="4" x2="58" y2="10" stroke="#818CF8" stroke-width="1" opacity="0.25"/><line x1="58" y1="10" x2="86" y2="6" stroke="#6366F1" stroke-width="1" opacity="0.25"/><line x1="86" y1="6" x2="114" y2="8" stroke="#818CF8" stroke-width="1" opacity="0.25"/></svg></div>
 
 <p class="section-intro">
     Prioritized remediation recommendations based on current findings.
@@ -296,7 +307,7 @@
      ======================================================================== -->
 <div class="page-break"></div>
 <h2 id="detailed-findings"><span class="section-number">5</span> Detailed Findings ({{ findings|length }})</h2>
-<div class="section-rule"></div>
+<div class="section-rule"><svg xmlns="http://www.w3.org/2000/svg" width="120" height="16" viewBox="0 0 120 16"><circle cx="4" cy="8" r="2.5" fill="#6366F1" opacity="0.4"/><circle cx="30" cy="4" r="2" fill="#818CF8" opacity="0.3"/><circle cx="58" cy="10" r="2.5" fill="#6366F1" opacity="0.4"/><circle cx="86" cy="6" r="2" fill="#818CF8" opacity="0.3"/><circle cx="114" cy="8" r="2.5" fill="#6366F1" opacity="0.4"/><line x1="4" y1="8" x2="30" y2="4" stroke="#6366F1" stroke-width="1" opacity="0.25"/><line x1="30" y1="4" x2="58" y2="10" stroke="#818CF8" stroke-width="1" opacity="0.25"/><line x1="58" y1="10" x2="86" y2="6" stroke="#6366F1" stroke-width="1" opacity="0.25"/><line x1="86" y1="6" x2="114" y2="8" stroke="#818CF8" stroke-width="1" opacity="0.25"/></svg></div>
 
 {% if findings %}
 
@@ -312,7 +323,7 @@
 <div class="severity-group">
     <div class="severity-group-header sev-{{ sev }}" id="findings-{{ sev }}">
         <span>{{ sev|capitalize }} Severity</span>
-        <span class="sev-count">&mdash; {{ sev_findings|length }} finding{{ "s" if sev_findings|length != 1 else "" }}</span>
+        <span class="sev-count">&middot; {{ sev_findings|length }} finding type{{ "s" if sev_findings|length != 1 else "" }}</span>
     </div>
 </div>
 
@@ -320,25 +331,18 @@
 <div class="finding-card sev-{{ f.severity }}">
     <div class="finding-card-body">
 
-        <!-- Header row: title + badge + CVSS -->
+        <!-- Header row: title + badge + CVSS + asset count -->
         <div class="finding-header">
             <span class="finding-title">{{ f.name }}</span>
             <span class="badge badge-{{ f.severity }}">{{ f.severity|upper }}</span>
             {% if f.cvss_score %}
             <span class="finding-cvss {% if f.cvss_score >= 9.0 %}cvss-critical{% elif f.cvss_score >= 7.0 %}cvss-high{% elif f.cvss_score >= 4.0 %}cvss-medium{% elif f.cvss_score > 0 %}cvss-low{% else %}cvss-none{% endif %}">CVSS {{ "%.1f"|format(f.cvss_score) }}</span>
             {% endif %}
+            <span style="font-size: 7.5pt; color: #64748B; margin-left: auto;">{{ f.affected_assets|length }} asset{{ "s" if f.affected_assets|length != 1 else "" }}</span>
         </div>
 
-        <!-- Structured metadata grid -->
+        <!-- Compact metadata row -->
         <div class="finding-meta">
-            <div class="meta-item">
-                <span class="meta-label">Asset</span>
-                <span class="meta-value">{{ f.asset_identifier }}</span>
-            </div>
-            <div class="meta-item">
-                <span class="meta-label">Asset Type</span>
-                <span class="meta-value">{{ f.asset_type }}</span>
-            </div>
             {% if f.cve_id %}
             <div class="meta-item">
                 <span class="meta-label">CVE</span>
@@ -355,35 +359,17 @@
                 <span class="meta-label">Source</span>
                 <span class="meta-value">{{ f.source }}</span>
             </div>
-            <div class="meta-item">
-                <span class="meta-label">Status</span>
-                <span class="meta-value"><span class="badge badge-{{ f.status }}">{{ f.status|upper }}</span></span>
-            </div>
-            <div class="meta-item">
-                <span class="meta-label">First Seen</span>
-                <span class="meta-value">{{ f.first_seen }}</span>
-            </div>
-            <div class="meta-item">
-                <span class="meta-label">Last Seen</span>
-                <span class="meta-value">{{ f.last_seen }}</span>
-            </div>
-            {% if f.occurrence_count and f.occurrence_count > 1 %}
-            <div class="meta-item">
-                <span class="meta-label">Occurrences</span>
-                <span class="meta-value" style="font-weight: 700">{{ f.occurrence_count }}</span>
-            </div>
-            {% endif %}
         </div>
 
-        <!-- Evidence block -->
+        <!-- Evidence block (show once per finding type) -->
         {% if f.evidence %}
         <div class="finding-section">
-            <div class="section-label">Evidence</div>
+            <div class="section-label">Evidence (sample)</div>
             <div class="evidence-block">{{ f.evidence_text }}</div>
         </div>
         {% endif %}
 
-        <!-- Remediation block -->
+        <!-- Remediation block (show once per finding type) -->
         {% if f.remediation %}
         <div class="finding-section">
             <div class="section-label">Remediation</div>
@@ -392,6 +378,40 @@
             </div>
         </div>
         {% endif %}
+
+        <!-- Affected assets table -->
+        {% set max_assets = 15 %}
+        {% set total_assets = f.affected_assets|length %}
+        <div class="finding-section">
+            <div class="section-label">Affected Assets ({{ total_assets }})</div>
+            <table class="affected-assets-table">
+                <thead>
+                    <tr>
+                        <th style="width: 50%">Asset</th>
+                        <th style="width: 15%">Type</th>
+                        <th style="width: 12%">Status</th>
+                        <th style="width: 23%">Last Seen</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for a in f.affected_assets[:max_assets] %}
+                    <tr>
+                        <td style="font-family: 'Inter', 'Liberation Mono', monospace; font-size: 7.5pt">{{ a.identifier }}</td>
+                        <td>{{ a.asset_type }}</td>
+                        <td><span class="badge badge-{{ a.status }}">{{ a.status|upper }}</span></td>
+                        <td>{{ a.last_seen }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% if total_assets > max_assets %}
+                    <tr>
+                        <td colspan="4" style="text-align: center; font-style: italic; color: #94A3B8; padding: 6px">
+                            ... and {{ total_assets - max_assets }} more affected asset{{ "s" if (total_assets - max_assets) != 1 else "" }}. See platform for full list.
+                        </td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
 
     </div>
 </div>

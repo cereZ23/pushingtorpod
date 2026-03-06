@@ -323,6 +323,7 @@ def run_httpx(tenant_id: int, asset_ids: List[int]):
                     '-tech-detect',             # Detect technologies (safe in v1.6.8)
                     '-response-time',           # Include response time
                     '-content-length',          # Include content length
+                    '-include-response-header',  # Include HTTP response headers
                     '-follow-redirects',        # Follow redirects
                     '-max-redirects', '3',      # Limit redirects
                     '-no-color',                # Disable colors
@@ -1029,9 +1030,15 @@ def run_tlsx(tenant_id: int, asset_ids: List[int]):
                         except (ValueError, TypeError):
                             port_num = 443
 
+                        # Map well-known TLS ports to their actual protocol
+                        _TLS_PORT_PROTOCOLS = {
+                            25: 'smtp', 110: 'pop3', 143: 'imap',
+                            465: 'smtps', 587: 'smtp', 993: 'imaps',
+                            995: 'pop3s', 443: 'https', 8443: 'https',
+                        }
                         tls_service_data = [{
                             'port': port_num,
-                            'protocol': 'https',
+                            'protocol': _TLS_PORT_PROTOCOLS.get(port_num, 'https'),
                             'has_tls': True,
                             'tls_version': cert_data.get('tls_version', ''),
                             'tls_fingerprint': cert_data.get('tls_fingerprint', ''),

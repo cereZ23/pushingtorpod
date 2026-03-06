@@ -49,6 +49,8 @@ class TopIssueItem(BaseModel):
     name: str = Field(..., description="Finding name")
     severity: str = Field(..., description="Severity level")
     cvss_score: Optional[float] = Field(None, description="CVSS score")
+    cve_id: Optional[str] = Field(None, description="CVE identifier")
+    template_id: Optional[str] = Field(None, description="Scanner template ID")
     asset_identifier: str = Field(..., description="Affected asset identifier")
     first_seen: datetime = Field(..., description="When the finding was first observed")
 
@@ -449,13 +451,18 @@ def generate_executive_report(
             Finding.status == FindingStatus.OPEN,
         )
         .order_by(Finding.severity.desc(), Finding.cvss_score.desc().nullslast())
-        .limit(50)
+        .limit(200)
         .all()
     )
 
-    # Sort in Python using severity weights + CVSS
+    # Sort in Python using severity weights + CVSS, dedup by name+asset
     scored_issues = []
+    seen_keys: set[str] = set()
     for finding, asset_identifier in top_findings_query:
+        dedup_key = f"{finding.name}|{asset_identifier}"
+        if dedup_key in seen_keys:
+            continue
+        seen_keys.add(dedup_key)
         weight = SEVERITY_WEIGHT.get(finding.severity.value, 0)
         cvss = finding.cvss_score or 0.0
         scored_issues.append((weight + cvss, finding, asset_identifier))
@@ -468,6 +475,8 @@ def generate_executive_report(
             name=finding.name,
             severity=finding.severity.value,
             cvss_score=finding.cvss_score,
+            cve_id=finding.cve_id,
+            template_id=finding.template_id,
             asset_identifier=asset_identifier,
             first_seen=finding.first_seen,
         )

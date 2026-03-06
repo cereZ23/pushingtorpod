@@ -168,12 +168,17 @@ def run_scan_pipeline(self, scan_run_id: int):
             _update_scan_run(db, scan_run_id, ScanRunStatus.FAILED, error='Project not found')
             return {'error': 'Project not found'}
 
-        # Determine scan tier from profile (default: 1=Safe)
+        # Determine scan tier from profile or stats config (default: 1=Safe)
         scan_tier = 1
         if scan_run.profile_id:
             profile = db.query(ScanProfile).filter(ScanProfile.id == scan_run.profile_id).first()
             if profile:
                 scan_tier = profile.scan_tier or 1
+        # Allow override via stats.config.tier (for manual/API-triggered scans)
+        if scan_run.stats and isinstance(scan_run.stats, dict):
+            config_tier = scan_run.stats.get('config', {}).get('tier')
+            if config_tier in (1, 2, 3):
+                scan_tier = config_tier
 
         # Update celery task id
         scan_run.celery_task_id = self.request.id

@@ -401,7 +401,10 @@ class ReportGenerator:
         query = (
             db.query(Finding, Asset.identifier, Asset.type)
             .join(Asset)
-            .filter(Asset.tenant_id == self.tenant_id)
+            .filter(
+                Asset.tenant_id == self.tenant_id,
+                Asset.is_active.is_(True),
+            )
         )
 
         if severity:
@@ -415,6 +418,9 @@ class ReportGenerator:
                 query = query.filter(Finding.status == FindingStatus(finding_status))
             except ValueError:
                 pass
+        else:
+            # Default: only open findings (exclude fixed/suppressed)
+            query = query.filter(Finding.status == FindingStatus.OPEN)
 
         results = (
             query.order_by(
@@ -703,13 +709,34 @@ class ReportGenerator:
             for f in findings:
                 f["evidence_text"] = _format_evidence(f.get("evidence"))
             context["findings"] = findings
-            # Group findings by severity for card-based rendering
+            # Group findings by name+severity → one card per finding type
+            # with a compact list of affected assets underneath
             severity_order = ["critical", "high", "medium", "low", "info"]
             grouped: Dict[str, List] = {s: [] for s in severity_order}
+            seen_groups: Dict[str, Dict] = {}  # key → group dict
             for f in findings:
                 sev = f.get("severity", "info")
-                if sev in grouped:
-                    grouped[sev].append(f)
+                group_key = f"{sev}|{f.get('name', '')}"
+                if group_key in seen_groups:
+                    seen_groups[group_key]["affected_assets"].append({
+                        "identifier": f["asset_identifier"],
+                        "asset_type": f.get("asset_type", "unknown"),
+                        "first_seen": f.get("first_seen", "-"),
+                        "last_seen": f.get("last_seen", "-"),
+                        "status": f.get("status", "open"),
+                    })
+                else:
+                    group = dict(f)
+                    group["affected_assets"] = [{
+                        "identifier": f["asset_identifier"],
+                        "asset_type": f.get("asset_type", "unknown"),
+                        "first_seen": f.get("first_seen", "-"),
+                        "last_seen": f.get("last_seen", "-"),
+                        "status": f.get("status", "open"),
+                    }]
+                    seen_groups[group_key] = group
+                    if sev in grouped:
+                        grouped[sev].append(group)
             context["severity_order"] = severity_order
             context["grouped_findings"] = grouped
 
@@ -781,11 +808,11 @@ class ReportGenerator:
         # -- Color palette -------------------------------------------------
         BRAND_HEX = "6366F1"
         BRAND = RGBColor(0x63, 0x66, 0xF1)
-        BRAND_LIGHT = RGBColor(0xA5, 0xB4, 0xFC)
-        COVER_BG_HEX = "F8FAFC"
-        COVER_BG = RGBColor(0xF8, 0xFA, 0xFC)
-        CARD_BG_HEX = "F8FAFC"
-        CARD_BG = RGBColor(0xF8, 0xFA, 0xFC)
+        BRAND_LIGHT = RGBColor(0x81, 0x8C, 0xF8)
+        COVER_BG_HEX = "0F172A"
+        COVER_BG = RGBColor(0x0F, 0x17, 0x2A)
+        CARD_BG_HEX = "1E293B"
+        CARD_BG = RGBColor(0x1E, 0x29, 0x3B)
         WHITE = RGBColor(0xFF, 0xFF, 0xFF)
         NEAR_WHITE = RGBColor(0xF8, 0xFA, 0xFC)
         DARK_TEXT = RGBColor(0x0F, 0x17, 0x2A)
@@ -810,18 +837,18 @@ class ReportGenerator:
             "info": "6B7280",
         }
         SEV_BG_HEX = {
-            "critical": "FEF2F2",
-            "high": "FFF7ED",
-            "medium": "FFFBEB",
-            "low": "EFF6FF",
-            "info": "F8FAFC",
+            "critical": "450A0A",
+            "high": "431407",
+            "medium": "422006",
+            "low": "172554",
+            "info": "1E293B",
         }
         SEV_TEXT_COLORS = {
-            "critical": RGBColor(0x99, 0x1B, 0x1B),
-            "high": RGBColor(0x9A, 0x34, 0x12),
-            "medium": RGBColor(0x85, 0x4D, 0x0E),
-            "low": RGBColor(0x1E, 0x40, 0xAF),
-            "info": RGBColor(0x47, 0x55, 0x69),
+            "critical": RGBColor(0xFC, 0xA5, 0xA5),
+            "high": RGBColor(0xFD, 0xBA, 0x74),
+            "medium": RGBColor(0xFD, 0xE6, 0x8A),
+            "low": RGBColor(0x93, 0xC5, 0xFD),
+            "info": RGBColor(0x94, 0xA3, 0xB8),
         }
         KPI_COLORS_HEX = {
             "Risk Score": "6366F1",
@@ -1156,12 +1183,22 @@ class ReportGenerator:
         brand_p = cover_cell.paragraphs[0]
         brand_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         brand_p.paragraph_format.space_before = Pt(80)
-        brand_p.paragraph_format.space_after = Pt(12)
-        brand_run = brand_p.add_run("PUSHINGTORPOD // EXTERNAL ATTACK SURFACE MANAGEMENT")
+        brand_p.paragraph_format.space_after = Pt(4)
+        brand_run = brand_p.add_run("PUSHINGTORPOD")
         brand_run.font.size = Pt(7.5)
-        brand_run.font.color.rgb = BRAND
+        brand_run.font.color.rgb = BRAND_LIGHT
         brand_run.font.name = "Inter"
         brand_run.bold = True
+
+        # Brand sub-label
+        brand_sub_p = cover_cell.add_paragraph()
+        brand_sub_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        brand_sub_p.paragraph_format.space_before = Pt(0)
+        brand_sub_p.paragraph_format.space_after = Pt(12)
+        brand_sub_run = brand_sub_p.add_run("External Attack Surface Management")
+        brand_sub_run.font.size = Pt(6.5)
+        brand_sub_run.font.color.rgb = RGBColor(0x64, 0x74, 0x8B)
+        brand_sub_run.font.name = "Inter"
 
         # Title
         title_p = cover_cell.add_paragraph()
@@ -1170,7 +1207,7 @@ class ReportGenerator:
         title_p.paragraph_format.space_after = Pt(4)
         run_t = title_p.add_run("Security Assessment")
         run_t.font.size = Pt(36)
-        run_t.font.color.rgb = DARK_TEXT
+        run_t.font.color.rgb = NEAR_WHITE
         run_t.bold = True
         run_t.font.name = "Inter"
 
@@ -1181,7 +1218,7 @@ class ReportGenerator:
         sub_p.paragraph_format.space_after = Pt(16)
         run_sub = sub_p.add_run(subtitle_text)
         run_sub.font.size = Pt(14)
-        run_sub.font.color.rgb = BRAND
+        run_sub.font.color.rgb = BRAND_LIGHT
         run_sub.font.name = "Inter"
 
         # Thin separator line
@@ -1204,7 +1241,7 @@ class ReportGenerator:
         score_p.paragraph_format.space_after = Pt(2)
         score_run = score_p.add_run(f"{data['risk_score']:.0f}")
         score_run.font.size = Pt(48)
-        score_run.font.color.rgb = DARK_TEXT
+        score_run.font.color.rgb = NEAR_WHITE
         score_run.bold = True
         score_run.font.name = "Inter"
         score_label_p = cover_cell.add_paragraph()
@@ -1231,11 +1268,11 @@ class ReportGenerator:
             mp.paragraph_format.space_after = Pt(2)
             lbl_run = mp.add_run(f"{label}:  ")
             lbl_run.font.size = Pt(9)
-            lbl_run.font.color.rgb = LIGHT_MUTED
+            lbl_run.font.color.rgb = RGBColor(0x64, 0x74, 0x8B)
             lbl_run.font.name = "Inter"
             val_run = mp.add_run(value)
             val_run.font.size = Pt(9)
-            val_run.font.color.rgb = DARK_TEXT
+            val_run.font.color.rgb = RGBColor(0xE2, 0xE8, 0xF0)
             val_run.font.name = "Inter"
             val_run.bold = True
 
@@ -1385,7 +1422,7 @@ class ReportGenerator:
             vr = vp.add_run(kpi_value)
             vr.bold = True
             vr.font.size = Pt(22)
-            vr.font.color.rgb = DARK_TEXT
+            vr.font.color.rgb = NEAR_WHITE
             vr.font.name = "Inter"
             if kpi_suffix:
                 sr = vp.add_run(f" {kpi_suffix}")
@@ -1638,7 +1675,7 @@ class ReportGenerator:
             # Priority badge cell (dark, brand indigo text)
             badge_cell = rec_tbl.rows[0].cells[0]
             _set_cell_width(badge_cell, 0.45)
-            _shade_cell(badge_cell, COVER_BG_HEX)
+            _shade_cell(badge_cell, "0F172A")
             _set_cell_valign(badge_cell, "center")
             _set_cell_margins(badge_cell, top=50, bottom=50, left=50, right=50)
             badge_cell.text = ""

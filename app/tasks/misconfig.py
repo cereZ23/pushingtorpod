@@ -21,7 +21,8 @@ Categories and control IDs:
 import logging
 import json
 import re
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from app.celery_app import celery
@@ -92,6 +93,37 @@ def get_registered_controls() -> dict[str, dict[str, Any]]:
 # Helper utilities
 # ---------------------------------------------------------------------------
 
+# Ports that are NOT HTTP/HTTPS web services (should not trigger header checks)
+_NON_HTTP_PORTS: set[int] = {
+    25, 110, 143, 465, 587, 993, 995,  # mail protocols
+    21, 22, 53, 123, 389, 636, 3306, 5432,  # FTP, SSH, DNS, NTP, LDAP, DB
+}
+
+# Common HTTP/HTTPS ports — run header checks even if http_status is NULL
+_HTTP_PORTS: set[int] = {80, 443, 8080, 8443}
+
+# Protocols that indicate non-web services
+_NON_HTTP_PROTOCOLS: set[str] = {
+    'smtp', 'smtps', 'imap', 'imaps', 'pop3', 'pop3s',
+    'ftp', 'ssh', 'dns', 'ldap', 'ldaps', 'mysql', 'postgres',
+}
+
+
+def _is_web_service(service: Service) -> bool:
+    """Return True if the service is an HTTP/HTTPS web service.
+
+    Filters out mail (SMTP/IMAP/POP3), database, and other non-web
+    protocols that happen to have TLS but should not be checked for
+    HTTP security headers.
+    """
+    if service.port in _NON_HTTP_PORTS:
+        return False
+    proto = (service.protocol or '').lower()
+    if proto in _NON_HTTP_PROTOCOLS:
+        return False
+    return True
+
+
 def _get_http_headers(service: Service) -> dict[str, str]:
     """Extract HTTP response headers from a service record.
 
@@ -109,6 +141,106 @@ def _get_http_headers(service: Service) -> dict[str, str]:
     if isinstance(raw, dict):
         return {k.lower(): v for k, v in raw.items()}
     return {}
+
+
+# ---------------------------------------------------------------------------
+# HSTS preload list cache (fetched from Chromium source)
+# ---------------------------------------------------------------------------
+
+_hsts_preload_cache: set[str] = set()
+_hsts_preload_last_fetch: float = 0.0
+_HSTS_PRELOAD_TTL = 86400  # refresh once per day
+
+
+def _load_hsts_preload_list() -> set[str]:
+    """Fetch the HSTS preload list from Chromium and cache it.
+
+    Falls back to empty set on failure — preload checking is best-effort.
+    """
+    global _hsts_preload_cache, _hsts_preload_last_fetch
+    now = time.monotonic()
+    if _hsts_preload_cache and (now - _hsts_preload_last_fetch) < _HSTS_PRELOAD_TTL:
+        return _hsts_preload_cache
+
+    try:
+        import urllib.request
+        url = "https://chromium.googlesource.com/chromium/src/+/main/net/http/transport_security_state_static.json?format=TEXT"
+        import base64
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            raw = base64.b64decode(resp.read()).decode("utf-8")
+        # Parse JSON (strip // comments first)
+        lines = [
+            line for line in raw.splitlines()
+            if not line.strip().startswith("//")
+        ]
+        data = json.loads("\n".join(lines))
+        entries = data.get("entries", [])
+        domains = set()
+        for entry in entries:
+            name = entry.get("name", "")
+            if name and entry.get("mode") == "force-https":
+                domains.add(name.lower())
+                if entry.get("include_subdomains"):
+                    # Mark with a prefix so we can match subdomains
+                    domains.add(f"*.{name.lower()}")
+        _hsts_preload_cache = domains
+        _hsts_preload_last_fetch = now
+        logger.info("HSTS preload list loaded: %d entries", len(domains))
+    except Exception:
+        logger.debug("Failed to fetch HSTS preload list, using cached (%d entries)",
+                     len(_hsts_preload_cache))
+    return _hsts_preload_cache
+
+
+def _is_hsts_preloaded(hostname: str) -> bool:
+    """Check if a hostname is covered by the HSTS preload list."""
+    preload = _load_hsts_preload_list()
+    if not preload:
+        return False
+    host = hostname.lower()
+    # Direct match
+    if host in preload:
+        return True
+    # Check parent domain wildcard (e.g. *.autistici.org covers sub.autistici.org)
+    parts = host.split(".")
+    for i in range(1, len(parts)):
+        parent = ".".join(parts[i:])
+        if f"*.{parent}" in preload:
+            return True
+    return False
+
+
+# Common patterns that indicate a default/catch-all vhost response
+_DEFAULT_VHOST_PATTERNS: list[str] = [
+    "your request could not be identified",
+    "default web page",
+    "welcome to nginx",
+    "apache2 default page",
+    "it works!",
+    "test page",
+    "default server",
+    "no site configured",
+    "domain not configured",
+    "parking page",
+    "coming soon",
+    "under construction",
+]
+
+
+def _is_default_vhost(service: Service) -> bool:
+    """Detect if a service response is from a default/catch-all virtual host.
+
+    These responses don't represent the actual site configuration and
+    should not generate security header findings.
+    """
+    title = (service.http_title or "").lower()
+    for pattern in _DEFAULT_VHOST_PATTERNS:
+        if pattern in title:
+            return True
+    # Also check if the response is a generic 404/403 with no meaningful content
+    if service.http_status in (502, 503) and not service.http_title:
+        return True
+    return False
 
 
 def _get_technologies(service: Service) -> list[str]:
@@ -272,11 +404,17 @@ def check_tls_003(
     db: Any,
 ) -> list[dict]:
     """Detect HTTPS services that do not send Strict-Transport-Security."""
+    # Skip if the domain is in the HSTS preload list (browsers enforce HTTPS
+    # automatically regardless of the header).
+    if _is_hsts_preloaded(asset.identifier):
+        return []
     findings: list[dict] = []
     for svc in services:
-        if not svc.has_tls:
+        if not svc.has_tls or not _is_web_service(svc) or _is_default_vhost(svc):
             continue
         headers = _get_http_headers(svc)
+        if not headers:
+            continue  # No header data collected — can't assert missing
         if "strict-transport-security" not in headers:
             findings.append({
                 "name": "Missing HSTS header on HTTPS service",
@@ -611,9 +749,16 @@ def check_hdr_001(
     """Detect web services missing X-Frame-Options, risking clickjacking."""
     findings: list[dict] = []
     for svc in services:
-        if svc.http_status is None:
+        if not _is_web_service(svc) or _is_default_vhost(svc):
+            continue
+        if svc.http_status is None and svc.port not in _HTTP_PORTS:
+            continue
+        # Skip plain HTTP — missing headers are moot without TLS
+        if not svc.has_tls:
             continue
         headers = _get_http_headers(svc)
+        if not headers:
+            continue  # No header data collected — can't assert missing
         if "x-frame-options" not in headers:
             findings.append({
                 "name": "Missing X-Frame-Options header",
@@ -652,9 +797,16 @@ def check_hdr_002(
     """Detect web services missing X-Content-Type-Options: nosniff."""
     findings: list[dict] = []
     for svc in services:
-        if svc.http_status is None:
+        if not _is_web_service(svc) or _is_default_vhost(svc):
+            continue
+        if svc.http_status is None and svc.port not in _HTTP_PORTS:
+            continue
+        # Skip plain HTTP — missing headers are moot without TLS
+        if not svc.has_tls:
             continue
         headers = _get_http_headers(svc)
+        if not headers:
+            continue  # No header data collected — can't assert missing
         if "x-content-type-options" not in headers:
             findings.append({
                 "name": "Missing X-Content-Type-Options header",
@@ -691,9 +843,16 @@ def check_hdr_003(
     """Detect web services without Content-Security-Policy."""
     findings: list[dict] = []
     for svc in services:
-        if svc.http_status is None:
+        if not _is_web_service(svc) or _is_default_vhost(svc):
+            continue
+        if svc.http_status is None and svc.port not in _HTTP_PORTS:
+            continue
+        # Skip plain HTTP — missing headers are moot without TLS
+        if not svc.has_tls:
             continue
         headers = _get_http_headers(svc)
+        if not headers:
+            continue  # No header data collected — can't assert missing
         if "content-security-policy" not in headers:
             findings.append({
                 "name": "Missing Content-Security-Policy header",
@@ -729,11 +888,17 @@ def check_hdr_004(
     db: Any,
 ) -> list[dict]:
     """Header-centric check for missing HSTS (complementary to TLS-003)."""
+    if _is_hsts_preloaded(asset.identifier):
+        return []
     findings: list[dict] = []
     for svc in services:
-        if svc.http_status is None or not svc.has_tls:
+        if not svc.has_tls or not _is_web_service(svc) or _is_default_vhost(svc):
+            continue
+        if svc.http_status is None and svc.port not in _HTTP_PORTS:
             continue
         headers = _get_http_headers(svc)
+        if not headers:
+            continue  # No header data collected — can't assert missing
         hsts = headers.get("strict-transport-security", "")
         if not hsts:
             findings.append({
@@ -788,9 +953,16 @@ def check_hdr_005(
     """Detect missing Referrer-Policy header."""
     findings: list[dict] = []
     for svc in services:
-        if svc.http_status is None:
+        if not _is_web_service(svc) or _is_default_vhost(svc):
+            continue
+        if svc.http_status is None and svc.port not in _HTTP_PORTS:
+            continue
+        # Skip plain HTTP — missing headers are moot without TLS
+        if not svc.has_tls:
             continue
         headers = _get_http_headers(svc)
+        if not headers:
+            continue  # No header data collected — can't assert missing
         if "referrer-policy" not in headers:
             findings.append({
                 "name": "Missing Referrer-Policy header",
@@ -824,9 +996,16 @@ def check_hdr_006(
     """Detect missing Permissions-Policy (formerly Feature-Policy)."""
     findings: list[dict] = []
     for svc in services:
-        if svc.http_status is None:
+        if not _is_web_service(svc) or _is_default_vhost(svc):
+            continue
+        if svc.http_status is None and svc.port not in _HTTP_PORTS:
+            continue
+        # Skip plain HTTP — missing headers are moot without TLS
+        if not svc.has_tls:
             continue
         headers = _get_http_headers(svc)
+        if not headers:
+            continue  # No header data collected — can't assert missing
         if "permissions-policy" not in headers and "feature-policy" not in headers:
             findings.append({
                 "name": "Missing Permissions-Policy header",
@@ -860,7 +1039,9 @@ def check_hdr_007(
     """Detect permissive CORS (Access-Control-Allow-Origin: *)."""
     findings: list[dict] = []
     for svc in services:
-        if svc.http_status is None:
+        if not _is_web_service(svc) or _is_default_vhost(svc):
+            continue
+        if svc.http_status is None and svc.port not in _HTTP_PORTS:
             continue
         headers = _get_http_headers(svc)
         acao = headers.get("access-control-allow-origin", "")
@@ -1842,6 +2023,24 @@ def check_exp_003(
         143: ("IMAP", "IMAPS (port 993)", "medium"),
     }
 
+    # For mail ports (110/143), only flag on actual mail-related hosts.
+    # In wildcard DNS setups, every subdomain resolves to the same IP
+    # where a mail server runs — flagging grafana.example.com:143 is a
+    # false positive. Only report on hosts whose name suggests mail service.
+    _MAIL_HOST_PATTERNS = {
+        "mail", "smtp", "imap", "pop", "pop3", "mx", "webmail",
+        "postfix", "dovecot", "exchange", "mta", "relay",
+    }
+    _MAIL_PORTS = {110, 143}
+
+    def _is_mail_host(hostname: str) -> bool:
+        """Return True if hostname looks like a mail server."""
+        parts = hostname.lower().split(".")
+        return any(
+            part in _MAIL_HOST_PATTERNS or part.startswith("mx")
+            for part in parts
+        )
+
     # Collect the set of open ports so we can check for encrypted counterparts
     open_ports = {svc.port for svc in services if svc.port}
     encrypted_counterpart = {110: 995, 143: 993}
@@ -1851,13 +2050,22 @@ def check_exp_003(
         if svc.port not in unencrypted_ports:
             continue
 
+        # Skip mail ports on non-mail hosts (wildcard DNS false positives)
+        if svc.port in _MAIL_PORTS and not _is_mail_host(asset.identifier):
+            continue
+
         proto_name, replacement, severity = unencrypted_ports[svc.port]
 
         # If the encrypted counterpart (993 for IMAP, 995 for POP3) is also
-        # open, downgrade to INFO - the plaintext port likely just redirects
-        # to STARTTLS and the encrypted port is the primary service.
+        # open, skip entirely — the server supports both plaintext+STARTTLS
+        # and encrypted ports, which is standard mail server configuration.
         counterpart = encrypted_counterpart.get(svc.port)
         if counterpart and counterpart in open_ports:
+            continue
+
+        # Even without the encrypted counterpart, STARTTLS on 143/110 is
+        # standard practice.  Downgrade mail ports to INFO.
+        if svc.port in _MAIL_PORTS:
             severity = "info"
 
         findings.append({
@@ -2479,6 +2687,23 @@ def run_misconfig_detection(
             f"{len(_CONTROLS)} controls registered"
         )
 
+        # Mark stale assets: domains/subdomains that no longer resolve DNS
+        import socket
+        stale_count = 0
+        for asset in assets:
+            if asset.type and asset.type.value in ("domain", "subdomain"):
+                try:
+                    socket.getaddrinfo(asset.identifier, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+                except socket.gaierror:
+                    asset.is_active = False
+                    stale_count += 1
+                    tenant_logger.info(f"Marking stale asset (no DNS): {asset.identifier}")
+        if stale_count:
+            db.commit()
+            tenant_logger.info(f"Marked {stale_count} stale assets as inactive")
+            # Re-query to exclude newly deactivated assets
+            assets = [a for a in assets if a.is_active]
+
         for asset in assets:
             asset_type_value = asset.type.value if asset.type else ""
 
@@ -2590,6 +2815,33 @@ def run_misconfig_detection(
 
         db.commit()
 
+        # Auto-close stale misconfig findings: any open misconfig finding
+        # for this tenant whose last_seen was NOT updated in this scan run
+        # is no longer detected — mark it as fixed.
+        scan_cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
+        stale_findings = (
+            db.query(Finding)
+            .join(Asset)
+            .filter(
+                Asset.tenant_id == tenant_id,
+                Finding.source == "misconfig",
+                Finding.status == FindingStatus.OPEN,
+                Finding.last_seen < scan_cutoff,
+            )
+            .all()
+        )
+        auto_closed = 0
+        for sf in stale_findings:
+            sf.status = FindingStatus.FIXED
+            auto_closed += 1
+        if auto_closed:
+            db.commit()
+            tenant_logger.info(
+                f"Auto-closed {auto_closed} stale misconfig findings "
+                f"not seen in current scan"
+            )
+        stats["findings_auto_closed"] = auto_closed
+
         tenant_logger.info(
             f"Misconfiguration detection complete: "
             f"{stats['assets_checked']} assets, "
@@ -2598,6 +2850,7 @@ def run_misconfig_detection(
             f"{stats['findings_updated']} updated, "
             f"{stats['findings_skipped_low_confidence']} skipped, "
             f"{stats['findings_needs_review']} flagged for review, "
+            f"{auto_closed} auto-closed, "
             f"{stats['errors']} errors"
         )
 

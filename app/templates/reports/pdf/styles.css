@@ -1,6 +1,6 @@
 /* =============================================================================
    PushingTorPod -- EASM Platform Report Stylesheet
-   "Precision Intelligence" -- editorial light theme with indigo accents
+   "Dark Command Center" -- dark cover, angular badges, node-mesh identity
    WeasyPrint-optimized CSS for A4 PDF rendering
    ============================================================================= */
 
@@ -112,7 +112,7 @@ strong {
 }
 
 
-/* === COVER PAGE (Indigo Spine) ============================================= */
+/* === COVER PAGE (Dark Command Center) ====================================== */
 .cover {
     page-break-after: always;
     width: 210mm;
@@ -121,43 +121,53 @@ strong {
     margin: 0;
     position: relative;
     overflow: hidden;
-    background: #FFFFFF;
+    background: #0F172A;
 }
 
-/* Bold indigo vertical spine on the left -- the PushingTorPod signature */
-.cover-spine {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 18mm;
-    height: 100%;
-    background: linear-gradient(180deg, #4338CA 0%, #6366F1 50%, #4338CA 100%);
-    z-index: 2;
-}
-
-/* Subtle circuit-board grid pattern on white area */
+/* Node-mesh network topology pattern -- PushingTorPod signature */
 .cover-grid {
     position: absolute;
     top: 0;
-    left: 18mm;
+    left: 0;
     right: 0;
     height: 100%;
-    opacity: 0.035;
+    opacity: 0.06;
     z-index: 1;
 }
 
-/* TLP classification banner -- thin top strip on the white area */
-.cover-tlp {
+/* Horizontal accent lines (indigo/violet gradient) */
+.cover-accent-line-top {
     position: absolute;
     top: 0;
-    left: 18mm;
+    left: 0;
     right: 0;
-    height: 5mm;
+    height: 3px;
+    background: linear-gradient(90deg, #4338CA, #6366F1, #8B5CF6, #6366F1, #4338CA);
     z-index: 3;
+}
+
+.cover-accent-line-bottom {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #4338CA, #6366F1, #8B5CF6, #6366F1, #4338CA);
+    z-index: 3;
+}
+
+/* TLP classification banner -- full-width top strip */
+.cover-tlp {
+    position: absolute;
+    top: 3px;
+    left: 0;
+    right: 0;
+    height: 7mm;
+    z-index: 4;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 6.5pt;
+    font-size: 7pt;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.15em;
@@ -165,32 +175,55 @@ strong {
 .cover-tlp.tlp-red    { background: #DC2626; color: #FFFFFF; }
 .cover-tlp.tlp-amber  { background: #D97706; color: #FFFFFF; }
 .cover-tlp.tlp-green  { background: #16A34A; color: #FFFFFF; }
-.cover-tlp.tlp-clear  { background: #F1F5F9; color: #334155; }
+.cover-tlp.tlp-clear  { background: rgba(241, 245, 249, 0.1); color: #94A3B8; }
 
-/* Main content area (right of the spine) */
+/* Risk grade hero watermark (giant faded letter behind content) */
+.cover-risk-hero {
+    position: absolute;
+    top: 50%;
+    right: 25mm;
+    transform: translateY(-50%);
+    font-size: 200pt;
+    font-weight: 900;
+    color: rgba(99, 102, 241, 0.07);
+    z-index: 1;
+    line-height: 1;
+    letter-spacing: -0.04em;
+}
+
+/* Main content area */
 .cover-content {
     position: relative;
     z-index: 3;
     display: flex;
     flex-direction: column;
     height: 100%;
-    padding: 30mm 30mm 30mm 30mm;
-    margin-left: 18mm;
+    padding: 28mm 30mm 30mm 30mm;
 }
 
 .cover-brand {
-    font-size: 8pt;
+    font-size: 7.5pt;
     font-weight: 800;
-    color: #6366F1;
+    color: #818CF8;
     text-transform: uppercase;
-    letter-spacing: 0.2em;
-    margin-bottom: 6mm;
+    letter-spacing: 0.25em;
+    margin-bottom: 4mm;
+    margin-top: 8mm;
+}
+
+.cover-brand-sub {
+    font-size: 6.5pt;
+    font-weight: 500;
+    color: #64748B;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-bottom: 12mm;
 }
 
 .cover h1 {
-    font-size: 38pt;
+    font-size: 40pt;
     font-weight: 800;
-    color: #0F172A;
+    color: #F8FAFC;
     margin: 0 0 3mm 0;
     letter-spacing: -0.03em;
     line-height: 1.05;
@@ -199,15 +232,15 @@ strong {
 .cover .cover-subtitle {
     font-size: 14pt;
     font-weight: 400;
-    color: #6366F1;
+    color: #818CF8;
     margin: 0 0 8mm 0;
     letter-spacing: -0.01em;
 }
 
 .cover-divider {
-    width: 48px;
+    width: 56px;
     height: 3px;
-    background: linear-gradient(90deg, #6366F1, #A5B4FC);
+    background: linear-gradient(90deg, #6366F1, #8B5CF6, #A78BFA);
     border-radius: 2px;
     margin: 0 0 10mm 0;
 }
@@ -219,13 +252,13 @@ strong {
 .cover-risk-score {
     font-size: 56pt;
     font-weight: 900;
-    color: #0F172A;
+    color: #F8FAFC;
     line-height: 1;
     letter-spacing: -0.04em;
 }
 .cover-risk-label {
     font-size: 8.5pt;
-    color: #94A3B8;
+    color: #64748B;
     text-transform: uppercase;
     letter-spacing: 0.1em;
     font-weight: 600;
@@ -237,60 +270,61 @@ strong {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 38px;
-    height: 38px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%;
     font-size: 18pt;
     font-weight: 800;
     color: #FFFFFF;
     vertical-align: middle;
-    margin-left: 6px;
+    margin-left: 8px;
 }
 .cover-grade-badge.grade-a { background: #16A34A; }
 .cover-grade-badge.grade-b { background: #2563EB; }
 .cover-grade-badge.grade-c { background: #CA8A04; }
 .cover-grade-badge.grade-d { background: #EA580C; }
 .cover-grade-badge.grade-f { background: #DC2626; }
-.cover-grade-badge.grade-n { background: #94A3B8; }
+.cover-grade-badge.grade-n { background: #475569; }
 
-/* Cover metadata -- clean key-value pairs */
+/* Cover metadata -- glassmorphism pills on dark bg */
 .cover-meta {
     margin-top: auto;
-    padding-top: 10mm;
-    border-top: 1px solid #E2E8F0;
+    padding: 6mm 7mm;
+    background: rgba(30, 41, 59, 0.7);
+    border: 1px solid rgba(99, 102, 241, 0.15);
+    border-radius: 8px;
 }
 
 .cover-meta-row {
     display: flex;
-    gap: 24px;
+    gap: 28px;
     flex-wrap: wrap;
-    margin-bottom: 4px;
+    margin-bottom: 5mm;
 }
 
 .cover-meta-item {
     font-size: 9pt;
-    color: #475569;
+    color: #CBD5E1;
 }
 
 .cover-meta-item .meta-key {
-    font-weight: 400;
-    color: #94A3B8;
-    font-size: 7.5pt;
+    font-weight: 500;
+    color: #64748B;
+    font-size: 7pt;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.08em;
     display: block;
     margin-bottom: 1px;
 }
 
 .cover-meta-item .meta-val {
     font-weight: 600;
-    color: #1E293B;
+    color: #E2E8F0;
     font-size: 9.5pt;
 }
 
 /* Classification at bottom of cover */
 .cover-classification {
-    margin-top: 8mm;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -299,10 +333,10 @@ strong {
 .cover-classification-badge {
     display: inline-block;
     padding: 4px 16px;
-    border: 1.5px solid #E2E8F0;
+    border: 1.5px solid rgba(99, 102, 241, 0.25);
     border-radius: 4px;
     font-size: 7pt;
-    color: #64748B;
+    color: #818CF8;
     text-transform: uppercase;
     letter-spacing: 0.15em;
     font-weight: 700;
@@ -311,7 +345,7 @@ strong {
 .cover-classification-line {
     flex: 1;
     height: 1px;
-    background: #E2E8F0;
+    background: rgba(99, 102, 241, 0.15);
 }
 
 
@@ -332,7 +366,7 @@ strong {
 .toc-header-line {
     width: 48px;
     height: 3px;
-    background: linear-gradient(90deg, #6366F1, #A5B4FC);
+    background: linear-gradient(90deg, #6366F1, #8B5CF6);
     border-radius: 2px;
     margin: 0 0 32px 0;
 }
@@ -397,28 +431,34 @@ h2 {
     line-height: 1.2;
 }
 
+/* Square badge with rounded corners -- not a circle */
 h2 .section-number {
     display: inline-block;
     width: 28px;
     height: 28px;
     line-height: 28px;
     text-align: center;
-    background: #6366F1;
-    color: #FFFFFF;
-    border-radius: 50%;
+    background: #0F172A;
+    color: #818CF8;
+    border-radius: 4px;
     font-size: 11pt;
     font-weight: 800;
     margin-right: 8px;
     vertical-align: middle;
 }
 
+/* Node-mesh section divider SVG */
 .section-rule {
-    width: 48px;
-    height: 3px;
-    margin: 8px 0 20px 0;
-    background: linear-gradient(90deg, #6366F1, #A5B4FC);
+    width: 120px;
+    height: 16px;
+    margin: 6px 0 20px 0;
+    background: none;
     border: none;
-    border-radius: 2px;
+    position: relative;
+}
+
+.section-rule svg {
+    display: block;
 }
 
 h3 {
@@ -446,7 +486,7 @@ h3 .subsection-number {
 }
 
 
-/* === KPI CARDS (Light, left accent) ======================================== */
+/* === KPI CARDS (Dark, top accent bar) ====================================== */
 .kpi-grid {
     display: flex;
     gap: 16px;
@@ -455,31 +495,30 @@ h3 .subsection-number {
 
 .kpi-card {
     flex: 1;
-    padding: 16px 14px 14px 14px;
-    border: 1px solid #E2E8F0;
-    border-radius: 10px;
+    padding: 18px 14px 14px 14px;
+    border: none;
+    border-radius: 8px;
     text-align: center;
-    background: #FFFFFF;
+    background: #1E293B;
     position: relative;
     overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 
-/* Left accent bar (vertical) */
+/* Top accent bar (horizontal, 3px gradient) */
 .kpi-card::before {
     content: "";
     position: absolute;
     top: 0;
     left: 0;
-    bottom: 0;
-    width: 4px;
-    border-radius: 10px 0 0 10px;
+    right: 0;
+    height: 3px;
 }
 
-.kpi-card.accent-risk::before    { background: #6366F1; }
-.kpi-card.accent-grade::before   { background: #059669; }
-.kpi-card.accent-assets::before  { background: #2563EB; }
-.kpi-card.accent-open::before    { background: #DC2626; }
+.kpi-card.accent-risk::before    { background: linear-gradient(90deg, #6366F1, #818CF8); }
+.kpi-card.accent-grade::before   { background: linear-gradient(90deg, #059669, #34D399); }
+.kpi-card.accent-assets::before  { background: linear-gradient(90deg, #2563EB, #60A5FA); }
+.kpi-card.accent-open::before    { background: linear-gradient(90deg, #DC2626, #F87171); }
 
 .kpi-label {
     font-size: 7pt;
@@ -493,24 +532,24 @@ h3 .subsection-number {
 .kpi-value {
     font-size: 28pt;
     font-weight: 800;
-    color: #0F172A;
+    color: #F8FAFC;
     line-height: 1.05;
     letter-spacing: -0.02em;
 }
 
 .kpi-sub {
     font-size: 7.5pt;
-    color: #94A3B8;
+    color: #64748B;
     font-weight: 500;
     margin-top: 4px;
 }
 
 /* Grade coloring for KPI values */
-.kpi-value.grade-a { color: #16A34A; }
-.kpi-value.grade-b { color: #2563EB; }
-.kpi-value.grade-c { color: #CA8A04; }
-.kpi-value.grade-d { color: #EA580C; }
-.kpi-value.grade-f { color: #DC2626; }
+.kpi-value.grade-a { color: #34D399; }
+.kpi-value.grade-b { color: #60A5FA; }
+.kpi-value.grade-c { color: #FDE68A; }
+.kpi-value.grade-d { color: #FDBA74; }
+.kpi-value.grade-f { color: #FCA5A5; }
 .kpi-value.grade-n { color: #94A3B8; }
 
 
@@ -572,7 +611,7 @@ h3 .subsection-number {
 }
 
 
-/* === TABLES (Clean header, indigo accent) ================================== */
+/* === TABLES (Dark header) ================================================== */
 table {
     width: 100%;
     border-collapse: collapse;
@@ -586,15 +625,15 @@ thead {
 }
 
 thead th {
-    background-color: #FFFFFF;
-    color: #475569;
+    background-color: #1E293B;
+    color: #E2E8F0;
     font-weight: 700;
     text-transform: uppercase;
     font-size: 7pt;
     letter-spacing: 0.08em;
     padding: 10px 16px;
     text-align: left;
-    border-bottom: 2.5px solid #6366F1;
+    border-bottom: none;
 }
 
 tbody td {
@@ -639,80 +678,70 @@ tr {
 }
 
 
-/* === SEVERITY BADGES (Light tint, pill shape) ============================== */
+/* === SEVERITY BADGES (Dark, asymmetric, thick left accent) ================= */
 .badge {
     display: inline-block;
     padding: 3px 10px 3px 10px;
-    border-radius: 10px;
+    border-radius: 2px 6px 6px 2px;
     font-size: 6.5pt;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     white-space: nowrap;
-}
-
-/* Colored dot before label */
-.badge::before {
-    content: "";
-    display: inline-block;
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    margin-right: 4px;
-    vertical-align: 1px;
+    border-left: 3px solid transparent;
 }
 
 .badge-critical {
-    background: #FEF2F2;
-    color: #991B1B;
+    background: #450A0A;
+    color: #FCA5A5;
+    border-left-color: #DC2626;
 }
-.badge-critical::before { background: #DC2626; }
 
 .badge-high {
-    background: #FFF7ED;
-    color: #9A3412;
+    background: #431407;
+    color: #FDBA74;
+    border-left-color: #EA580C;
 }
-.badge-high::before { background: #EA580C; }
 
 .badge-medium {
-    background: #FFFBEB;
-    color: #854D0E;
+    background: #422006;
+    color: #FDE68A;
+    border-left-color: #CA8A04;
 }
-.badge-medium::before { background: #CA8A04; }
 
 .badge-low {
-    background: #EFF6FF;
-    color: #1E40AF;
+    background: #172554;
+    color: #93C5FD;
+    border-left-color: #2563EB;
 }
-.badge-low::before { background: #2563EB; }
 
 .badge-info {
-    background: #F8FAFC;
-    color: #475569;
+    background: #1E293B;
+    color: #94A3B8;
+    border-left-color: #64748B;
 }
-.badge-info::before { background: #94A3B8; }
 
 /* Status badges */
 .badge-open {
-    background: #FEF2F2;
-    color: #991B1B;
+    background: #450A0A;
+    color: #FCA5A5;
+    border-left-color: #DC2626;
 }
-.badge-open::before { background: #DC2626; }
 
 .badge-suppressed {
-    background: #F8FAFC;
-    color: #475569;
+    background: #1E293B;
+    color: #94A3B8;
+    border-left-color: #64748B;
 }
-.badge-suppressed::before { background: #94A3B8; }
 
 .badge-fixed {
-    background: #F0FDF4;
-    color: #166534;
+    background: #052E16;
+    color: #86EFAC;
+    border-left-color: #22C55E;
 }
-.badge-fixed::before { background: #22C55E; }
 
 
-/* === SEVERITY GROUP HEADERS (Light tint, left accent) ====================== */
+/* === SEVERITY GROUP HEADERS (Dark full banners) ============================ */
 .severity-group {
     margin-top: 32px;
     page-break-after: avoid;
@@ -731,47 +760,38 @@ tr {
     align-items: center;
     gap: 10px;
     margin-bottom: 16px;
-    border-left: 4px solid transparent;
+    border-left: none;
+    color: #FFFFFF;
 }
 
 .severity-group-header .sev-count {
     font-size: 8pt;
     font-weight: 600;
-    opacity: 0.6;
+    opacity: 0.7;
 }
 
 .severity-group-header.sev-critical {
-    background: #FEF2F2;
-    border-left-color: #DC2626;
-    color: #991B1B;
+    background: #7F1D1D;
 }
 
 .severity-group-header.sev-high {
-    background: #FFF7ED;
-    border-left-color: #EA580C;
-    color: #9A3412;
+    background: #7C2D12;
 }
 
 .severity-group-header.sev-medium {
-    background: #FFFBEB;
-    border-left-color: #CA8A04;
-    color: #854D0E;
+    background: #713F12;
 }
 
 .severity-group-header.sev-low {
-    background: #EFF6FF;
-    border-left-color: #2563EB;
-    color: #1E40AF;
+    background: #1E3A5F;
 }
 
 .severity-group-header.sev-info {
-    background: #F8FAFC;
-    border-left-color: #94A3B8;
-    color: #475569;
+    background: #334155;
 }
 
 
-/* === FINDING CARDS (Left accent bar) ======================================= */
+/* === FINDING CARDS (Top stripe accent) ===================================== */
 .finding-card {
     page-break-inside: avoid;
     break-inside: avoid;
@@ -782,14 +802,15 @@ tr {
     background: #FFFFFF;
     overflow: hidden;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    border-left: none;
 }
 
-/* Left accent bar */
-.finding-card.sev-critical { border-left: 4px solid #DC2626; }
-.finding-card.sev-high     { border-left: 4px solid #EA580C; }
-.finding-card.sev-medium   { border-left: 4px solid #CA8A04; }
-.finding-card.sev-low      { border-left: 4px solid #2563EB; }
-.finding-card.sev-info     { border-left: 4px solid #94A3B8; }
+/* Top stripe accent (3px top border) */
+.finding-card.sev-critical { border-top: 3px solid #DC2626; }
+.finding-card.sev-high     { border-top: 3px solid #EA580C; }
+.finding-card.sev-medium   { border-top: 3px solid #CA8A04; }
+.finding-card.sev-low      { border-top: 3px solid #2563EB; }
+.finding-card.sev-info     { border-top: 3px solid #94A3B8; }
 
 .finding-card-body {
     padding: 16px 20px;
@@ -802,6 +823,9 @@ tr {
     margin-bottom: 14px;
     padding-bottom: 10px;
     border-bottom: 1px solid #F1F5F9;
+    background: linear-gradient(180deg, #F8FAFC 0%, #FFFFFF 100%);
+    margin: -16px -20px 14px -20px;
+    padding: 14px 20px 10px 20px;
 }
 
 .finding-title {
@@ -816,15 +840,16 @@ tr {
     font-size: 8.5pt;
     font-weight: 800;
     padding: 2px 10px;
-    border-radius: 10px;
+    border-radius: 2px 6px 6px 2px;
     white-space: nowrap;
+    border-left: 3px solid transparent;
 }
 
-.finding-cvss.cvss-critical { background: #FEF2F2; color: #991B1B; }
-.finding-cvss.cvss-high     { background: #FFF7ED; color: #9A3412; }
-.finding-cvss.cvss-medium   { background: #FFFBEB; color: #854D0E; }
-.finding-cvss.cvss-low      { background: #EFF6FF; color: #1E40AF; }
-.finding-cvss.cvss-none     { background: #F8FAFC; color: #475569; }
+.finding-cvss.cvss-critical { background: #450A0A; color: #FCA5A5; border-left-color: #DC2626; }
+.finding-cvss.cvss-high     { background: #431407; color: #FDBA74; border-left-color: #EA580C; }
+.finding-cvss.cvss-medium   { background: #422006; color: #FDE68A; border-left-color: #CA8A04; }
+.finding-cvss.cvss-low      { background: #172554; color: #93C5FD; border-left-color: #2563EB; }
+.finding-cvss.cvss-none     { background: #1E293B; color: #94A3B8; border-left-color: #64748B; }
 
 .finding-meta {
     display: flex;
@@ -883,8 +908,6 @@ tr {
     color: #CDD6F4;
     white-space: pre-wrap;
     word-break: break-word;
-    max-height: 110px;
-    overflow: hidden;
     line-height: 1.6;
 }
 
@@ -913,6 +936,46 @@ tr {
 }
 
 
+/* === AFFECTED ASSETS TABLE (compact, inside finding cards) ================= */
+.affected-assets-table {
+    width: 100%;
+    font-size: 7.5pt;
+    border-collapse: collapse;
+    margin-top: 4px;
+}
+
+.affected-assets-table thead tr {
+    background: #F1F5F9;
+}
+
+.affected-assets-table th {
+    padding: 4px 6px;
+    font-weight: 700;
+    font-size: 7pt;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    border-bottom: 1px solid #E2E8F0;
+    text-align: left;
+}
+
+.affected-assets-table td {
+    padding: 3px 6px;
+    font-size: 7.5pt;
+    color: #334155;
+    border-bottom: 1px solid #F1F5F9;
+}
+
+.affected-assets-table tbody tr:nth-child(even) {
+    background: #FAFBFC;
+}
+
+.affected-assets-table .badge {
+    font-size: 6pt;
+    padding: 1px 4px;
+}
+
+
 /* === RECOMMENDATIONS ======================================================= */
 .rec-list {
     margin: 12px 0;
@@ -926,8 +989,8 @@ tr {
     margin: 10px 0;
     background: #FFFFFF;
     border: 1px solid #E2E8F0;
-    border-left: 4px solid #6366F1;
-    border-radius: 0 8px 8px 0;
+    border-top: 3px solid #6366F1;
+    border-radius: 0 0 8px 8px;
     page-break-inside: avoid;
     break-inside: avoid;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
@@ -939,9 +1002,9 @@ tr {
     justify-content: center;
     min-width: 30px;
     height: 30px;
-    border-radius: 50%;
-    background: #6366F1;
-    color: #FFFFFF;
+    border-radius: 4px;
+    background: #0F172A;
+    color: #818CF8;
     font-size: 10pt;
     font-weight: 800;
     flex-shrink: 0;

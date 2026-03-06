@@ -44,10 +44,10 @@ SEVERITY_COLORS: Dict[str, str] = {
 ASSET_COLORS: List[str] = [
     "#6366F1",  # indigo (brand primary)
     "#8B5CF6",  # violet
+    "#818CF8",  # indigo light
     "#0891B2",  # cyan
     "#059669",  # emerald
     "#D97706",  # amber
-    "#DC2626",  # red
 ]
 
 GRADE_THRESHOLDS: List[Tuple[float, str, str]] = [
@@ -97,13 +97,13 @@ def generate_risk_gauge(score: float, grade: str, fmt: str = "svg") -> bytes:
     """
     fig, ax = plt.subplots(figsize=(4, 2.6), subplot_kw={"projection": "polar"})
 
-    # Background ring (full semicircle, light gray)
+    # Background ring (full semicircle, dark slate)
     theta_full = np.linspace(np.pi, 0, 200)
     for i in range(len(theta_full) - 1):
         ax.barh(
             1, theta_full[i] - theta_full[i + 1],
-            left=theta_full[i + 1], height=0.4,
-            color="#E2E8F0",
+            left=theta_full[i + 1], height=0.45,
+            color="#1E293B",
             edgecolor="none",
         )
 
@@ -111,18 +111,18 @@ def generate_risk_gauge(score: float, grade: str, fmt: str = "svg") -> bytes:
     clamped = max(0.0, min(score, 100.0))
     n_segments = max(int(clamped / 100.0 * 200), 1)
     theta_score = np.linspace(np.pi, np.pi - (clamped / 100.0) * np.pi, n_segments)
-    colors_list = ["#16A34A", "#2563EB", "#CA8A04", "#EA580C", "#DC2626"]
+    colors_list = ["#16A34A", "#2563EB", "#6366F1", "#CA8A04", "#EA580C", "#DC2626"]
     cmap = LinearSegmentedColormap.from_list("gauge", colors_list, N=200)
     for i in range(len(theta_score) - 1):
         progress = i / max(len(theta_score) - 1, 1)
         ax.barh(
             1, theta_score[i] - theta_score[i + 1],
-            left=theta_score[i + 1], height=0.4,
+            left=theta_score[i + 1], height=0.45,
             color=cmap(clamped / 100.0 * progress),
             edgecolor="none",
         )
 
-    # Score text in centre (large, 38pt)
+    # Score text in centre
     grade_color = "#6B7280"
     for threshold, g, color in GRADE_THRESHOLDS:
         if clamped <= threshold:
@@ -131,7 +131,7 @@ def generate_risk_gauge(score: float, grade: str, fmt: str = "svg") -> bytes:
     ax.text(
         np.pi / 2, 0.45, f"{score:.0f}",
         ha="center", va="center",
-        fontsize=38, fontweight="bold", color="#0F172A",
+        fontsize=40, fontweight="bold", color="#0F172A",
     )
     ax.text(
         np.pi / 2, 0.0, grade,
