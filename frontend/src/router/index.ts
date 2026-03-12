@@ -37,12 +37,6 @@ const router = createRouter({
       meta: { requiresAuth: false, title: "Accept Invitation" },
     },
     {
-      path: "/onboarding",
-      name: "Onboarding",
-      component: () => import("@/views/onboarding/OnboardingView.vue"),
-      meta: { requiresAuth: false, title: "Onboarding" },
-    },
-    {
       path: "/auth/sso-callback",
       name: "SsoCallback",
       component: () => import("@/views/auth/SsoCallbackView.vue"),

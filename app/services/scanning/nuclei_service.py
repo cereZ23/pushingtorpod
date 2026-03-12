@@ -452,8 +452,14 @@ class NucleiService:
             host = None
             if matched_url:
                 try:
-                    parsed = urlparse(matched_url)
-                    host = parsed.hostname
+                    # SSL/network templates output "hostname:port" without scheme.
+                    # urlparse treats that as scheme:path, giving hostname=None.
+                    if '://' not in matched_url:
+                        # Strip port if present (e.g. "example.com:443" → "example.com")
+                        host = matched_url.split(':')[0]
+                    else:
+                        parsed = urlparse(matched_url)
+                        host = parsed.hostname
                 except Exception:
                     host = matched_url
 

@@ -54,6 +54,7 @@ from app.api.routers import (
     search_router,
     audit_router,
     health_router,
+    exposure_router,
 )
 
 logger = logging.getLogger(__name__)
@@ -391,6 +392,7 @@ app.include_router(users_router)
 app.include_router(invitations_router)
 app.include_router(search_router)
 app.include_router(audit_router)
+app.include_router(exposure_router)
 
 
 # Startup and shutdown events

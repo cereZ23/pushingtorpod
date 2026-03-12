@@ -1,0 +1,56 @@
+easm.securekt.com {
+	# TLS via Let's Encrypt (automatic)
+	tls {
+		protocols tls1.2 tls1.3
+	}
+
+	# Security headers
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		X-XSS-Protection "1; mode=block"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	# API backend
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	# Health/ready probes (no auth)
+	handle /health {
+		reverse_proxy api:8000
+	}
+	handle /ready {
+		reverse_proxy api:8000
+	}
+
+	# OpenAPI docs (restrict in production if needed)
+	handle /docs {
+		reverse_proxy api:8000
+	}
+	handle /openapi.json {
+		reverse_proxy api:8000
+	}
+
+	# Frontend (Vue SPA via nginx)
+	handle {
+		reverse_proxy ui:80
+	}
+
+	# Access logging
+	log {
+		output file /data/access.log {
+			roll_size 50MiB
+			roll_keep 5
+		}
+	}
+}
+
+# HTTP → HTTPS redirect (automatic with Caddy, but explicit)
+http://easm.securekt.com {
+	redir https://easm.securekt.com{uri} permanent
+}

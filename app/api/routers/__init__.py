@@ -31,6 +31,7 @@ from .users import invitations_router
 from .search import router as search_router
 from .audit import router as audit_router
 from .health import router as health_router
+from .exposure import router as exposure_router
 
 __all__ = [
     "auth_router",
@@ -60,4 +61,5 @@ __all__ = [
     "search_router",
     "audit_router",
     "health_router",
+    "exposure_router",
 ]

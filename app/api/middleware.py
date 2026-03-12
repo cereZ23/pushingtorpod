@@ -469,7 +469,15 @@ def register_middleware(app):
 
     # 2. Trusted host validation
     if settings.environment == "production":
-        allowed_hosts = settings.cors_origins if settings.cors_origins else ["*"]
+        # Extract hostnames from CORS origins (strip scheme) and add localhost for healthchecks
+        from urllib.parse import urlparse
+        parsed_hosts = []
+        for origin in (settings.cors_origins or []):
+            parsed = urlparse(origin)
+            if parsed.hostname:
+                parsed_hosts.append(parsed.hostname)
+        # Always allow localhost/127.0.0.1 for Docker healthchecks
+        allowed_hosts = list(set(parsed_hosts + ["localhost", "127.0.0.1"])) or ["*"]
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
     # 3. HTTPS redirect (production only)

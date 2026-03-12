@@ -17,7 +17,7 @@ from typing import List, Optional, Dict
 from datetime import datetime, timezone
 
 from app.celery_app import celery
-from app.models.database import Asset, FindingSeverity
+from app.models.database import Asset, AssetType, FindingSeverity
 from app.services.scanning.nuclei_service import NucleiService, calculate_risk_score_from_findings
 from app.services.scanning.suppression_service import SuppressionService
 from app.repositories.finding_repository import FindingRepository
@@ -95,8 +95,10 @@ def run_nuclei_scan(
         urls_by_asset = {}
 
         for asset in assets:
-            # Get web services for this asset
+            # Get web services for this asset (prefer live, fallback to any HTTP service)
             web_services = service_repo.get_web_services(asset.id, only_live=True)
+            if not web_services:
+                web_services = service_repo.get_web_services(asset.id, only_live=False)
 
             for service in web_services:
                 # Build URL from service
@@ -114,8 +116,16 @@ def run_nuclei_scan(
 
                 urls_by_asset[asset.id].append(url)
 
+            # Fallback: if no services at all, scan the hostname directly
+            # Nuclei resolves hostnames and handles port 80/443 automatically
+            if asset.id not in urls_by_asset and asset.type in (AssetType.DOMAIN, AssetType.SUBDOMAIN):
+                urls_by_asset[asset.id] = [
+                    f"https://{asset.identifier}",
+                    f"http://{asset.identifier}",
+                ]
+
         if not urls_by_asset:
-            tenant_logger.warning("No live web services found for scanning")
+            tenant_logger.warning("No scannable targets found for Nuclei")
             return {
                 'assets_scanned': len(assets),
                 'findings_created': 0,
@@ -126,10 +136,19 @@ def run_nuclei_scan(
         # Flatten URLs for scanning
         all_urls = []
         url_to_asset = {}
+        # Also build a hostname→asset_id map for robust fallback matching
+        host_to_asset = {}
         for asset_id, urls in urls_by_asset.items():
             for url in urls:
                 all_urls.append(url)
                 url_to_asset[url] = asset_id
+                try:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(url)
+                    if parsed.hostname:
+                        host_to_asset[parsed.hostname] = asset_id
+                except Exception:
+                    pass
 
         tenant_logger.info(f"Scanning {len(all_urls)} URLs across {len(assets)} assets")
 
@@ -165,21 +184,68 @@ def run_nuclei_scan(
         if errors:
             tenant_logger.warning(f"Scan had {len(errors)} validation errors")
 
-        # Map findings to assets
+        # Map findings to assets using multi-level matching:
+        # 1. Exact URL match
+        # 2. Base URL match (strip path/query/fragment)
+        # 3. Hostname match against url_to_asset keys
+        # 4. Hostname match against host_to_asset map
+        # 5. DB lookup by hostname
+        from urllib.parse import urlparse
+
         for finding in findings:
             matched_url = finding.get('matched_at')
+
+            # 1. Exact URL match
             if matched_url and matched_url in url_to_asset:
                 finding['asset_id'] = url_to_asset[matched_url]
-            else:
-                # Try to match by host
-                host = finding.get('host')
-                if host:
-                    asset = db.query(Asset).filter(
-                        Asset.tenant_id == tenant_id,
-                        Asset.identifier == host
-                    ).first()
-                    if asset:
-                        finding['asset_id'] = asset.id
+                continue
+
+            # 2-4. Parse hostname from matched_at and try various matches
+            finding_host = finding.get('host')
+            if matched_url:
+                try:
+                    # SSL/network templates output "hostname:port" without scheme.
+                    # urlparse treats that as scheme:path, giving hostname=None.
+                    if '://' not in matched_url:
+                        finding_host = matched_url.split(':')[0] or finding_host
+                    else:
+                        parsed = urlparse(matched_url)
+                        finding_host = parsed.hostname or finding_host
+
+                        # 2. Rebuild base URL and try match
+                        if parsed.hostname:
+                            scheme = parsed.scheme or 'https'
+                            port = parsed.port
+                            if port and port not in (80, 443):
+                                base_url = f"{scheme}://{parsed.hostname}:{port}"
+                            else:
+                                base_url = f"{scheme}://{parsed.hostname}"
+                            if base_url in url_to_asset:
+                                finding['asset_id'] = url_to_asset[base_url]
+                                continue
+                except Exception:
+                    pass
+
+            # 3. Match hostname against url_to_asset keys
+            if finding_host and finding_host in host_to_asset:
+                finding['asset_id'] = host_to_asset[finding_host]
+                continue
+
+            # 4. DB lookup by hostname (catches assets not in current scan)
+            if finding_host:
+                asset = db.query(Asset).filter(
+                    Asset.tenant_id == tenant_id,
+                    Asset.identifier == finding_host
+                ).first()
+                if asset:
+                    finding['asset_id'] = asset.id
+                    continue
+
+            # Could not map — log details for debugging
+            tenant_logger.warning(
+                f"Unmapped finding: matched_at={matched_url!r}, "
+                f"host={finding_host!r}, name={finding.get('name')!r}"
+            )
 
         # Filter out findings without asset mapping
         findings_with_assets = [f for f in findings if 'asset_id' in f]

@@ -242,6 +242,14 @@ class FindingRepository:
                 'errors': errors
             }
 
+        # Deduplicate within the batch: PostgreSQL ON CONFLICT cannot
+        # update the same row twice in a single INSERT statement.
+        # Keep the last occurrence (most recent evidence) per fingerprint.
+        seen_fps = {}
+        for record in records:
+            seen_fps[record['fingerprint']] = record
+        records = list(seen_fps.values())
+
         # Build UPSERT statement using fingerprint as the unique key
         stmt = insert(Finding).values(records)
 

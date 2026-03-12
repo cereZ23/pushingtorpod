@@ -12,8 +12,8 @@ def get_minio_client():
     """Get MinIO client instance"""
     return Minio(
         os.getenv('MINIO_ENDPOINT', 'minio:9000'),
-        access_key=os.getenv('MINIO_ROOT_USER', os.getenv('MINIO_USER', 'minioadmin')),
-        secret_key=os.getenv('MINIO_ROOT_PASSWORD', os.getenv('MINIO_PASSWORD', 'minioadmin123')),
+        access_key=os.getenv('MINIO_ACCESS_KEY', os.getenv('MINIO_ROOT_USER', os.getenv('MINIO_USER', 'minioadmin'))),
+        secret_key=os.getenv('MINIO_SECRET_KEY', os.getenv('MINIO_ROOT_PASSWORD', os.getenv('MINIO_PASSWORD', 'minioadmin123'))),
         secure=False  # Set to True if using HTTPS
     )
 

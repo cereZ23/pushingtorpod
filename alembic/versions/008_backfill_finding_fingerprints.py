@@ -30,6 +30,12 @@ def _compute_fp(tenant_id, asset_identifier, template_id, matcher_name, source):
 def upgrade() -> None:
     conn = op.get_bind()
 
+    # Add matcher_name column if it doesn't exist yet
+    inspector = sa.inspect(conn)
+    columns = [c["name"] for c in inspector.get_columns("findings")]
+    if "matcher_name" not in columns:
+        op.add_column("findings", sa.Column("matcher_name", sa.String(255), nullable=True))
+
     # Fetch findings that have no fingerprint yet
     rows = conn.execute(sa.text("""
         SELECT f.id, f.template_id, f.matcher_name, f.source,

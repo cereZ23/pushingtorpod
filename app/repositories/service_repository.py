@@ -232,28 +232,35 @@ class ServiceRepository:
         # Build UPSERT statement
         stmt = insert(Service).values(records)
 
-        # On conflict (asset_id, port), update all fields except first_seen
-        # This preserves the original discovery time while updating enrichment data
+        # On conflict (asset_id, port), update fields except first_seen.
+        # Use COALESCE so a new NULL value never overwrites existing data.
+        # This is critical because phases run in parallel (e.g. httpx sets
+        # http_status, then naabu upsets the same row with http_status=NULL).
+        from sqlalchemy import func
+
+        _coalesce = func.coalesce
+        _cur = Service.__table__.c  # current row columns
+
         update_dict = {
             'last_seen': stmt.excluded.last_seen,
-            'protocol': stmt.excluded.protocol,
-            'product': stmt.excluded.product,
-            'version': stmt.excluded.version,
-            'http_status': stmt.excluded.http_status,
-            'http_title': stmt.excluded.http_title,
-            'web_server': stmt.excluded.web_server,
-            'http_technologies': stmt.excluded.http_technologies,
-            'http_headers': stmt.excluded.http_headers,
-            'response_time_ms': stmt.excluded.response_time_ms,
-            'content_length': stmt.excluded.content_length,
-            'redirect_url': stmt.excluded.redirect_url,
-            'screenshot_url': stmt.excluded.screenshot_url,
-            'has_tls': stmt.excluded.has_tls,
-            'tls_version': stmt.excluded.tls_version,
-            'tls_fingerprint': stmt.excluded.tls_fingerprint,
-            'technologies': stmt.excluded.technologies,
+            'protocol': _coalesce(stmt.excluded.protocol, _cur.protocol),
+            'product': _coalesce(stmt.excluded.product, _cur.product),
+            'version': _coalesce(stmt.excluded.version, _cur.version),
+            'http_status': _coalesce(stmt.excluded.http_status, _cur.http_status),
+            'http_title': _coalesce(stmt.excluded.http_title, _cur.http_title),
+            'web_server': _coalesce(stmt.excluded.web_server, _cur.web_server),
+            'http_technologies': _coalesce(stmt.excluded.http_technologies, _cur.http_technologies),
+            'http_headers': _coalesce(stmt.excluded.http_headers, _cur.http_headers),
+            'response_time_ms': _coalesce(stmt.excluded.response_time_ms, _cur.response_time_ms),
+            'content_length': _coalesce(stmt.excluded.content_length, _cur.content_length),
+            'redirect_url': _coalesce(stmt.excluded.redirect_url, _cur.redirect_url),
+            'screenshot_url': _coalesce(stmt.excluded.screenshot_url, _cur.screenshot_url),
+            'has_tls': _coalesce(stmt.excluded.has_tls, _cur.has_tls),
+            'tls_version': _coalesce(stmt.excluded.tls_version, _cur.tls_version),
+            'tls_fingerprint': _coalesce(stmt.excluded.tls_fingerprint, _cur.tls_fingerprint),
+            'technologies': _coalesce(stmt.excluded.technologies, _cur.technologies),
             'enriched_at': stmt.excluded.enriched_at,
-            'enrichment_source': stmt.excluded.enrichment_source
+            'enrichment_source': _coalesce(stmt.excluded.enrichment_source, _cur.enrichment_source),
             # Note: first_seen is NOT updated, preserving original discovery time
         }
 
