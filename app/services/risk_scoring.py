@@ -45,13 +45,15 @@ logger = logging.getLogger(__name__)
 # Finding-level scoring constants
 # ---------------------------------------------------------------------------
 
-# Severity fallback when CVSS is unavailable
+# Severity fallback when CVSS is unavailable (e.g. misconfigs, missing headers).
+# Real CVE findings use cvss_score * 10 instead, so these only affect findings
+# without a CVSS score — keep them conservative to avoid inflated risk grades.
 SEVERITY_FALLBACK_SCORE: Dict[str, float] = {
-    'critical': 90.0,
-    'high': 70.0,
-    'medium': 45.0,
-    'low': 20.0,
-    'info': 5.0,
+    'critical': 75.0,
+    'high': 50.0,
+    'medium': 25.0,
+    'low': 10.0,
+    'info': 2.0,
 }
 
 # EPSS probability thresholds and their bonus points
@@ -74,7 +76,7 @@ INTERNET_EXPOSED_BONUS = 5.0
 
 EXPIRED_CERT_BONUS = 10.0
 NEW_ASSET_DAYS = 7
-NEW_ASSET_BONUS = 10.0
+NEW_ASSET_BONUS = 5.0
 
 # High-risk ports with individual penalties (kept for detailed breakdown)
 HIGH_RISK_PORTS = {
