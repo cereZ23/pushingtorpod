@@ -14,7 +14,7 @@ from sqlalchemy import func, case
 from sqlalchemy.orm import Session
 import logging
 
-from app.api.dependencies import get_db, verify_tenant_access, PaginationParams
+from app.api.dependencies import get_db, verify_tenant_access, PaginationParams, escape_like
 from app.models.database import (
     Asset,
     AssetType,
@@ -79,10 +79,10 @@ def get_exposure_summary(
     """
     _verify_tenant_exists(db, tenant_id)
 
-    # Total assets
+    # Total assets (active only)
     total_assets = (
         db.query(func.count(Asset.id))
-        .filter(Asset.tenant_id == tenant_id)
+        .filter(Asset.tenant_id == tenant_id, Asset.is_active.is_(True))
         .scalar()
         or 0
     )
@@ -204,7 +204,7 @@ def get_exposure_summary(
         .join(highest_severity_sq, Asset.id == highest_severity_sq.c.asset_id)
         .outerjoin(finding_count_sq, Asset.id == finding_count_sq.c.asset_id)
         .outerjoin(service_count_sq, Asset.id == service_count_sq.c.asset_id)
-        .filter(Asset.tenant_id == tenant_id)
+        .filter(Asset.tenant_id == tenant_id, Asset.is_active.is_(True))
         .order_by(Asset.risk_score.desc())
         .limit(10)
         .all()
@@ -335,7 +335,7 @@ def list_exposed_assets(
         .join(highest_severity_sq, Asset.id == highest_severity_sq.c.asset_id)
         .outerjoin(finding_count_sq, Asset.id == finding_count_sq.c.asset_id)
         .outerjoin(service_count_sq, Asset.id == service_count_sq.c.asset_id)
-        .filter(Asset.tenant_id == tenant_id)
+        .filter(Asset.tenant_id == tenant_id, Asset.is_active.is_(True))
     )
 
     # Apply filters
@@ -364,7 +364,7 @@ def list_exposed_assets(
         query = query.filter(highest_severity_sq.c.max_sev >= sev_threshold)
 
     if search:
-        query = query.filter(Asset.identifier.ilike(f"%{search}%"))
+        query = query.filter(Asset.identifier.ilike(f"%{escape_like(search)}%", escape="\\"))
 
     # Count before pagination
     # We need to derive total from a subquery to avoid issues with LIMIT
@@ -393,7 +393,7 @@ def list_exposed_assets(
         )
         query = query.filter(highest_severity_sq.c.max_sev >= sev_threshold_val)
     if search:
-        query = query.filter(Asset.identifier.ilike(f"%{search}%"))
+        query = query.filter(Asset.identifier.ilike(f"%{escape_like(search)}%", escape="\\"))
 
     # Apply sorting
     if sort_by == "findings_count":

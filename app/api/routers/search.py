@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db, get_current_user, verify_tenant_access
+from app.api.dependencies import get_db, get_current_user, verify_tenant_access, escape_like
 from app.models.database import Asset, Finding
 from app.models.issues import Issue
 
@@ -59,7 +59,7 @@ def global_search(
     verify_tenant_access(db, current_user, tenant_id)
 
     results: List[SearchResultItem] = []
-    search_term = f"%{q}%"
+    search_term = f"%{escape_like(q)}%"
 
     # Search assets (identifier, type)
     assets = (
@@ -67,7 +67,7 @@ def global_search(
         .filter(
             Asset.tenant_id == tenant_id,
             Asset.is_active.is_(True),
-            Asset.identifier.ilike(search_term),
+            Asset.identifier.ilike(search_term, escape="\\"),
         )
         .order_by(Asset.risk_score.desc())
         .limit(limit)
@@ -92,9 +92,9 @@ def global_search(
             .filter(
                 Asset.tenant_id == tenant_id,
                 or_(
-                    Finding.name.ilike(search_term),
-                    Finding.template_id.ilike(search_term),
-                    Finding.cve_id.ilike(search_term),
+                    Finding.name.ilike(search_term, escape="\\"),
+                    Finding.template_id.ilike(search_term, escape="\\"),
+                    Finding.cve_id.ilike(search_term, escape="\\"),
                 ),
             )
             .order_by(Finding.severity.desc(), Finding.last_seen.desc())
@@ -120,9 +120,9 @@ def global_search(
             .filter(
                 Issue.tenant_id == tenant_id,
                 or_(
-                    Issue.title.ilike(search_term),
-                    Issue.root_cause.ilike(search_term),
-                    Issue.description.ilike(search_term),
+                    Issue.title.ilike(search_term, escape="\\"),
+                    Issue.root_cause.ilike(search_term, escape="\\"),
+                    Issue.description.ilike(search_term, escape="\\"),
                 ),
             )
             .order_by(Issue.updated_at.desc())

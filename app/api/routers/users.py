@@ -165,6 +165,9 @@ def update_tenant_user(
             detail="Cannot modify the tenant owner",
         )
 
+    role_changed = payload.role is not None and payload.role != tm.role
+    deactivated = payload.is_active is not None and not payload.is_active and tm.is_active
+
     if payload.role is not None:
         tm.role = payload.role
 
@@ -172,6 +175,12 @@ def update_tenant_user(
         tm.is_active = payload.is_active
 
     db.commit()
+
+    # Revoke all tokens when role changes or user is deactivated —
+    # forces re-authentication with fresh roles
+    if role_changed or deactivated:
+        from app.security.jwt_auth import jwt_manager
+        jwt_manager.revoke_all_user_tokens(user_id)
 
     user = tm.user
     logger.info("Updated user %s in tenant %d: role=%s, active=%s", user.email, tenant_id, tm.role, tm.is_active)

@@ -142,7 +142,7 @@ class EndpointRepository:
         ]
 
         # Build OR conditions for URL matching
-        conditions = [Endpoint.url.ilike(f'%{keyword}%') for keyword in sensitive_keywords]
+        conditions = [Endpoint.url.ilike(f'%{keyword}%', escape="\\") for keyword in sensitive_keywords]
 
         return self.db.query(Endpoint).join(Endpoint.asset).filter(
             and_(

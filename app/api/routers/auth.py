@@ -9,6 +9,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
+import hashlib
 import logging
 
 from app.api.dependencies import get_db, get_current_user, get_current_user_payload, require_admin
@@ -38,6 +39,7 @@ from app.core.audit import (
     log_data_modification,
     AuditEventType,
 )
+from app.utils.crypto import encrypt_mfa_secret, decrypt_mfa_secret
 
 logger = logging.getLogger(__name__)
 
@@ -262,9 +264,11 @@ def logout(
     jti = payload.get("jti")
     token_type = payload.get("type", "access")
 
+    token_revoked = False
     if jti:
         try:
             jwt_manager.revoke_token(jti, token_type)
+            token_revoked = True
             logger.info(f"User {current_user.email} logged out, token {jti} revoked")
         except Exception as e:
             logger.error(f"Failed to revoke token on logout: {e}")
@@ -283,7 +287,8 @@ def logout(
 
     return {
         "success": True,
-        "message": "Logged out successfully"
+        "message": "Logged out successfully",
+        "token_revoked": token_revoked,
     }
 
 
@@ -430,15 +435,21 @@ def forgot_password(
 
     if user and user.hashed_password:
         token = secrets.token_urlsafe(32)
-        user.password_reset_token = token
+        # Store SHA-256 hash of token — never store plaintext reset tokens
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        user.password_reset_token = token_hash
         user.password_reset_expires = datetime.now(timezone.utc) + timedelta(hours=1)
         db.commit()
 
         try:
             from app.services.email_service import send_password_reset_email
-            send_password_reset_email(user.email, token)
+            send_password_reset_email(user.email, token)  # send plaintext to user
         except Exception:
             logger.exception("Failed to send password reset email to %s", payload.email)
+            # Clear the token so the user can retry
+            user.password_reset_token = None
+            user.password_reset_expires = None
+            db.commit()
 
     log_audit_event(
         event_type=AuditEventType.AUTH_PASSWORD_RESET,
@@ -465,8 +476,10 @@ def reset_password(
     Raises:
         - 400: Invalid or expired token
     """
+    # Hash the incoming token to compare against stored hash
+    token_hash = hashlib.sha256(payload.token.encode()).hexdigest()
     user = db.query(User).filter(
-        User.password_reset_token == payload.token,
+        User.password_reset_token == token_hash,
     ).first()
 
     if not user:
@@ -620,7 +633,7 @@ def mfa_setup(
         )
 
     secret = pyotp.random_base32()
-    current_user.mfa_secret = secret
+    current_user.mfa_secret = encrypt_mfa_secret(secret)
     db.commit()
 
     totp = pyotp.TOTP(secret)
@@ -669,7 +682,7 @@ def mfa_verify_setup(
             detail="MFA is already enabled",
         )
 
-    totp = pyotp.TOTP(current_user.mfa_secret)
+    totp = pyotp.TOTP(decrypt_mfa_secret(current_user.mfa_secret))
     if not totp.verify(payload.code):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -766,8 +779,8 @@ def mfa_verify(
             detail="Invalid MFA session",
         )
 
-    # Verify TOTP code
-    totp = pyotp.TOTP(user.mfa_secret)
+    # Verify TOTP code — decrypt secret from DB
+    totp = pyotp.TOTP(decrypt_mfa_secret(user.mfa_secret))
     if not totp.verify(payload.code):
         log_authentication_attempt(
             success=False, username=user.email,

@@ -28,6 +28,7 @@ import redis
 
 from app.config import settings
 from app.core.security import SecurityKeys  # Import RSA key support
+from app.database import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +285,63 @@ class JWTManager:
                 detail="Authentication failed"
             )
 
+    def _get_fresh_roles(self, user_id: int, tenant_id: int) -> list[str]:
+        """Look up current roles from database (not from stale JWT).
+
+        Falls back to ['user'] if DB lookup fails to avoid blocking auth.
+        """
+        try:
+            from app.models.auth import User, TenantMembership
+            db = SessionLocal()
+            try:
+                user = db.query(User).filter(User.id == user_id).first()
+                if not user or not user.is_active:
+                    return ['user']
+
+                membership = db.query(TenantMembership).filter(
+                    TenantMembership.user_id == user_id,
+                    TenantMembership.tenant_id == tenant_id,
+                    TenantMembership.is_active == True,
+                ).first()
+
+                roles = [membership.role] if membership else ['user']
+                if user.is_superuser:
+                    roles.append('admin')
+                return roles
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"Failed to refresh roles from DB for user {user_id}: {e}")
+            return ['user']
+
+    def revoke_all_user_tokens(self, user_id: int) -> int:
+        """Revoke all access and refresh tokens for a user.
+
+        Call this when a user's role changes or account is deactivated
+        to force re-authentication with fresh roles.
+
+        Returns:
+            Number of tokens revoked.
+        """
+        count = 0
+        try:
+            for prefix in ('jwt:access:', 'jwt:refresh:'):
+                cursor = 0
+                while True:
+                    cursor, keys = self.redis_client.scan(cursor, match=f"{prefix}*", count=100)
+                    for key in keys:
+                        stored_user_id = self.redis_client.get(key)
+                        if stored_user_id == str(user_id):
+                            self.redis_client.delete(key)
+                            count += 1
+                    if cursor == 0:
+                        break
+            if count:
+                logger.info(f"Revoked {count} tokens for user {user_id}")
+        except Exception as e:
+            logger.error(f"Failed to revoke tokens for user {user_id}: {e}")
+        return count
+
     def revoke_token(self, jti: str, token_type: str = "access"):
         """
         Revoke a token by its JTI
@@ -337,17 +395,22 @@ class JWTManager:
                     detail="Refresh token has been revoked"
                 )
 
-            # Create new access token
+            # Look up fresh roles from DB instead of copying stale JWT roles
+            user_id = payload['sub']
+            tenant_id = payload['tenant_id']
+            fresh_roles = self._get_fresh_roles(int(user_id), tenant_id)
+
+            # Create new access token with current roles
             access_token = self.create_access_token(
-                subject=payload['sub'],
-                tenant_id=payload['tenant_id'],
-                roles=payload.get('roles', ['user'])
+                subject=user_id,
+                tenant_id=tenant_id,
+                roles=fresh_roles,
             )
 
             # Optionally create new refresh token (rotation)
             new_refresh_token = self.create_refresh_token(
-                subject=payload['sub'],
-                tenant_id=payload['tenant_id']
+                subject=user_id,
+                tenant_id=tenant_id,
             )
 
             # Revoke old refresh token

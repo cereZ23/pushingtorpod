@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 import logging
 
-from app.api.dependencies import get_db, verify_tenant_access, PaginationParams
+from app.api.dependencies import get_db, verify_tenant_access, PaginationParams, escape_like
 from app.api.schemas.common import TaskResponse, PaginatedResponse
 from app.api.schemas.dnstwist import DnstwistScanRequest, DnstwistFindingResponse
 from app.models.database import Asset, Finding, FindingSeverity, FindingStatus
@@ -133,7 +133,7 @@ def list_dnstwist_findings(
             )
 
     if search:
-        query = query.filter(Finding.name.ilike(f"%{search}%"))
+        query = query.filter(Finding.name.ilike(f"%{escape_like(search)}%", escape="\\"))
 
     # -- Sorting ---------------------------------------------------------
     sort_column = getattr(Finding, sort_by, Finding.last_seen)

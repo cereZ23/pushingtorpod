@@ -161,7 +161,7 @@ class Settings(BaseSettings):
     enrichment_batch_size: int = 100  # Max assets to enrich per run
 
     # HTTPx - Web Technology Fingerprinting
-    httpx_timeout: int = 300  # 5 minutes
+    httpx_timeout: int = 600  # 10 minutes (300s was too short for 500+ hosts)
     httpx_rate_limit: int = 150  # Requests per second
     httpx_response_size_limit: int = 1048576  # 1MB max response size
 
@@ -219,6 +219,11 @@ class Settings(BaseSettings):
     smtp_password: Optional[str] = None
     webhook_url: Optional[str] = None
     webhook_secret: Optional[str] = None
+
+    # MFA Secret Encryption
+    # MUST be a valid Fernet key in production (32 url-safe base64-encoded bytes)
+    # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    mfa_encryption_key: Optional[str] = None  # None = plaintext (dev only)
 
     # SAML SSO
     saml_enabled: bool = False
