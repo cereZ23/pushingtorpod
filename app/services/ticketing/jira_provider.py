@@ -453,4 +453,4 @@ class JiraProvider(TicketingProvider):
             try:
                 self._client.close()
             except Exception:
-                pass
+                logger.debug("Failed to close Jira HTTP client during cleanup")

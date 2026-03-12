@@ -177,15 +177,16 @@ try:
     _mutation_rate = _parse_rate(MUTATION_DEFAULT_LIMIT)
     try:
         _mutation_storage = _storage_from_string(settings.redis_url)
-    except Exception:
+    except (OSError, ValueError) as _redis_exc:
         logger.warning(
-            "Redis unavailable for mutation rate limiter; falling back to in-memory storage"
+            "Redis unavailable for mutation rate limiter; falling back to in-memory storage: %s",
+            _redis_exc,
         )
         _mutation_storage = _storage_from_string("memory://")
     _mutation_limiter_strategy = _FixedWindowRateLimiter(_mutation_storage)
 except ImportError:
     logger.warning("limits library not available; mutation rate limiting will be disabled")
-except Exception:
+except (OSError, ValueError):
     logger.exception("Failed to initialise mutation rate limiter")
 
 
@@ -385,7 +386,8 @@ def health_check():
             conn.execute(text("SELECT 1")).fetchone()
         health_status["services"]["database"] = "ok"
     except Exception as e:
-        logger.error(f"Database health check failed: {e}")
+        # Broad catch: any DB error (connection, auth, timeout) means unhealthy
+        logger.error("Database health check failed: %s", e)
         health_status["services"]["database"] = "error"
         health_status["status"] = "unhealthy"
 
@@ -396,7 +398,8 @@ def health_check():
         r.close()
         health_status["services"]["redis"] = "ok"
     except Exception as e:
-        logger.error(f"Redis health check failed: {e}")
+        # Broad catch: any Redis error (connection, auth, timeout) means unhealthy
+        logger.error("Redis health check failed: %s", e)
         health_status["services"]["redis"] = "error"
         health_status["status"] = "unhealthy"
 
@@ -411,7 +414,8 @@ def health_check():
         list(client.list_buckets())
         health_status["services"]["minio"] = "ok"
     except Exception as e:
-        logger.error(f"MinIO health check failed: {e}")
+        # Broad catch: any MinIO/S3 error (connection, auth, timeout) means unhealthy
+        logger.error("MinIO health check failed: %s", e)
         health_status["services"]["minio"] = "error"
         health_status["status"] = "unhealthy"
 
@@ -475,11 +479,12 @@ async def startup_event():
     try:
         from app.database import engine
         from sqlalchemy import text
+        from sqlalchemy.exc import SQLAlchemyError
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         logger.info("Database connection: OK")
-    except Exception as e:
-        logger.error(f"Database connection failed: {e}")
+    except (SQLAlchemyError, OSError) as e:
+        logger.error("Database connection failed: %s", e)
 
     # Test Redis connection
     try:
@@ -488,8 +493,8 @@ async def startup_event():
         r.ping()
         r.close()
         logger.info("Redis connection: OK")
-    except Exception as e:
-        logger.error(f"Redis connection failed: {e}")
+    except (redis.exceptions.RedisError, OSError) as e:
+        logger.error("Redis connection failed: %s", e)
 
     logger.info("Application startup complete")
 

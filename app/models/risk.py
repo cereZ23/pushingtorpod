@@ -7,7 +7,7 @@ external ticket tracking, and a compliance audit trail.
 """
 
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     Column, Integer, String, DateTime, ForeignKey, Text, Enum, Float,
@@ -40,7 +40,7 @@ class RiskScore(Base):
     explanation = Column(JSON)  # {top_drivers: [{description, contribution}, ...]}
     previous_score = Column(Float)
     delta = Column(Float)
-    scored_at = Column(DateTime, default=datetime.utcnow)
+    scored_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         Index('idx_rs_tenant', 'tenant_id'),
@@ -81,7 +81,7 @@ class Alert(Base):
     related_finding_id = Column(Integer, ForeignKey('findings.id'))
     status = Column(Enum(AlertStatus), default=AlertStatus.PENDING)
     channels_sent = Column(JSON)  # ["slack", "email"]
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     sent_at = Column(DateTime)
     acknowledged_at = Column(DateTime)
 
@@ -116,8 +116,8 @@ class AlertPolicy(Base):
     cooldown_minutes = Column(Integer, default=1440)  # Default 24h
     digest_mode = Column(Boolean, default=False)
     enabled = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         Index('idx_ap_tenant', 'tenant_id'),
@@ -145,8 +145,8 @@ class Relationship(Base):
     target_asset_id = Column(Integer, ForeignKey('assets.id', ondelete='CASCADE'), nullable=False)
     rel_type = Column(String(50), nullable=False)  # 'resolves_to', 'cname_to', 'ns_for', 'mx_for', 'redirects_to', 'cert_covers', 'hosts', 'parent_domain'
     rel_metadata = Column('metadata', JSON)
-    first_seen_at = Column(DateTime, default=datetime.utcnow)
-    last_seen_at = Column(DateTime, default=datetime.utcnow)
+    first_seen_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_seen_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         Index('idx_rel_tenant', 'tenant_id'),
@@ -179,7 +179,7 @@ class AuditLog(Base):
     old_value = Column(JSON)
     new_value = Column(JSON)
     ip_address = Column(String(45))  # IPv4 or IPv6
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         Index('idx_audit_tenant', 'tenant_id'),

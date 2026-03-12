@@ -257,7 +257,7 @@ def expired_token():
     settings = get_settings()
     payload = {
         "sub": "testuser",
-        "exp": datetime.utcnow() - timedelta(days=1),
+        "exp": datetime.now(timezone.utc) - timedelta(days=1),
         "type": "access"
     }
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)

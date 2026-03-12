@@ -9,10 +9,14 @@ Provides bulk operations for vulnerability findings with:
 - Risk score calculation
 """
 
+import logging
+
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import and_, or_, func, text
 from typing import List, Dict, Optional
+
+logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta, timezone
 import json
 
@@ -322,8 +326,8 @@ class FindingRepository:
                     'notes': notes
                 })
                 finding.evidence = json.dumps(evidence)
-            except Exception:
-                pass  # If evidence parsing fails, just update status
+            except (json.JSONDecodeError, TypeError, KeyError):
+                logger.debug("Failed to update evidence notes for finding %s", finding.id)
 
         self.db.commit()
         self.db.refresh(finding)

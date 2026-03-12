@@ -186,9 +186,9 @@ def _load_hsts_preload_list() -> set[str]:
         _hsts_preload_cache = domains
         _hsts_preload_last_fetch = now
         logger.info("HSTS preload list loaded: %d entries", len(domains))
-    except Exception:
-        logger.debug("Failed to fetch HSTS preload list, using cached (%d entries)",
-                     len(_hsts_preload_cache))
+    except (OSError, ValueError, json.JSONDecodeError, KeyError) as exc:
+        logger.debug("Failed to fetch HSTS preload list, using cached (%d entries): %s",
+                     len(_hsts_preload_cache), exc)
     return _hsts_preload_cache
 
 
@@ -1835,9 +1835,11 @@ def check_inf_004(
                         ),
                     })
                     break
-    except Exception:
-        # Endpoint model might not be available; skip silently
-        pass
+    except (ImportError, AttributeError) as exc:
+        # Endpoint model might not be available in all deployments
+        logger.debug("Endpoint model unavailable for INF-004 check: %s", exc)
+    except Exception as exc:
+        logger.warning("INF-004 endpoint check failed for asset %s: %s", asset.identifier, exc)
 
     return findings
 
@@ -2861,7 +2863,7 @@ def run_misconfig_detection(
         try:
             db.rollback()
         except Exception:
-            pass
+            logger.debug("db.rollback() failed after misconfig error", exc_info=True)
         raise self.retry(exc=exc)
     finally:
         db.close()

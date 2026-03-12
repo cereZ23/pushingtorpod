@@ -258,7 +258,7 @@ def expired_refresh_token():
     settings = get_settings()
     payload = {
         "sub": "testuser",
-        "exp": datetime.utcnow() - timedelta(days=1),
+        "exp": datetime.now(timezone.utc) - timedelta(days=1),
         "type": "refresh"
     }
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
@@ -270,7 +270,7 @@ def short_lived_token(test_user):
     settings = get_settings()
     payload = {
         "sub": test_user.username,
-        "exp": datetime.utcnow() + timedelta(seconds=1),
+        "exp": datetime.now(timezone.utc) + timedelta(seconds=1),
         "type": "access"
     }
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)

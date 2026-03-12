@@ -10,7 +10,7 @@ Tests cover:
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 
 from app.repositories.service_repository import ServiceRepository
@@ -105,7 +105,7 @@ class TestServiceRepository:
             port=80,
             protocol='http',
             http_status=None,
-            first_seen=datetime.utcnow() - timedelta(days=1)
+            first_seen=datetime.now(timezone.utc) - timedelta(days=1)
         )
         db_session.add(initial_service)
         db_session.commit()
@@ -261,8 +261,8 @@ class TestCertificateRepository:
                 'serial_number': 'ABC123',
                 'subject_cn': 'example.com',
                 'issuer': "Let's Encrypt",
-                'not_before': datetime.utcnow() - timedelta(days=30),
-                'not_after': datetime.utcnow() + timedelta(days=60),
+                'not_before': datetime.now(timezone.utc) - timedelta(days=30),
+                'not_after': datetime.now(timezone.utc) + timedelta(days=60),
                 'is_expired': False,
                 'days_until_expiry': 60,
                 'san_domains': ['example.com', 'www.example.com'],
@@ -273,7 +273,7 @@ class TestCertificateRepository:
                 'serial_number': 'DEF456',
                 'subject_cn': '*.example.com',
                 'issuer': 'DigiCert',
-                'not_after': datetime.utcnow() + timedelta(days=365),
+                'not_after': datetime.now(timezone.utc) + timedelta(days=365),
                 'is_wildcard': True
             }
         ]
@@ -296,21 +296,21 @@ class TestCertificateRepository:
             Certificate(
                 asset_id=mock_asset.id,
                 serial_number='EXPIRING_SOON',
-                not_after=datetime.utcnow() + timedelta(days=15),  # Expires in 15 days
+                not_after=datetime.now(timezone.utc) + timedelta(days=15),  # Expires in 15 days
                 days_until_expiry=15,
                 is_expired=False
             ),
             Certificate(
                 asset_id=mock_asset.id,
                 serial_number='VALID_LONG',
-                not_after=datetime.utcnow() + timedelta(days=365),  # Expires in 1 year
+                not_after=datetime.now(timezone.utc) + timedelta(days=365),  # Expires in 1 year
                 days_until_expiry=365,
                 is_expired=False
             ),
             Certificate(
                 asset_id=mock_asset.id,
                 serial_number='ALREADY_EXPIRED',
-                not_after=datetime.utcnow() - timedelta(days=10),  # Already expired
+                not_after=datetime.now(timezone.utc) - timedelta(days=10),  # Already expired
                 days_until_expiry=-10,
                 is_expired=True
             )
@@ -336,19 +336,19 @@ class TestCertificateRepository:
                 asset_id=mock_asset.id,
                 serial_number='EXPIRED_1',
                 is_expired=True,
-                not_after=datetime.utcnow() - timedelta(days=30)
+                not_after=datetime.now(timezone.utc) - timedelta(days=30)
             ),
             Certificate(
                 asset_id=mock_asset.id,
                 serial_number='EXPIRED_2',
                 is_expired=True,
-                not_after=datetime.utcnow() - timedelta(days=5)
+                not_after=datetime.now(timezone.utc) - timedelta(days=5)
             ),
             Certificate(
                 asset_id=mock_asset.id,
                 serial_number='VALID',
                 is_expired=False,
-                not_after=datetime.utcnow() + timedelta(days=60)
+                not_after=datetime.now(timezone.utc) + timedelta(days=60)
             )
         ]
 
@@ -680,12 +680,12 @@ class TestEndpointRepository:
         old_endpoint = Endpoint(
             asset_id=mock_asset.id,
             url='https://example.com/old',
-            first_seen=datetime.utcnow() - timedelta(days=5)
+            first_seen=datetime.now(timezone.utc) - timedelta(days=5)
         )
         recent_endpoint = Endpoint(
             asset_id=mock_asset.id,
             url='https://example.com/recent',
-            first_seen=datetime.utcnow() - timedelta(hours=12)
+            first_seen=datetime.now(timezone.utc) - timedelta(hours=12)
         )
 
         db_session.add(old_endpoint)

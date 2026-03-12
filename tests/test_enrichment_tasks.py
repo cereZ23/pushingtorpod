@@ -11,7 +11,7 @@ Tests cover:
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 
 from app.tasks.enrichment import (
@@ -110,7 +110,7 @@ class TestEnrichmentCandidates:
         """Test getting critical priority assets (1-day TTL)"""
         # Set last_enriched_at to 2 days ago (stale for critical 1-day TTL)
         critical_asset = mock_assets[0]
-        critical_asset.last_enriched_at = datetime.utcnow() - timedelta(days=2)
+        critical_asset.last_enriched_at = datetime.now(timezone.utc) - timedelta(days=2)
         db_session.commit()
 
         candidates = get_enrichment_candidates(
@@ -128,7 +128,7 @@ class TestEnrichmentCandidates:
         """Test getting high priority assets (3-day TTL)"""
         # Set last_enriched_at to 4 days ago (stale for high 3-day TTL)
         high_asset = mock_assets[1]
-        high_asset.last_enriched_at = datetime.utcnow() - timedelta(days=4)
+        high_asset.last_enriched_at = datetime.now(timezone.utc) - timedelta(days=4)
         db_session.commit()
 
         candidates = get_enrichment_candidates(
@@ -146,7 +146,7 @@ class TestEnrichmentCandidates:
         """Test that recently enriched assets are excluded"""
         # Set last_enriched_at to 1 hour ago (fresh for all TTLs)
         for asset in mock_assets:
-            asset.last_enriched_at = datetime.utcnow() - timedelta(hours=1)
+            asset.last_enriched_at = datetime.now(timezone.utc) - timedelta(hours=1)
         db_session.commit()
 
         candidates = get_enrichment_candidates(
@@ -163,7 +163,7 @@ class TestEnrichmentCandidates:
         """Test force refresh returns all assets regardless of TTL"""
         # Set all assets as recently enriched
         for asset in mock_assets:
-            asset.last_enriched_at = datetime.utcnow() - timedelta(hours=1)
+            asset.last_enriched_at = datetime.now(timezone.utc) - timedelta(hours=1)
         db_session.commit()
 
         candidates = get_enrichment_candidates(
@@ -576,7 +576,7 @@ class TestEnrichmentIntegration:
 
         # Set assets as stale
         for asset in mock_assets:
-            asset.last_enriched_at = datetime.utcnow() - timedelta(days=10)
+            asset.last_enriched_at = datetime.now(timezone.utc) - timedelta(days=10)
         db_session.commit()
 
         # Mock Celery primitives
@@ -626,7 +626,7 @@ class TestEnrichmentPerformance:
                 identifier=f"subdomain{i}.example.com",
                 risk_score=5.0,
                 priority="normal",
-                last_enriched_at=datetime.utcnow() - timedelta(days=10),
+                last_enriched_at=datetime.now(timezone.utc) - timedelta(days=10),
                 is_active=True
             )
             assets.append(asset)
@@ -712,7 +712,7 @@ class TestPrioritySystem:
             identifier="critical.example.com",
             risk_score=9.0,
             priority="critical",
-            last_enriched_at=datetime.utcnow() - timedelta(hours=25),
+            last_enriched_at=datetime.now(timezone.utc) - timedelta(hours=25),
             is_active=True
         )
         db_session.add(asset)
@@ -738,7 +738,7 @@ class TestPrioritySystem:
             identifier="high.example.com",
             risk_score=7.0,
             priority="high",
-            last_enriched_at=datetime.utcnow() - timedelta(hours=73),
+            last_enriched_at=datetime.now(timezone.utc) - timedelta(hours=73),
             is_active=True
         )
         db_session.add(asset)
@@ -763,7 +763,7 @@ class TestPrioritySystem:
             identifier="normal.example.com",
             risk_score=5.0,
             priority="normal",
-            last_enriched_at=datetime.utcnow() - timedelta(days=8),
+            last_enriched_at=datetime.now(timezone.utc) - timedelta(days=8),
             is_active=True
         )
         db_session.add(asset)
@@ -788,7 +788,7 @@ class TestPrioritySystem:
             identifier="low.example.com",
             risk_score=1.0,
             priority="low",
-            last_enriched_at=datetime.utcnow() - timedelta(days=15),
+            last_enriched_at=datetime.now(timezone.utc) - timedelta(days=15),
             is_active=True
         )
         db_session.add(asset)

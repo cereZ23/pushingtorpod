@@ -18,7 +18,7 @@ from sqlalchemy import (
     Boolean, Index, JSON,
 )
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 import enum
 
 from app.models.database import Base
@@ -74,8 +74,8 @@ class Project(Base):
     seeds = Column(JSON)  # [{"type": "domain", "value": "example.com"}, ...]
     settings = Column(JSON)  # Project-level settings overrides
     created_by = Column(Integer, ForeignKey('users.id'))
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
     tenant = relationship("Tenant", backref="projects")
@@ -119,7 +119,7 @@ class Scope(Base):
     match_type = Column(String(20), nullable=False)  # 'domain', 'ip', 'cidr', 'regex'
     pattern = Column(String(500), nullable=False)
     description = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     project = relationship("Project", back_populates="scopes")
@@ -167,8 +167,8 @@ class ScanProfile(Base):
     max_rate_pps = Column(Integer, default=10)
     timeout_minutes = Column(Integer, default=120)
     enabled = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
     project = relationship("Project", back_populates="scan_profiles")
@@ -224,7 +224,7 @@ class ScanRun(Base):
     stats = Column(JSON)  # {phases: {...}, asset_count, finding_count, change_events: [...]}
     error_message = Column(Text)
     celery_task_id = Column(String(255))  # For tracking/cancellation
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     project = relationship("Project", back_populates="scan_runs")
@@ -334,7 +334,7 @@ class Observation(Base):
     source = Column(String(100), nullable=False)  # 'subfinder', 'crtsh', 'dnsx', etc.
     observation_type = Column(String(100), nullable=False)  # 'passive_subdomain', 'spf_ip', 'mx_ip'
     raw_data = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     tenant = relationship("Tenant", backref="observations")

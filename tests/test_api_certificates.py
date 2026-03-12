@@ -70,7 +70,7 @@ class TestFilterCertificates:
         certs = data if isinstance(data, list) else data.get("items", [])
 
         # Verify certificates are expiring soon
-        threshold = datetime.utcnow() + timedelta(days=30)
+        threshold = datetime.now(timezone.utc) + timedelta(days=30)
         for cert in certs:
             if "not_after" in cert:
                 expiry = datetime.fromisoformat(cert["not_after"].replace("Z", "+00:00"))

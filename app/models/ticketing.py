@@ -14,7 +14,7 @@ from sqlalchemy import (
     Column, Integer, String, DateTime, ForeignKey, Text, Boolean, Index, JSON
 )
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 import enum
 
 from app.models.database import Base
@@ -48,8 +48,8 @@ class TicketingConfig(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     auto_create_on_triage = Column(Boolean, default=False, nullable=False)
     sync_status_back = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         Index('idx_ticketing_config_tenant', 'tenant_id'),
@@ -81,9 +81,9 @@ class Ticket(Base):
     external_status = Column(String(100))  # e.g., "To Do", "In Progress", "Done"
     sync_status = Column(String(50), default='synced')  # synced, pending, error, conflict
     sync_error = Column(Text)  # Last sync error message
-    last_synced_at = Column(DateTime, default=datetime.utcnow)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_synced_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Extra metadata for the external ticket
     external_metadata = Column(JSON)  # Assignee, labels, priority, etc.

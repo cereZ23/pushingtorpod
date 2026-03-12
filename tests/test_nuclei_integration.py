@@ -15,7 +15,7 @@ import pytest
 import json
 import subprocess
 from unittest.mock import Mock, patch, MagicMock
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 class TestNucleiExecution:
@@ -352,7 +352,7 @@ class TestNucleiCooldown:
             pytest.skip("Nuclei cooldown not yet implemented")
 
         # Set last_scanned_at to 1 hour ago
-        test_asset.last_enriched_at = datetime.utcnow() - timedelta(hours=1)
+        test_asset.last_enriched_at = datetime.now(timezone.utc) - timedelta(hours=1)
         db_session.commit()
 
         # Should not scan (within cooldown)
@@ -360,7 +360,7 @@ class TestNucleiCooldown:
         assert should_scan is False
 
         # Set last_scanned_at to 25 hours ago
-        test_asset.last_enriched_at = datetime.utcnow() - timedelta(hours=25)
+        test_asset.last_enriched_at = datetime.now(timezone.utc) - timedelta(hours=25)
         db_session.commit()
 
         # Should scan (outside cooldown)

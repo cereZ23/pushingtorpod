@@ -5,7 +5,7 @@ Tests for TLS certificate listing, expiration tracking, and filtering.
 Total: 7 tests
 """
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 
 from app.models import Asset, AssetType
@@ -66,7 +66,7 @@ class TestCertificateEndpoints:
         assert len(certs) > 0
 
         # Verify all certificates expire within 30 days
-        cutoff_date = datetime.utcnow() + timedelta(days=30)
+        cutoff_date = datetime.now(timezone.utc) + timedelta(days=30)
         for cert in certs:
             not_after = datetime.fromisoformat(cert["not_after"].replace('Z', '+00:00'))
             assert not_after <= cutoff_date
@@ -89,7 +89,7 @@ class TestCertificateEndpoints:
             certs = data
 
         # Verify all certificates expire within 7 days
-        cutoff_date = datetime.utcnow() + timedelta(days=7)
+        cutoff_date = datetime.now(timezone.utc) + timedelta(days=7)
         for cert in certs:
             not_after = datetime.fromisoformat(cert["not_after"].replace('Z', '+00:00'))
             assert not_after <= cutoff_date
@@ -175,7 +175,7 @@ class TestCertificateEndpoints:
             certs = data
 
         # All returned certificates should be expired
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         for cert in certs:
             not_after = datetime.fromisoformat(cert["not_after"].replace('Z', '+00:00'))
             assert not_after < now
@@ -206,8 +206,8 @@ def tenant_with_certificates(db_session, test_tenant):
             asset_id=asset.id,
             common_name=asset.identifier,
             issuer="Let's Encrypt Authority X3",
-            not_before=datetime.utcnow() - timedelta(days=30),
-            not_after=datetime.utcnow() + timedelta(days=60),
+            not_before=datetime.now(timezone.utc) - timedelta(days=30),
+            not_after=datetime.now(timezone.utc) + timedelta(days=60),
             serial_number=f"serial_{i}",
             san_domains=[asset.identifier, f"www.{asset.identifier}"]
         )
@@ -237,16 +237,16 @@ def expiring_certificates(db_session, test_tenant):
             asset_id=asset.id,
             common_name=asset.identifier,
             issuer="DigiCert",
-            not_before=datetime.utcnow() - timedelta(days=300),
-            not_after=datetime.utcnow() + timedelta(days=15),
+            not_before=datetime.now(timezone.utc) - timedelta(days=300),
+            not_after=datetime.now(timezone.utc) + timedelta(days=15),
             serial_number="exp_15_days"
         ),
         Certificate(
             asset_id=asset.id,
             common_name=f"alt.{asset.identifier}",
             issuer="DigiCert",
-            not_before=datetime.utcnow() - timedelta(days=300),
-            not_after=datetime.utcnow() + timedelta(days=25),
+            not_before=datetime.now(timezone.utc) - timedelta(days=300),
+            not_after=datetime.now(timezone.utc) + timedelta(days=25),
             serial_number="exp_25_days"
         ),
     ]
@@ -273,8 +273,8 @@ def critical_expiring_certificates(db_session, test_tenant):
         asset_id=asset.id,
         common_name=asset.identifier,
         issuer="Let's Encrypt",
-        not_before=datetime.utcnow() - timedelta(days=80),
-        not_after=datetime.utcnow() + timedelta(days=3),
+        not_before=datetime.now(timezone.utc) - timedelta(days=80),
+        not_after=datetime.now(timezone.utc) + timedelta(days=3),
         serial_number="critical_3_days"
     )
     db_session.add(cert)
@@ -300,8 +300,8 @@ def certificate_with_sans(db_session, test_tenant):
         asset_id=asset.id,
         common_name="multi-san.example.com",
         issuer="DigiCert SHA2 Secure Server CA",
-        not_before=datetime.utcnow() - timedelta(days=30),
-        not_after=datetime.utcnow() + timedelta(days=335),
+        not_before=datetime.now(timezone.utc) - timedelta(days=30),
+        not_after=datetime.now(timezone.utc) + timedelta(days=335),
         serial_number="san_cert_123",
         san_domains=[
             "multi-san.example.com",
@@ -346,8 +346,8 @@ def certificates_various_issuers(db_session, test_tenant):
             asset_id=asset.id,
             common_name=asset.identifier,
             issuer=issuer,
-            not_before=datetime.utcnow() - timedelta(days=30),
-            not_after=datetime.utcnow() + timedelta(days=335),
+            not_before=datetime.now(timezone.utc) - timedelta(days=30),
+            not_after=datetime.now(timezone.utc) + timedelta(days=335),
             serial_number=f"issuer_{asset.id}"
         )
         certificates.append(cert)
@@ -375,8 +375,8 @@ def other_tenant_certificates(db_session, other_tenant):
         asset_id=asset.id,
         common_name=asset.identifier,
         issuer="Let's Encrypt",
-        not_before=datetime.utcnow() - timedelta(days=30),
-        not_after=datetime.utcnow() + timedelta(days=60),
+        not_before=datetime.now(timezone.utc) - timedelta(days=30),
+        not_after=datetime.now(timezone.utc) + timedelta(days=60),
         serial_number="other_tenant_cert"
     )
     db_session.add(cert)
@@ -402,8 +402,8 @@ def expired_certificates(db_session, test_tenant):
         asset_id=asset.id,
         common_name=asset.identifier,
         issuer="Old CA",
-        not_before=datetime.utcnow() - timedelta(days=400),
-        not_after=datetime.utcnow() - timedelta(days=5),
+        not_before=datetime.now(timezone.utc) - timedelta(days=400),
+        not_after=datetime.now(timezone.utc) - timedelta(days=5),
         serial_number="expired_cert"
     )
     db_session.add(cert)

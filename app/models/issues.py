@@ -7,7 +7,7 @@ tracking, assignment, and SLA management.
 """
 
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     Column, Integer, String, DateTime, ForeignKey, Text, Enum, Float, Index,
@@ -57,8 +57,8 @@ class Issue(Base):
     sla_due_at = Column(DateTime)
     resolved_at = Column(DateTime)
     resolved_by = Column(Integer, ForeignKey('users.id'))
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
     issue_findings = relationship(
@@ -91,7 +91,7 @@ class IssueFinding(Base):
     id = Column(Integer, primary_key=True)
     issue_id = Column(Integer, ForeignKey('issues.id', ondelete='CASCADE'), nullable=False)
     finding_id = Column(Integer, ForeignKey('findings.id', ondelete='CASCADE'), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     issue = relationship("Issue", back_populates="issue_findings")
@@ -123,7 +123,7 @@ class IssueActivity(Base):
     old_value = Column(String(255))
     new_value = Column(String(255))
     comment = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         Index('idx_ia_issue', 'issue_id'),

@@ -417,7 +417,7 @@ class TestEventRepositoryQueryOperations:
 
         # Mock current time
         now = datetime(2024, 1, 15, 12, 0, 0)
-        mock_datetime.utcnow.return_value = now
+        mock_datetime.now.return_value = now
 
         query_mock = mock_db.query.return_value
         query_mock.join.return_value = query_mock
@@ -437,7 +437,7 @@ class TestEventRepositoryQueryOperations:
         mock_db = MagicMock()
 
         now = datetime(2024, 1, 15, 12, 0, 0)
-        mock_datetime.utcnow.return_value = now
+        mock_datetime.now.return_value = now
 
         query_mock = mock_db.query.return_value
         query_mock.join.return_value = query_mock

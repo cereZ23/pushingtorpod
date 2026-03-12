@@ -272,7 +272,7 @@ def run_network_enrichment(
         try:
             db.rollback()
         except Exception:
-            pass
+            logger.debug("db.rollback() failed after network_enrichment error", exc_info=True)
         raise self.retry(exc=exc)
     finally:
         db.close()

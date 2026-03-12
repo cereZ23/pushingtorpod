@@ -243,7 +243,7 @@ def run_diff_and_alert(self, tenant_id: int, scan_run_id: int):
         try:
             db.rollback()
         except Exception:
-            pass
+            logger.debug("db.rollback() failed after diff_alert error", exc_info=True)
         raise self.retry(exc=exc)
     finally:
         db.close()

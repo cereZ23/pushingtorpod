@@ -24,7 +24,7 @@ import threading
 import queue
 import random
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
@@ -153,8 +153,8 @@ def sample_assets(performance_db) -> List[Asset]:
             tenant_id=tenant.id,
             type=AssetType.DOMAIN if i % 2 == 0 else AssetType.SUBDOMAIN,
             identifier=f"test-{i}.example.com",
-            first_seen=datetime.utcnow(),
-            last_seen=datetime.utcnow(),
+            first_seen=datetime.now(timezone.utc),
+            last_seen=datetime.now(timezone.utc),
             confidence_score=0.8 + (i % 20) / 100
         )
         db.add(asset)
@@ -401,8 +401,8 @@ class TestDatabasePerformance:
                     'tenant_id': tenant.id,
                     'type': 'domain',
                     'identifier': f'perf-{i}-{time.time()}.example.com',
-                    'first_seen': datetime.utcnow(),
-                    'last_seen': datetime.utcnow(),
+                    'first_seen': datetime.now(timezone.utc),
+                    'last_seen': datetime.now(timezone.utc),
                     'confidence_score': 0.85
                 })
 
@@ -438,8 +438,8 @@ class TestDatabasePerformance:
                     'tenant_id': tenant.id,
                     'type': 'subdomain',
                     'identifier': f'perf-{i}-{time.time()}.example.com',
-                    'first_seen': datetime.utcnow(),
-                    'last_seen': datetime.utcnow(),
+                    'first_seen': datetime.now(timezone.utc),
+                    'last_seen': datetime.now(timezone.utc),
                     'confidence_score': 0.75
                 })
 
@@ -475,8 +475,8 @@ class TestDatabasePerformance:
                     'tenant_id': tenant.id,
                     'type': 'ip' if i % 3 == 0 else 'domain',
                     'identifier': f'perf-{i}-{time.time()}.example.com',
-                    'first_seen': datetime.utcnow(),
-                    'last_seen': datetime.utcnow(),
+                    'first_seen': datetime.now(timezone.utc),
+                    'last_seen': datetime.now(timezone.utc),
                     'confidence_score': 0.65 + (i % 35) / 100
                 })
 
@@ -549,7 +549,7 @@ class TestDatabasePerformance:
                         "status_code": 200,
                         "title": "Test Site",
                         "server": "nginx",
-                        "last_checked": datetime.utcnow()
+                        "last_checked": datetime.now(timezone.utc)
                     }
                 )
             conn.commit()
@@ -570,7 +570,7 @@ class TestDatabasePerformance:
                     """),
                     {
                         "tenant_id": tenant.id,
-                        "cutoff_date": datetime.utcnow() - timedelta(days=7)
+                        "cutoff_date": datetime.now(timezone.utc) - timedelta(days=7)
                     }
                 )
                 return len(result.fetchall())
@@ -595,8 +595,8 @@ class TestDatabasePerformance:
                             'tenant_id': tenant.id,
                             'type': 'domain',
                             'identifier': f'concurrent-{batch_id}-{i}-{time.time()}.example.com',
-                            'first_seen': datetime.utcnow(),
-                            'last_seen': datetime.utcnow(),
+                            'first_seen': datetime.now(timezone.utc),
+                            'last_seen': datetime.now(timezone.utc),
                             'confidence_score': 0.8
                         })
 
@@ -806,8 +806,8 @@ class TestConcurrentExecution:
                             "tenant_id": tenant.id,
                             "type": "domain",
                             "identifier": f"pool-test-{op_id}-{time.time()}.example.com",
-                            "first_seen": datetime.utcnow(),
-                            "last_seen": datetime.utcnow(),
+                            "first_seen": datetime.now(timezone.utc),
+                            "last_seen": datetime.now(timezone.utc),
                             "confidence_score": 0.75
                         }
                     )
@@ -963,8 +963,8 @@ class TestStressTesting:
                         'tenant_id': tenant.id,
                         'type': 'domain',
                         'identifier': f'stress-{batch_size}-{i}.example.com',
-                        'first_seen': datetime.utcnow(),
-                        'last_seen': datetime.utcnow(),
+                        'first_seen': datetime.now(timezone.utc),
+                        'last_seen': datetime.now(timezone.utc),
                         'confidence_score': 0.7
                     })
 

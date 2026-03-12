@@ -34,8 +34,8 @@ class User(Base):
     mfa_enabled = Column(Boolean, default=False, nullable=False)
     password_reset_token = Column(String(255), nullable=True, index=True)
     password_reset_expires = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     last_login = Column(DateTime)
 
     # Relationships
@@ -86,8 +86,8 @@ class TenantMembership(Base):
     tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
     role = Column(String(50), nullable=False)  # admin, member, viewer
     is_active = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
     user = relationship("User", back_populates="tenant_memberships")
@@ -140,8 +140,8 @@ class APIKey(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     expires_at = Column(DateTime)
     last_used_at = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
     user = relationship("User", back_populates="api_keys")
@@ -178,7 +178,7 @@ class UserInvitation(Base):
     invited_by = Column(Integer, ForeignKey('users.id'), nullable=False)
     accepted_at = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     # Relationships
     tenant = relationship("Tenant")

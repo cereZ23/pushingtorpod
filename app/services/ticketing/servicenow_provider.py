@@ -450,4 +450,4 @@ class ServiceNowProvider(TicketingProvider):
             try:
                 self._client.close()
             except Exception:
-                pass
+                logger.debug("Failed to close ServiceNow HTTP client during cleanup")

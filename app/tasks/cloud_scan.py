@@ -371,8 +371,9 @@ async def _probe_bucket(
             return None
         except httpx.ConnectTimeout:
             return None
-        except Exception:
-            # Catch-all: do not let one probe crash the entire scan
+        except (httpx.HTTPError, ValueError, UnicodeDecodeError) as exc:
+            # Narrow catch: httpx transport errors, malformed responses, encoding issues
+            logger.debug("Cloud probe error for %s: %s", target.get("bucket_name", "?"), exc)
             return None
 
 
@@ -725,7 +726,7 @@ def run_cloud_bucket_scan(
         try:
             db.rollback()
         except Exception:
-            pass
+            logger.debug("db.rollback() failed after cloud_scan error", exc_info=True)
     finally:
         if own_session:
             db.close()

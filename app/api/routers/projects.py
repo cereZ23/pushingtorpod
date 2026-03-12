@@ -13,6 +13,8 @@ from typing import Optional
 from datetime import datetime
 import logging
 
+from app.core.audit import log_data_modification
+
 from app.api.dependencies import (
     get_db,
     verify_tenant_access,
@@ -312,7 +314,14 @@ def create_project(
     db.commit()
     db.refresh(project)
 
-    logger.info(f"Created project '{project.name}' (id={project.id}) for tenant {tenant_id}")
+    log_data_modification(
+        action="create",
+        resource="project",
+        resource_id=str(project.id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        details={"name": project.name},
+    )
 
     return ProjectResponse.model_validate(project)
 
@@ -479,7 +488,14 @@ def update_project(
     db.commit()
     db.refresh(project)
 
-    logger.info(f"Updated project '{project.name}' (id={project.id})")
+    log_data_modification(
+        action="update",
+        resource="project",
+        resource_id=str(project.id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        details={k: v for k, v in updates.model_dump(exclude_unset=True).items() if k != "seeds"},
+    )
 
     return ProjectResponse.model_validate(project)
 

@@ -24,6 +24,7 @@ from app.api.schemas.tenant import (
     TenantStats,
     RecentActivity
 )
+from app.core.audit import log_data_modification
 from app.models.database import Tenant, Asset, Service, Finding, Event, AssetType, FindingSeverity, FindingStatus
 from app.models.enrichment import Certificate, Endpoint
 from app.models.auth import User
@@ -91,7 +92,14 @@ def create_tenant(
     db.commit()
     db.refresh(tenant)
 
-    logger.info(f"Admin {admin.email} created tenant {tenant.name}")
+    log_data_modification(
+        action="create",
+        resource="tenant",
+        resource_id=str(tenant.id),
+        user_id=admin.id,
+        tenant_id=tenant.id,
+        details={"name": tenant.name, "slug": tenant.slug},
+    )
 
     return TenantResponse.model_validate(tenant)
 
@@ -159,7 +167,14 @@ async def update_tenant(
     db.commit()
     db.refresh(tenant)
 
-    logger.info(f"User {current_user.email} updated tenant {tenant.name}")
+    log_data_modification(
+        action="update",
+        resource="tenant",
+        resource_id=str(tenant_id),
+        user_id=current_user.id,
+        tenant_id=tenant_id,
+        details={k: v for k, v in updates.model_dump(exclude_unset=True).items()},
+    )
 
     return TenantResponse.model_validate(tenant)
 

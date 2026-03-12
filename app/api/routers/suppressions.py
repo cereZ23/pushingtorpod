@@ -22,6 +22,7 @@ from app.api.dependencies import (
     PaginationParams,
 )
 from app.api.schemas.common import PaginatedResponse, SuccessResponse
+from app.core.audit import log_data_modification
 from app.models.database import Suppression, Finding, Asset
 
 logger = logging.getLogger(__name__)
@@ -287,9 +288,13 @@ def create_suppression(
     db.commit()
     db.refresh(suppression)
 
-    logger.info(
-        f"Created suppression rule '{suppression.name}' (id={suppression.id}) "
-        f"for tenant {tenant_id}"
+    log_data_modification(
+        action="create",
+        resource="suppression",
+        resource_id=str(suppression.id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        details={"name": suppression.name, "pattern_type": payload.pattern_type, "pattern": payload.pattern},
     )
 
     return _serialize_suppression(suppression)
@@ -377,7 +382,14 @@ def update_suppression(
     db.commit()
     db.refresh(suppression)
 
-    logger.info(f"Updated suppression rule '{suppression.name}' (id={suppression_id})")
+    log_data_modification(
+        action="update",
+        resource="suppression",
+        resource_id=str(suppression_id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        details={k: v for k, v in updates.model_dump(exclude_unset=True).items()},
+    )
 
     return _serialize_suppression(suppression)
 
@@ -423,7 +435,14 @@ def delete_suppression(
     db.delete(suppression)
     db.commit()
 
-    logger.info(f"Deleted suppression rule '{rule_name}' (id={suppression_id}) for tenant {tenant_id}")
+    log_data_modification(
+        action="delete",
+        resource="suppression",
+        resource_id=str(suppression_id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        details={"name": rule_name},
+    )
 
     return SuccessResponse(
         success=True,
@@ -522,10 +541,13 @@ def create_suppression_from_finding(
     db.commit()
     db.refresh(suppression)
 
-    logger.info(
-        f"Created suppression from finding #{finding_id} "
-        f"(rule id={suppression.id}, type={payload.pattern_type}) "
-        f"for tenant {tenant_id}"
+    log_data_modification(
+        action="create",
+        resource="suppression",
+        resource_id=str(suppression.id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        details={"from_finding_id": finding_id, "pattern_type": payload.pattern_type, "pattern": pattern},
     )
 
     return _serialize_suppression(suppression)

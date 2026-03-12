@@ -286,7 +286,7 @@ def deliver_scheduled_reports(self) -> dict:
         try:
             db.rollback()
         except Exception:
-            pass
+            logger.debug("db.rollback() failed after report_delivery error", exc_info=True)
         raise self.retry(exc=exc)
     finally:
         db.close()

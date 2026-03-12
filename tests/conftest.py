@@ -11,7 +11,7 @@ import pytest
 import tempfile
 import os
 from unittest.mock import MagicMock, patch
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import create_engine
@@ -460,7 +460,8 @@ def freeze_time():
     fixed_time = datetime(2024, 1, 15, 12, 0, 0)
 
     with patch('app.repositories.asset_repository.datetime') as mock_datetime:
-        mock_datetime.utcnow.return_value = fixed_time
+        mock_datetime.now.return_value = fixed_time
+        mock_datetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
         yield fixed_time
 
 
@@ -944,8 +945,8 @@ def test_assets(db_session, test_tenant):
             type=AssetType.DOMAIN,
             risk_score=30.0,
             is_active=True,
-            first_seen=datetime.utcnow() - timedelta(days=30),
-            last_seen=datetime.utcnow()
+            first_seen=datetime.now(timezone.utc) - timedelta(days=30),
+            last_seen=datetime.now(timezone.utc)
         ),
         Asset(
             tenant_id=test_tenant.id,
@@ -953,8 +954,8 @@ def test_assets(db_session, test_tenant):
             type=AssetType.SUBDOMAIN,
             risk_score=45.0,
             is_active=True,
-            first_seen=datetime.utcnow() - timedelta(days=10),
-            last_seen=datetime.utcnow()
+            first_seen=datetime.now(timezone.utc) - timedelta(days=10),
+            last_seen=datetime.now(timezone.utc)
         ),
         Asset(
             tenant_id=test_tenant.id,
@@ -962,8 +963,8 @@ def test_assets(db_session, test_tenant):
             type=AssetType.SUBDOMAIN,
             risk_score=75.0,
             is_active=True,
-            first_seen=datetime.utcnow() - timedelta(hours=2),
-            last_seen=datetime.utcnow()
+            first_seen=datetime.now(timezone.utc) - timedelta(hours=2),
+            last_seen=datetime.now(timezone.utc)
         ),
         Asset(
             tenant_id=test_tenant.id,
@@ -971,8 +972,8 @@ def test_assets(db_session, test_tenant):
             type=AssetType.IP,
             risk_score=60.0,
             is_active=True,
-            first_seen=datetime.utcnow() - timedelta(days=5),
-            last_seen=datetime.utcnow()
+            first_seen=datetime.now(timezone.utc) - timedelta(days=5),
+            last_seen=datetime.now(timezone.utc)
         ),
         Asset(
             tenant_id=test_tenant.id,
@@ -980,8 +981,8 @@ def test_assets(db_session, test_tenant):
             type=AssetType.URL,
             risk_score=85.0,
             is_active=True,
-            first_seen=datetime.utcnow() - timedelta(hours=1),
-            last_seen=datetime.utcnow()
+            first_seen=datetime.now(timezone.utc) - timedelta(hours=1),
+            last_seen=datetime.now(timezone.utc)
         ),
     ]
     db_session.add_all(assets)
@@ -1040,8 +1041,8 @@ def test_certs(db_session, test_assets):
             common_name="www.example.com",
             subject_alternative_names=["www.example.com", "example.com"],
             issuer="Let's Encrypt",
-            not_before=datetime.utcnow() - timedelta(days=60),
-            not_after=datetime.utcnow() + timedelta(days=30),
+            not_before=datetime.now(timezone.utc) - timedelta(days=60),
+            not_after=datetime.now(timezone.utc) + timedelta(days=30),
             is_wildcard=False,
             is_self_signed=False
         ),
@@ -1050,8 +1051,8 @@ def test_certs(db_session, test_assets):
             common_name="*.example.com",
             subject_alternative_names=["*.example.com", "example.com"],
             issuer="DigiCert",
-            not_before=datetime.utcnow() - timedelta(days=180),
-            not_after=datetime.utcnow() + timedelta(days=10),  # Expiring soon
+            not_before=datetime.now(timezone.utc) - timedelta(days=180),
+            not_after=datetime.now(timezone.utc) + timedelta(days=10),  # Expiring soon
             is_wildcard=True,
             is_self_signed=False
         ),
@@ -1226,8 +1227,8 @@ def test_cert(db_session, test_asset):
         common_name="single.example.com",
         subject_alternative_names=["single.example.com"],
         issuer="Let's Encrypt",
-        not_before=datetime.utcnow() - timedelta(days=60),
-        not_after=datetime.utcnow() + timedelta(days=60),
+        not_before=datetime.now(timezone.utc) - timedelta(days=60),
+        not_after=datetime.now(timezone.utc) + timedelta(days=60),
         is_wildcard=False,
         is_self_signed=False
     )
@@ -1299,8 +1300,8 @@ def other_tenant_cert(db_session, other_tenant_asset):
         common_name="other.example.com",
         subject_alternative_names=["other.example.com"],
         issuer="Let's Encrypt",
-        not_before=datetime.utcnow() - timedelta(days=60),
-        not_after=datetime.utcnow() + timedelta(days=60),
+        not_before=datetime.now(timezone.utc) - timedelta(days=60),
+        not_after=datetime.now(timezone.utc) + timedelta(days=60),
         is_wildcard=False,
         is_self_signed=False
     )
@@ -1407,8 +1408,8 @@ def existing_finding(db_session, test_asset):
         cve_id="CVE-2023-00001",
         evidence='{"initial": "data"}',
         status=FindingStatus.OPEN,
-        first_seen=datetime.utcnow() - timedelta(days=7),
-        last_seen=datetime.utcnow() - timedelta(days=7)
+        first_seen=datetime.now(timezone.utc) - timedelta(days=7),
+        last_seen=datetime.now(timezone.utc) - timedelta(days=7)
     )
     db_session.add(finding)
     db_session.commit()

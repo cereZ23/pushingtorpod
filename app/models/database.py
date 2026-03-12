@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum, Float, Boolean, Index, JSON
 from sqlalchemy.orm import relationship, declarative_base
-from datetime import datetime
+from datetime import datetime, timezone
 import enum
 
 Base = declarative_base()
@@ -13,8 +13,8 @@ class Tenant(Base):
     slug = Column(String(100), unique=True, nullable=False)
     contact_policy = Column(Text)
     api_keys = Column(Text)  # JSON encrypted field for OSINT/API providers (text column)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     assets = relationship("Asset", back_populates="tenant", cascade="all, delete-orphan")
     seeds = relationship("Seed", back_populates="tenant", cascade="all, delete-orphan")
@@ -40,8 +40,8 @@ class Asset(Base):
     tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
     type = Column(Enum(AssetType), nullable=False)
     identifier = Column(String(500), nullable=False)  # Domain, IP, URL
-    first_seen = Column(DateTime, default=datetime.utcnow)
-    last_seen = Column(DateTime, default=datetime.utcnow)
+    first_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     risk_score = Column(Float, default=0.0)
     is_active = Column(Boolean, default=True)
     raw_metadata = Column(Text)  # JSON field for flexible attrs
@@ -96,8 +96,8 @@ class Service(Base):
     http_title = Column(String(500))
     http_status = Column(Integer)
     technologies = Column(Text)  # JSON array
-    first_seen = Column(DateTime, default=datetime.utcnow)
-    last_seen = Column(DateTime, default=datetime.utcnow)
+    first_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Sprint 2: HTTPx enrichment fields
     web_server = Column(String(200))      # nginx, Apache, IIS
@@ -154,8 +154,8 @@ class Finding(Base):
     cvss_score = Column(Float)
     cve_id = Column(String(50))
     evidence = Column(JSON)
-    first_seen = Column(DateTime, default=datetime.utcnow)
-    last_seen = Column(DateTime, default=datetime.utcnow)
+    first_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     status = Column(Enum(FindingStatus), default=FindingStatus.OPEN)
 
     # Sprint 3: Nuclei integration - Additional metadata
@@ -200,7 +200,7 @@ class Event(Base):
     asset_id = Column(Integer, ForeignKey('assets.id'), nullable=False)
     kind = Column(Enum(EventKind), nullable=False)
     payload = Column(Text)  # JSON
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     asset = relationship("Asset", back_populates="events")
 
@@ -221,7 +221,7 @@ class Seed(Base):
     type = Column(String(50))  # domain, asn, ip_range, keyword
     value = Column(String(500), nullable=False)
     enabled = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     tenant = relationship("Tenant", back_populates="seeds")
 
@@ -251,8 +251,8 @@ class Suppression(Base):
     is_global = Column(Boolean, default=False)  # Applies to all tenants
     priority = Column(Integer, default=0)  # Higher priority rules matched first
     expires_at = Column(DateTime)  # Optional expiration
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         Index('idx_suppression_tenant', 'tenant_id'),

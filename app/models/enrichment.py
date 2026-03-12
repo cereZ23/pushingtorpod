@@ -9,7 +9,7 @@ Sprint 2 Week 1 - New enrichment tools integration
 
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean, Index, JSON
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from app.models.database import Base
@@ -78,8 +78,8 @@ class Certificate(Base):
     has_weak_signature = Column(Boolean, default=False)  # MD5, SHA1
 
     # Metadata
-    first_seen = Column(DateTime, default=datetime.utcnow)
-    last_seen = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    first_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     raw_data = Column(JSON)  # Full TLSx output for debugging
 
     # Relationship
@@ -155,8 +155,8 @@ class Endpoint(Base):
     depth = Column(Integer, default=0)  # Crawl depth from seed URL
 
     # Metadata
-    first_seen = Column(DateTime, default=datetime.utcnow)
-    last_seen = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    first_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     raw_data = Column(JSON)  # Full Katana output
 
     # Relationship

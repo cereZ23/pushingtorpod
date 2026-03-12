@@ -428,7 +428,7 @@ def duplicate_findings(db_session, test_tenant, sample_asset):
             cvss_score=10.0,
             status=FindingStatus.OPEN if i == 0 else FindingStatus.FALSE_POSITIVE,
             evidence=f'{{"scan": {i}}}',
-            first_seen=datetime.utcnow() - timedelta(days=i)
+            first_seen=datetime.now(timezone.utc) - timedelta(days=i)
         )
         findings.append(finding)
 

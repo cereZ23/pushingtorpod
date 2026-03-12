@@ -26,6 +26,7 @@ from app.api.schemas.siem import (
     SIEMPushRequest,
     SIEMPushResponse,
 )
+from app.core.audit import log_audit_event, AuditEventType
 from app.services.siem_export import export_findings_for_tenant
 from app.utils.validators import DomainValidator
 
@@ -215,12 +216,14 @@ def push_findings(
             detail=f"Failed to connect to SIEM endpoint: {exc}",
         ) from exc
 
-    logger.info(
-        "SIEM push completed: tenant_id=%s format=%s events=%d endpoint=%s",
-        tenant_id,
-        body.format,
-        len(events),
-        body.endpoint_url,
+    log_audit_event(
+        event_type=AuditEventType.DATA_EXPORT,
+        action=f"SIEM push ({body.format})",
+        result="success",
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        resource="findings",
+        details={"format": body.format, "event_count": len(events), "endpoint": body.endpoint_url},
     )
 
     return SIEMPushResponse(

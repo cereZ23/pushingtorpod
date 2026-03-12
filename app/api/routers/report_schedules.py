@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db, verify_tenant_access
+from app.core.audit import log_data_modification
 from app.api.schemas.report_schedule import (
     ReportScheduleCreate,
     ReportScheduleResponse,
@@ -146,13 +147,13 @@ def create_report_schedule(
     db.commit()
     db.refresh(schedule)
 
-    logger.info(
-        "Created report schedule %d for tenant %d (%s %s %s)",
-        schedule.id,
-        tenant_id,
-        body.report_type,
-        body.format,
-        body.schedule,
+    log_data_modification(
+        action="create",
+        resource="report_schedule",
+        resource_id=str(schedule.id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        details={"report_type": body.report_type, "format": body.format, "schedule": body.schedule},
     )
 
     return _schedule_to_response(schedule)
@@ -217,11 +218,13 @@ def update_report_schedule(
     db.commit()
     db.refresh(schedule)
 
-    logger.info(
-        "Updated report schedule %d for tenant %d: %s",
-        schedule_id,
-        tenant_id,
-        list(update_data.keys()),
+    log_data_modification(
+        action="update",
+        resource="report_schedule",
+        resource_id=str(schedule_id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        details={k: str(v) for k, v in update_data.items()},
     )
 
     return _schedule_to_response(schedule)
@@ -266,6 +269,14 @@ def delete_report_schedule(
     schedule.is_active = False
     schedule.updated_at = datetime.now(timezone.utc)
     db.commit()
+
+    log_data_modification(
+        action="delete",
+        resource="report_schedule",
+        resource_id=str(schedule_id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+    )
 
     logger.info(
         "Soft-deleted report schedule %d for tenant %d",

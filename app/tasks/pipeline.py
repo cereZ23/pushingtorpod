@@ -177,7 +177,9 @@ def _run_single_phase(phase_id, tenant_id, project_id, scan_run_id,
 
     except Exception as e:
         error_msg = str(e)
-        tenant_logger.error(f"Phase {phase_id} ({phase_name}) failed: {error_msg}")
+        tenant_logger.error(
+            f"Phase {phase_id} ({phase_name}) failed: {error_msg}", exc_info=True,
+        )
         _update_phase(db, scan_run_id, phase_id, PhaseStatus.FAILED, error=error_msg)
         pipeline_stats['phases_failed'] += 1
 
@@ -933,7 +935,8 @@ def _query_crtsh(domain: str, tenant_id: int, db, tenant_logger) -> tuple[int, i
             return 0, 0
 
         entries = resp.json()
-    except Exception:
+    except (req_lib.RequestException, ValueError) as exc:
+        tenant_logger.debug("crt.sh query for %s failed: %s", domain, exc)
         return 0, 0
 
     # Extract unique subdomain names from CN and SAN fields
@@ -2169,7 +2172,11 @@ def _phase_11_risk_scoring(tenant_id, project_id, scan_run_id, db, tenant_logger
                         try:
                             epss = threat_intel_svc.get_epss_score(finding.cve_id)
                             kev = threat_intel_svc.is_in_kev(finding.cve_id)
-                        except Exception:
+                        except (KeyError, ValueError, OSError) as _ti_exc:
+                            tenant_logger.debug(
+                                "Threat intel lookup failed for %s: %s",
+                                finding.cve_id, _ti_exc,
+                            )
                             epss, kev = 0.0, False
                     if epss > issue_epss:
                         issue_epss = epss

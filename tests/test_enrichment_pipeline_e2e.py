@@ -14,7 +14,7 @@ Uses safe targets: example.com, scanme.nmap.org, badssl.com
 import pytest
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock, Mock
 from typing import List, Dict
 
@@ -1216,7 +1216,7 @@ class TestPerformanceBenchmarks:
                 identifier=f'perf{i}.example.com',
                 risk_score=float(i % 10),
                 priority=['low', 'normal', 'high', 'critical'][i % 4],
-                last_enriched_at=datetime.utcnow() - timedelta(days=i % 30),
+                last_enriched_at=datetime.now(timezone.utc) - timedelta(days=i % 30),
                 is_active=True
             )
             assets.append(asset)

@@ -12,7 +12,7 @@ Tests cover:
 
 import json
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch, PropertyMock
 
 import httpx
@@ -908,8 +908,8 @@ class TestTicketSchemas:
         mock_ticket.external_status = "To Do"
         mock_ticket.sync_status = "synced"
         mock_ticket.sync_error = None
-        mock_ticket.last_synced_at = datetime.utcnow()
-        mock_ticket.created_at = datetime.utcnow()
+        mock_ticket.last_synced_at = datetime.now(timezone.utc)
+        mock_ticket.created_at = datetime.now(timezone.utc)
         mock_ticket.updated_at = None
 
         response = TicketResponse.model_validate(mock_ticket)

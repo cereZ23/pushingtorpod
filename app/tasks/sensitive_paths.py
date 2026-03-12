@@ -1290,7 +1290,8 @@ async def _probe_path(
 
     except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError):
         return None
-    except Exception:
+    except (httpx.HTTPError, ValueError, UnicodeDecodeError) as exc:
+        logger.debug("Unexpected error probing %s: %s", url, exc)
         return None
 
 
@@ -1369,7 +1370,8 @@ async def _scan_host(
 
                     except (httpx.TimeoutException, httpx.ConnectError):
                         continue
-                    except Exception:
+                    except (httpx.HTTPError, ValueError, UnicodeDecodeError) as exc:
+                        logger.debug("Scan error on %s: %s", base_url, exc)
                         continue
 
         return {'findings': findings, 'http_429_count': total_429s}
@@ -1662,7 +1664,7 @@ def run_sensitive_path_scan(
         try:
             db.rollback()
         except Exception:
-            pass
+            logger.debug("db.rollback() failed after sensitive_paths error", exc_info=True)
     finally:
         if own_session:
             db.close()

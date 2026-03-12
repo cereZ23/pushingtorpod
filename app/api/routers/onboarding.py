@@ -12,6 +12,7 @@ import logging
 import re
 
 from app.api.dependencies import get_db
+from app.core.audit import log_data_modification
 from app.models.database import Tenant, Seed
 from app.models.auth import User, TenantMembership
 from app.rate_limiter import limiter
@@ -219,7 +220,15 @@ def register_organization(
             # Don't fail registration if scan trigger fails
             logger.error(f"Failed to trigger initial scan pipeline: {scan_error}")
 
-        logger.info(f"Onboarding complete for {tenant.name}")
+        log_data_modification(
+            action="create",
+            resource="onboarding",
+            resource_id=str(tenant.id),
+            user_id=user.id,
+            tenant_id=tenant.id,
+            ip_address=request.client.host if request.client else None,
+            details={"company": body.company_name, "domains": body.domains, "email": body.email},
+        )
 
         return OnboardingResponse(
             tenant_id=tenant.id,

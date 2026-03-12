@@ -226,7 +226,7 @@ class TestIsAssetNew:
 
     def test_naive_datetime(self):
         """Naive datetime (no tzinfo) should still work."""
-        asset = Asset(first_seen=datetime.utcnow() - timedelta(days=2))
+        asset = Asset(first_seen=datetime.now(timezone.utc) - timedelta(days=2))
         assert _is_asset_new(asset) is True
 
 

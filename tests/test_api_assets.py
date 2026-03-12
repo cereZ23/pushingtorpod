@@ -101,7 +101,7 @@ class TestFilterAssets:
     def test_filter_assets_changed_since(self, client, auth_headers, test_tenant, test_assets):
         """Test filtering assets by changed_since timestamp"""
         # Get assets changed in last 24 hours
-        changed_since = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+        changed_since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
 
         response = client.get(
             f"/api/v1/tenants/{test_tenant.slug}/assets?changed_since={changed_since}",
@@ -121,7 +121,7 @@ class TestFilterAssets:
             if "last_seen" in asset:
                 last_seen = datetime.fromisoformat(asset["last_seen"].replace("Z", "+00:00"))
                 # Asset should be recent
-                assert last_seen >= datetime.utcnow() - timedelta(hours=25)
+                assert last_seen >= datetime.now(timezone.utc) - timedelta(hours=25)
 
     def test_filter_assets_by_risk_score(self, client, auth_headers, test_tenant, test_assets):
         """Test filtering assets with risk_score >= threshold"""
