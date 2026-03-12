@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Finding Schemas
 
@@ -47,7 +45,11 @@ class FindingResponse(BaseModel):
         """Parse evidence from JSON string if stored as TEXT in DB."""
         if isinstance(v, str):
             try:
-                return json.loads(v)
+                parsed = json.loads(v)
+                # Handle double-encoded JSON (json.dumps called twice)
+                if isinstance(parsed, str):
+                    parsed = json.loads(parsed)
+                return parsed
             except (json.JSONDecodeError, TypeError):
                 return None
         return v
