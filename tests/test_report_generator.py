@@ -10,6 +10,10 @@ Covers:
 """
 
 import json
+from contextlib import ExitStack
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -19,6 +23,7 @@ from app.services.report_generator import (
     TSC_CATEGORIES,
     _SEVERITY_COMPLIANCE_FALLBACK,
     _TEMPLATE_COMPLIANCE_MAP,
+    ReportGenerator,
     _format_evidence,
     _get_remediation,
     _map_finding_to_framework,
@@ -163,3 +168,4 @@ class TestComplianceStructure:
     def test_template_compliance_map_has_entries(self):
         """Template compliance map should have reasonable coverage."""
         assert len(_TEMPLATE_COMPLIANCE_MAP) >= 20
+

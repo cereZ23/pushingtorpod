@@ -34,6 +34,7 @@ MUTATION_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # Paths excluded from rate limiting (health, docs, OpenAPI schema)
 RATE_LIMIT_EXEMPT_PATHS = frozenset({
     "/health",
+    "/ready",
     "/api/docs",
     "/api/redoc",
     "/api/openapi.json",

@@ -59,3 +59,35 @@ docs/_build/
 .dockerignore
 Dockerfile*
 docker-compose*.yml
+
+# Git
+.git/
+.gitignore
+
+# Frontend (excluded from API/worker builds)
+frontend/node_modules/
+frontend/dist/
+frontend/.nuxt/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Claude Code / AI tools
+.claude/
+.specify/
+*.jsonl
+
+# Large files
+*.mmdb
+*.pdf
+*.docx
+
+# Test artifacts
+tests/
+htmlcov/
+.coverage
+
+# Design docs
+*.md
+!requirements*.txt

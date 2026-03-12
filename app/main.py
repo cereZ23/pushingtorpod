@@ -53,6 +53,7 @@ from app.api.routers import (
     invitations_router,
     search_router,
     audit_router,
+    health_router,
 )
 
 logger = logging.getLogger(__name__)
@@ -361,71 +362,9 @@ async def metrics(request: Request):
     return metrics_endpoint(request)
 
 
-@app.get("/health")
-def health_check():
-    """
-    Health check endpoint for load balancers.
-
-    Returns only healthy/unhealthy status per service.
-    Internal errors are logged server-side but never exposed to callers.
-    """
-    from app.database import engine
-    import redis
-    from minio import Minio
-    from minio.error import S3Error
-
-    health_status = {
-        "status": "healthy",
-        "services": {}
-    }
-
-    # Check PostgreSQL database
-    try:
-        from sqlalchemy import text
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1")).fetchone()
-        health_status["services"]["database"] = "ok"
-    except Exception as e:
-        # Broad catch: any DB error (connection, auth, timeout) means unhealthy
-        logger.error("Database health check failed: %s", e)
-        health_status["services"]["database"] = "error"
-        health_status["status"] = "unhealthy"
-
-    # Check Redis
-    try:
-        r = redis.from_url(settings.redis_url, socket_connect_timeout=2)
-        r.ping()
-        r.close()
-        health_status["services"]["redis"] = "ok"
-    except Exception as e:
-        # Broad catch: any Redis error (connection, auth, timeout) means unhealthy
-        logger.error("Redis health check failed: %s", e)
-        health_status["services"]["redis"] = "error"
-        health_status["status"] = "unhealthy"
-
-    # Check MinIO
-    try:
-        client = Minio(
-            settings.minio_endpoint,
-            access_key=settings.minio_access_key,
-            secret_key=settings.minio_secret_key,
-            secure=settings.minio_secure
-        )
-        list(client.list_buckets())
-        health_status["services"]["minio"] = "ok"
-    except Exception as e:
-        # Broad catch: any MinIO/S3 error (connection, auth, timeout) means unhealthy
-        logger.error("MinIO health check failed: %s", e)
-        health_status["services"]["minio"] = "error"
-        health_status["status"] = "unhealthy"
-
-    # Return 503 if unhealthy so load balancers remove this instance
-    if health_status["status"] == "unhealthy":
-        raise HTTPException(status_code=503, detail={"status": "unhealthy"})
-
-    return health_status
-
 # Include routers
+# Health checks at root path (no /api/v1 prefix)
+app.include_router(health_router)
 app.include_router(onboarding_router)  # Public onboarding (no auth required)
 app.include_router(auth_router)
 app.include_router(tenants_router)
