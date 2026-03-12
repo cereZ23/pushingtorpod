@@ -7,14 +7,15 @@ Finding-level score (0-100):
     - Base: CVSS score (0-10) * 10 = 0-100
     - EPSS multiplier: >0.5 -> +15, >0.1 -> +10, >0.01 -> +5
     - KEV (Known Exploited Vulnerability): if in CISA KEV -> +20
-    - Severity fallback (when no CVSS): critical=90, high=70, medium=45, low=20, info=5
+    - Severity fallback (when no CVSS): critical=75, high=50, medium=25, low=10, info=2
     - Capped at 100
 
 Asset-level score (0-100):
     - Highest finding score among open findings
     - Internet-exposed bonus: ports 80/443/8080/8443 -> +5
     - Expired TLS certificate -> +10
-    - New asset (first_seen < 7 days) -> +10
+    - Finding-count factor: +5% per doubling, capped at 1.2x
+    - New asset (first_seen < 7 days) -> +5
     - Capped at 100
 
 The engine also produces detailed component breakdowns and actionable
@@ -30,6 +31,7 @@ Integration points:
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -607,6 +609,15 @@ class RiskScoringEngine:
         # Compute asset-level score
         asset_score = max_finding_score
 
+        # Finding-count factor: assets with many open findings score higher
+        # than assets with a single finding of the same severity.
+        # +5% per doubling of finding count, capped at 1.2x.
+        finding_count = len(findings_data['finding_scores'])
+        count_factor = 1.0
+        if finding_count > 1:
+            count_factor = min(1.2, 1.0 + math.log2(finding_count) * 0.05)
+            asset_score *= count_factor
+
         internet_exposed_bonus = 0.0
         if port_data['is_internet_exposed']:
             internet_exposed_bonus = INTERNET_EXPOSED_BONUS
@@ -638,10 +649,11 @@ class RiskScoringEngine:
         # Build components breakdown
         components = {
             'max_finding_score': max_finding_score,
+            'count_factor': round(count_factor, 3),
             'internet_exposed_bonus': internet_exposed_bonus,
             'expired_cert_bonus': expired_cert_bonus,
             'new_asset_bonus': new_asset_bonus,
-            'finding_count': len(findings_data['finding_scores']),
+            'finding_count': finding_count,
             'severity_counts': findings_data['severity_counts'],
             'threat_intel': {
                 'kev_count': findings_data['kev_count'],
@@ -728,14 +740,21 @@ class RiskScoringEngine:
 # ---------------------------------------------------------------------------
 
 def _get_risk_level(score: float) -> str:
-    """Map a numeric score to a human-readable risk level."""
-    if score >= 71.0:
+    """Map a numeric score to a human-readable risk level.
+
+    Thresholds aligned with frontend grade bands (A/B/C/D/F)
+    and risk_engine.score_to_grade so that classifications are
+    consistent across the entire stack.
+    """
+    if score > 80:
         return 'critical'
-    if score >= 41.0:
+    if score > 60:
         return 'high'
-    if score >= 21.0:
+    if score > 40:
         return 'medium'
-    return 'low'
+    if score > 20:
+        return 'low'
+    return 'info'
 
 
 # ---------------------------------------------------------------------------
@@ -817,7 +836,7 @@ def recalculate_tenant_risk(
     processed = 0
     updated = 0
     failed = 0
-    distribution = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}
+    distribution = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'info': 0}
     all_scores: List[float] = []
 
     engine = RiskScoringEngine(db)

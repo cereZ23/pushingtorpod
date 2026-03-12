@@ -214,8 +214,13 @@ def compute_org_score(
 
     score = min(100, raw)
 
-    # Dampening: cap change at +/-15 points
-    if previous_score is not None:
+    # Dampening: cap change at +/-15 points per cycle for gradual drift.
+    # Bypass dampening when any asset exceeds the D-grade threshold (score > 60)
+    # so that acute events (new critical CVE, KEV) are reflected immediately.
+    max_asset = sorted_scores[0] if sorted_scores else 0
+    acute_event = max_asset > 60
+
+    if previous_score is not None and not acute_event:
         delta = score - previous_score
         dampening = 15.0  # from settings.risk_score_dampening
         if abs(delta) > dampening:

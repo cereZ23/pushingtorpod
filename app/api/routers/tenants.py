@@ -28,6 +28,7 @@ from app.core.audit import log_data_modification
 from app.models.database import Tenant, Asset, Service, Finding, Event, AssetType, FindingSeverity, FindingStatus
 from app.models.enrichment import Certificate, Endpoint
 from app.models.auth import User
+from app.models.risk import RiskScore
 from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
@@ -223,22 +224,22 @@ def get_tenant_dashboard(
         for event in recent_events
     ]
 
-    # Risk distribution
+    # Risk distribution (active assets only, thresholds aligned with grade bands)
     risk_buckets = {"critical": 0, "high": 0, "medium": 0, "low": 0}
-    assets = db.query(Asset).filter(Asset.tenant_id == tenant_id).all()
+    assets = db.query(Asset).filter(
+        Asset.tenant_id == tenant_id,
+        Asset.is_active.is_(True),
+    ).all()
 
     for asset in assets:
-        if asset.risk_score is not None:
-            if asset.risk_score >= 80:
-                risk_buckets["critical"] += 1
-            elif asset.risk_score >= 60:
-                risk_buckets["high"] += 1
-            elif asset.risk_score >= 40:
-                risk_buckets["medium"] += 1
-            else:
-                risk_buckets["low"] += 1
+        score = asset.risk_score if asset.risk_score is not None else 0
+        if score > 80:
+            risk_buckets["critical"] += 1
+        elif score > 60:
+            risk_buckets["high"] += 1
+        elif score > 40:
+            risk_buckets["medium"] += 1
         else:
-            # Assets without risk score default to low
             risk_buckets["low"] += 1
 
     return TenantDashboard(
@@ -337,10 +338,23 @@ def _calculate_tenant_stats(db: Session, tenant_id: int) -> TenantStats:
         Certificate.not_after <= thirty_days_from_now
     ).count()
 
-    # Average risk score
-    avg_risk = db.query(func.avg(Asset.risk_score)).filter(
-        Asset.tenant_id == tenant_id
-    ).scalar() or 0.0
+    # Organization risk score: prefer the properly computed org score from
+    # risk_scores table (top-20 weighted with breadth penalty) over simple AVG.
+    org_score_row = (
+        db.query(RiskScore.score)
+        .filter_by(tenant_id=tenant_id, scope_type='organization')
+        .order_by(RiskScore.scored_at.desc())
+        .first()
+    )
+    if org_score_row:
+        average_risk_score = round(float(org_score_row.score), 2)
+    else:
+        # Fallback: AVG of active assets only
+        avg_risk = db.query(func.avg(Asset.risk_score)).filter(
+            Asset.tenant_id == tenant_id,
+            Asset.is_active.is_(True),
+        ).scalar() or 0.0
+        average_risk_score = round(float(avg_risk), 2)
 
     return TenantStats(
         total_assets=total_assets,
@@ -354,7 +368,7 @@ def _calculate_tenant_stats(db: Session, tenant_id: int) -> TenantStats:
         critical_findings=critical_findings,
         high_findings=high_findings,
         expiring_certificates=expiring_certificates,
-        average_risk_score=round(float(avg_risk), 2)
+        average_risk_score=average_risk_score
     )
 
 
