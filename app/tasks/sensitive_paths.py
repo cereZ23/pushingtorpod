@@ -16,6 +16,7 @@ Findings are stored with source='path_scan' and template_id='sensitive-path-<slu
 """
 
 import asyncio
+import concurrent.futures
 import logging
 import re
 from datetime import datetime, timezone
@@ -1148,12 +1149,12 @@ _MAX_SNIPPET_LENGTH = 200
 # Concurrency limits — balanced for speed without hammering targets.
 # Each host is scanned sequentially (1 request at a time per host),
 # but multiple hosts can be scanned in parallel.
-_MAX_CONNECTIONS_PER_HOST = 2
-_MAX_CONNECTIONS_TOTAL = 20
+_MAX_CONNECTIONS_PER_HOST = 3
+_MAX_CONNECTIONS_TOTAL = 30
 _REQUEST_TIMEOUT_SECONDS = 3.0
-_DELAY_BETWEEN_REQUESTS = 0.15  # 150ms delay between requests to same host
+_DELAY_BETWEEN_REQUESTS = 0.10  # 100ms delay between requests to same host
 _MAX_CONSECUTIVE_429S = 3  # Skip host after N consecutive 429s
-_MAX_HOSTS_TO_SCAN = 50  # Scan up to 50 unique hosts per run
+_MAX_HOSTS_TO_SCAN = 30  # Scan up to 30 unique hosts per run
 
 # Common soft-404 body patterns (case-insensitive)
 _SOFT_404_PATTERNS = [
@@ -1375,7 +1376,7 @@ async def _scan_host(
 
 
 # Global timeout for the entire sensitive path scan (seconds)
-_GLOBAL_SCAN_TIMEOUT = 180  # 3 minutes max (higher concurrency = faster)
+_GLOBAL_SCAN_TIMEOUT = 180  # 3 minutes (EASM fast scan, not pentest)
 
 # Only scan critical+high severity paths for efficiency (covers ~60% of paths)
 # Set to None to scan all paths
@@ -1391,7 +1392,7 @@ async def _run_scan_async(
     Returns a mapping of asset.id -> list of finding dicts.
     """
     global_semaphore = asyncio.Semaphore(_MAX_CONNECTIONS_TOTAL)
-    host_semaphore = asyncio.Semaphore(_MAX_CONNECTIONS_PER_HOST)
+    host_semaphore = asyncio.Semaphore(10)  # Up to 10 hosts scanned concurrently
 
     # Filter paths by severity if configured
     paths_to_scan = SENSITIVE_PATHS
@@ -1536,21 +1537,30 @@ def run_sensitive_path_scan(
             f"{total_paths} path checks to perform"
         )
 
-        # Run the async scan
+        # Run the async scan with hard timeout to prevent indefinite hanging.
+        # asyncio.wait_for() can fail to cancel stuck httpx connections at the
+        # OS socket level, so we enforce a hard wall-clock timeout on the thread.
+        hard_timeout = _GLOBAL_SCAN_TIMEOUT + 30  # 30s grace for cleanup
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 # Running inside an existing event loop (e.g. Celery with asyncio)
-                import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     asset_findings = pool.submit(
                         asyncio.run, _run_scan_async(targets)
-                    ).result()
+                    ).result(timeout=hard_timeout)
             else:
-                asset_findings = loop.run_until_complete(_run_scan_async(targets))
-        except RuntimeError:
-            # No event loop exists
-            asset_findings = asyncio.run(_run_scan_async(targets))
+                asset_findings = asyncio.run(_run_scan_async(targets))
+        except (RuntimeError, concurrent.futures.TimeoutError) as exc:
+            if isinstance(exc, concurrent.futures.TimeoutError):
+                tenant_logger.error(
+                    f"Sensitive path scan hard timeout after {hard_timeout}s — "
+                    f"returning partial results"
+                )
+                asset_findings = {}
+            else:
+                # No event loop exists — fall back to asyncio.run
+                asset_findings = asyncio.run(_run_scan_async(targets))
 
         # Extract 429 count from scan results
         total_429s = asset_findings.pop('_http_429_count', 0)

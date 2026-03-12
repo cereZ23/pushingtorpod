@@ -1,67 +1,73 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { useTenantStore } from '@/stores/tenant'
-import { assetApi } from '@/api/assets'
-import apiClient from '@/api/client'
-import type { Asset, PaginatedResponse } from '@/api/types'
-import { getAssetTypeBadgeClass, getPriorityBadgeClass } from '@/utils/severity'
-import { formatDate } from '@/utils/formatters'
-import { useWindowedPagination } from '@/composables/usePagination'
-import SkeletonLoader from '@/components/SkeletonLoader.vue'
+import { ref, onMounted, onUnmounted, computed, watch } from "vue";
+import { useRouter } from "vue-router";
+import { useTenantStore } from "@/stores/tenant";
+import { assetApi } from "@/api/assets";
+import apiClient from "@/api/client";
+import type { Asset, PaginatedResponse } from "@/api/types";
+import {
+  getAssetTypeBadgeClass,
+  getPriorityBadgeClass,
+} from "@/utils/severity";
+import { formatDate } from "@/utils/formatters";
+import { useWindowedPagination } from "@/composables/usePagination";
+import SkeletonLoader from "@/components/SkeletonLoader.vue";
 
-const router = useRouter()
-const tenantStore = useTenantStore()
+const router = useRouter();
+const tenantStore = useTenantStore();
 
-const assets = ref<Asset[]>([])
-const isLoading = ref(true)
-const error = ref('')
-const currentPage = ref(1)
-const pageSize = ref(25)
-const totalItems = ref(0)
-const totalPages = ref(0)
+const assets = ref<Asset[]>([]);
+const isLoading = ref(true);
+const error = ref("");
+const currentPage = ref(1);
+const pageSize = ref(25);
+const totalItems = ref(0);
+const totalPages = ref(0);
 
 // Filters
-const searchQuery = ref('')
-const selectedType = ref('')
-const selectedPriority = ref('')
+const searchQuery = ref("");
+const selectedType = ref("");
+const selectedPriority = ref("");
 
-const currentTenantId = computed(() => tenantStore.currentTenantId)
+const currentTenantId = computed(() => tenantStore.currentTenantId);
 
 // AbortController for cancelling in-flight API requests on navigation
-let abortController: AbortController | null = null
+let abortController: AbortController | null = null;
 
-const { pages: paginationPages } = useWindowedPagination(currentPage, totalPages)
+const { pages: paginationPages } = useWindowedPagination(
+  currentPage,
+  totalPages,
+);
 
 onMounted(async () => {
   // Wait for tenant to be loaded
   if (!currentTenantId.value) {
-    await tenantStore.fetchTenants()
+    await tenantStore.fetchTenants();
   }
-  await loadAssets()
-})
+  await loadAssets();
+});
 
 // Watch for tenant changes (but not initial load)
 watch(currentTenantId, (newTenantId, oldTenantId) => {
   // Only reload if both values exist (not initial load from undefined)
   if (newTenantId && oldTenantId && newTenantId !== oldTenantId) {
-    currentPage.value = 1
-    loadAssets()
+    currentPage.value = 1;
+    loadAssets();
   }
-})
+});
 
 async function loadAssets() {
   if (!currentTenantId.value) {
-    error.value = 'No tenant selected'
-    isLoading.value = false
-    return
+    error.value = "No tenant selected";
+    isLoading.value = false;
+    return;
   }
 
-  abortController?.abort()
-  abortController = new AbortController()
+  abortController?.abort();
+  abortController = new AbortController();
 
-  isLoading.value = true
-  error.value = ''
+  isLoading.value = true;
+  error.value = "";
 
   try {
     const params = {
@@ -70,56 +76,64 @@ async function loadAssets() {
       search: searchQuery.value || undefined,
       asset_type: selectedType.value || undefined,
       priority: selectedPriority.value || undefined,
-    }
+      is_active: true,
+    };
 
-    const response: PaginatedResponse<Asset> = await assetApi.list(currentTenantId.value, params)
-    assets.value = response.data
-    totalItems.value = response.meta.total
-    totalPages.value = response.meta.total_pages
+    const response: PaginatedResponse<Asset> = await assetApi.list(
+      currentTenantId.value,
+      params,
+    );
+    assets.value = response.data;
+    totalItems.value = response.meta.total;
+    totalPages.value = response.meta.total_pages;
   } catch (err: unknown) {
-    if (err instanceof Error && (err.name === 'CanceledError' || err.name === 'AbortError')) return
-    const axiosErr = err as { message?: string }
-    error.value = axiosErr.message || 'Failed to load assets'
+    if (
+      err instanceof Error &&
+      (err.name === "CanceledError" || err.name === "AbortError")
+    )
+      return;
+    const axiosErr = err as { message?: string };
+    error.value = axiosErr.message || "Failed to load assets";
   } finally {
-    isLoading.value = false
+    isLoading.value = false;
   }
 }
 
 onUnmounted(() => {
-  abortController?.abort()
-})
+  abortController?.abort();
+});
 
 function handleSearch() {
-  currentPage.value = 1
-  loadAssets()
+  currentPage.value = 1;
+  loadAssets();
 }
 
 function goToPage(page: number) {
-  currentPage.value = page
-  loadAssets()
+  currentPage.value = page;
+  loadAssets();
 }
 
 function viewAsset(assetId: number) {
-  router.push({ name: 'AssetDetail', params: { id: assetId } })
+  router.push({ name: "AssetDetail", params: { id: assetId } });
 }
 
 async function exportCsv() {
-  const tid = currentTenantId.value
-  if (!tid) return
+  const tid = currentTenantId.value;
+  if (!tid) return;
 
   try {
     const response = await apiClient.get(
       `/api/v1/tenants/${tid}/reports/export/assets-csv`,
-      { responseType: 'blob' }
-    )
-    const url = URL.createObjectURL(response.data)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'assets_export.csv'
-    a.click()
-    URL.revokeObjectURL(url)
+      { responseType: "blob" },
+    );
+    const url = URL.createObjectURL(response.data);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "assets_export.csv";
+    a.click();
+    URL.revokeObjectURL(url);
   } catch {
-    error.value = 'Failed to export CSV'
+    error.value = "Failed to export CSV";
   }
 }
 </script>
@@ -128,7 +142,9 @@ async function exportCsv() {
   <div class="space-y-6">
     <!-- Header -->
     <div class="flex justify-between items-center">
-      <h2 class="text-2xl font-bold text-gray-900 dark:text-dark-text-primary">Assets</h2>
+      <h2 class="text-2xl font-bold text-gray-900 dark:text-dark-text-primary">
+        Assets
+      </h2>
       <div class="flex items-center gap-2">
         <button
           @click="exportCsv"
@@ -147,10 +163,15 @@ async function exportCsv() {
     </div>
 
     <!-- Filters -->
-    <div class="bg-white dark:bg-dark-bg-secondary p-4 rounded-lg border border-gray-200 dark:border-dark-border">
+    <div
+      class="bg-white dark:bg-dark-bg-secondary p-4 rounded-lg border border-gray-200 dark:border-dark-border"
+    >
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-dark-text-secondary mb-2">Search</label>
+          <label
+            class="block text-sm font-medium text-gray-700 dark:text-dark-text-secondary mb-2"
+            >Search</label
+          >
           <input
             v-model="searchQuery"
             @keyup.enter="handleSearch"
@@ -161,7 +182,10 @@ async function exportCsv() {
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-dark-text-secondary mb-2">Type</label>
+          <label
+            class="block text-sm font-medium text-gray-700 dark:text-dark-text-secondary mb-2"
+            >Type</label
+          >
           <select
             v-model="selectedType"
             @change="handleSearch"
@@ -177,7 +201,10 @@ async function exportCsv() {
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-dark-text-secondary mb-2">Priority</label>
+          <label
+            class="block text-sm font-medium text-gray-700 dark:text-dark-text-secondary mb-2"
+            >Priority</label
+          >
           <select
             v-model="selectedPriority"
             @change="handleSearch"
@@ -203,62 +230,123 @@ async function exportCsv() {
     </div>
 
     <!-- Loading State (Skeleton) -->
-    <div v-if="isLoading" role="status" class="bg-white dark:bg-dark-bg-secondary rounded-lg border border-gray-200 dark:border-dark-border overflow-hidden">
+    <div
+      v-if="isLoading"
+      role="status"
+      class="bg-white dark:bg-dark-bg-secondary rounded-lg border border-gray-200 dark:border-dark-border overflow-hidden"
+    >
       <SkeletonLoader variant="table-row" :rows="10" />
     </div>
 
     <!-- Error State -->
-    <div v-else-if="error" role="alert" class="bg-red-50 dark:bg-red-900/20 p-4 rounded-md">
+    <div
+      v-else-if="error"
+      role="alert"
+      class="bg-red-50 dark:bg-red-900/20 p-4 rounded-md"
+    >
       <p class="text-red-800 dark:text-red-200">{{ error }}</p>
     </div>
 
     <!-- Assets Table -->
-    <div v-else class="bg-white dark:bg-dark-bg-secondary rounded-lg border border-gray-200 dark:border-dark-border overflow-hidden">
+    <div
+      v-else
+      class="bg-white dark:bg-dark-bg-secondary rounded-lg border border-gray-200 dark:border-dark-border overflow-hidden"
+    >
       <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200 dark:divide-dark-border">
+        <table
+          class="min-w-full divide-y divide-gray-200 dark:divide-dark-border"
+        >
           <thead class="bg-gray-50 dark:bg-dark-bg-tertiary">
             <tr>
-              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th
+                scope="col"
+                class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+              >
                 Identifier
               </th>
-              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th
+                scope="col"
+                class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+              >
                 Type
               </th>
-              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th
+                scope="col"
+                class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+              >
                 Priority
               </th>
-              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th
+                scope="col"
+                class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+              >
                 Risk Score
               </th>
-              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th
+                scope="col"
+                class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+              >
                 First Seen
               </th>
-              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+              <th
+                scope="col"
+                class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+              >
                 Actions
               </th>
             </tr>
           </thead>
-          <tbody class="bg-white dark:bg-dark-bg-secondary divide-y divide-gray-200 dark:divide-dark-border">
-            <tr v-for="asset in assets" :key="asset.id" class="hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary">
+          <tbody
+            class="bg-white dark:bg-dark-bg-secondary divide-y divide-gray-200 dark:divide-dark-border"
+          >
+            <tr
+              v-for="asset in assets"
+              :key="asset.id"
+              class="hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary"
+            >
               <td class="px-6 py-4 whitespace-nowrap">
-                <div class="text-sm font-medium text-gray-900 dark:text-dark-text-primary">{{ asset.identifier }}</div>
-                <div v-if="asset.ip_address" class="text-xs text-gray-500 dark:text-dark-text-secondary">{{ asset.ip_address }}</div>
+                <div
+                  class="text-sm font-medium text-gray-900 dark:text-dark-text-primary"
+                >
+                  {{ asset.identifier }}
+                </div>
+                <div
+                  v-if="asset.ip_address"
+                  class="text-xs text-gray-500 dark:text-dark-text-secondary"
+                >
+                  {{ asset.ip_address }}
+                </div>
               </td>
               <td class="px-6 py-4 whitespace-nowrap">
-                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full" :class="getAssetTypeBadgeClass(asset.type)">
+                <span
+                  class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
+                  :class="getAssetTypeBadgeClass(asset.type)"
+                >
                   {{ asset.type }}
                 </span>
               </td>
               <td class="px-6 py-4 whitespace-nowrap">
-                <span v-if="asset.priority" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full" :class="getPriorityBadgeClass(asset.priority)">
+                <span
+                  v-if="asset.priority"
+                  class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
+                  :class="getPriorityBadgeClass(asset.priority)"
+                >
                   {{ asset.priority }}
                 </span>
-                <span v-else class="text-sm text-gray-500 dark:text-dark-text-secondary">-</span>
+                <span
+                  v-else
+                  class="text-sm text-gray-500 dark:text-dark-text-secondary"
+                  >-</span
+                >
               </td>
-              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-dark-text-primary">
+              <td
+                class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-dark-text-primary"
+              >
                 {{ asset.risk_score || 0 }}
               </td>
-              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-dark-text-secondary">
+              <td
+                class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-dark-text-secondary"
+              >
                 {{ formatDate(asset.first_seen) }}
               </td>
               <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -275,30 +363,67 @@ async function exportCsv() {
       </div>
 
       <!-- Empty State -->
-      <div v-if="assets.length === 0" class="flex flex-col items-center justify-center py-16 px-4">
-        <svg aria-hidden="true" class="w-16 h-16 text-gray-300 dark:text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418" />
+      <div
+        v-if="assets.length === 0"
+        class="flex flex-col items-center justify-center py-16 px-4"
+      >
+        <svg
+          aria-hidden="true"
+          class="w-16 h-16 text-gray-300 dark:text-gray-600 mb-4"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          stroke-width="1.5"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418"
+          />
         </svg>
-        <h3 class="text-lg font-semibold text-gray-900 dark:text-dark-text-primary mb-1">No assets discovered yet</h3>
-        <p class="text-sm text-gray-500 dark:text-dark-text-secondary mb-6 max-w-md text-center">
-          Assets such as domains, subdomains, IPs, and services will appear here once a discovery scan has been completed.
+        <h3
+          class="text-lg font-semibold text-gray-900 dark:text-dark-text-primary mb-1"
+        >
+          No assets discovered yet
+        </h3>
+        <p
+          class="text-sm text-gray-500 dark:text-dark-text-secondary mb-6 max-w-md text-center"
+        >
+          Assets such as domains, subdomains, IPs, and services will appear here
+          once a discovery scan has been completed.
         </p>
         <router-link
           to="/scans"
           class="inline-flex items-center px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-md hover:bg-primary-700 transition-colors"
         >
-          <svg aria-hidden="true" class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+          <svg
+            aria-hidden="true"
+            class="w-4 h-4 mr-2"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"
+            />
           </svg>
           Start a Scan
         </router-link>
       </div>
 
       <!-- Pagination -->
-      <div v-if="totalPages > 1" class="px-6 py-4 border-t border-gray-200 dark:border-dark-border">
+      <div
+        v-if="totalPages > 1"
+        class="px-6 py-4 border-t border-gray-200 dark:border-dark-border"
+      >
         <div class="flex items-center justify-between">
           <div class="text-sm text-gray-700 dark:text-dark-text-secondary">
-            Showing {{ ((currentPage - 1) * pageSize) + 1 }} to {{ Math.min(currentPage * pageSize, totalItems) }} of {{ totalItems }} results
+            Showing {{ (currentPage - 1) * pageSize + 1 }} to
+            {{ Math.min(currentPage * pageSize, totalItems) }} of
+            {{ totalItems }} results
           </div>
           <div class="flex space-x-2">
             <button
@@ -312,7 +437,8 @@ async function exportCsv() {
               <span
                 v-if="pg.type === 'ellipsis'"
                 class="px-3 py-1 text-sm text-gray-500 dark:text-dark-text-secondary"
-              >...</span>
+                >...</span
+              >
               <button
                 v-else
                 @click="goToPage(pg.value)"
@@ -321,7 +447,7 @@ async function exportCsv() {
                   'px-3 py-1 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500',
                   pg.value === currentPage
                     ? 'bg-primary-600 text-white border-primary-600'
-                    : 'border-gray-300 dark:border-dark-border text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary'
+                    : 'border-gray-300 dark:border-dark-border text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary',
                 ]"
               >
                 {{ pg.value }}

@@ -55,7 +55,10 @@ def list_endpoints(
     - Sensitive path detection
     """
     # Build query with tenant isolation
-    query = db.query(Endpoint).join(Asset).filter(Asset.tenant_id == tenant_id)
+    query = db.query(Endpoint).join(Asset).filter(
+        Asset.tenant_id == tenant_id,
+        Asset.is_active == True,  # noqa: E712
+    )
 
     # Apply filters
     if asset_id:

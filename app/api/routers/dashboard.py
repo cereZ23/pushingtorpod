@@ -71,21 +71,16 @@ def get_dashboard_summary(
     """
     _verify_tenant_exists(db, tenant_id)
 
-    # Asset counts
+    # Asset counts (only active/in-scope assets)
     total_assets = (
-        db.query(func.count(Asset.id))
-        .filter(Asset.tenant_id == tenant_id)
-        .scalar()
-        or 0
-    )
-    active_assets = (
         db.query(func.count(Asset.id))
         .filter(Asset.tenant_id == tenant_id, Asset.is_active.is_(True))
         .scalar()
         or 0
     )
+    active_assets = total_assets
 
-    # Findings by status
+    # Findings by status (only on active assets)
     findings_by_status: dict[str, int] = {}
     for finding_status in FindingStatus:
         count = (
@@ -93,6 +88,7 @@ def get_dashboard_summary(
             .join(Asset)
             .filter(
                 Asset.tenant_id == tenant_id,
+                Asset.is_active.is_(True),
                 Finding.status == finding_status,
             )
             .scalar()
@@ -103,7 +99,7 @@ def get_dashboard_summary(
     total_findings = sum(findings_by_status.values())
     open_findings = findings_by_status.get("open", 0)
 
-    # Severity breakdown (open findings only)
+    # Severity breakdown (open findings on active assets only)
     severity_breakdown: dict[str, int] = {}
     for severity in FindingSeverity:
         count = (
@@ -111,6 +107,7 @@ def get_dashboard_summary(
             .join(Asset)
             .filter(
                 Asset.tenant_id == tenant_id,
+                Asset.is_active.is_(True),
                 Finding.status == FindingStatus.OPEN,
                 Finding.severity == severity,
             )
@@ -369,7 +366,7 @@ def get_recent_findings(
     findings = (
         db.query(Finding)
         .join(Asset)
-        .filter(Asset.tenant_id == tenant_id)
+        .filter(Asset.tenant_id == tenant_id, Asset.is_active.is_(True))
         .order_by(Finding.first_seen.desc())
         .limit(limit)
         .all()
@@ -428,7 +425,7 @@ def get_top_risky_assets(
             func.coalesce(finding_count_sq.c.finding_count, 0).label("finding_count"),
         )
         .outerjoin(finding_count_sq, Asset.id == finding_count_sq.c.asset_id)
-        .filter(Asset.tenant_id == tenant_id)
+        .filter(Asset.tenant_id == tenant_id, Asset.is_active.is_(True))
         .order_by(Asset.risk_score.desc())
         .limit(limit)
         .all()

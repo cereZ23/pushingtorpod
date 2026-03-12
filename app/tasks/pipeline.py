@@ -27,6 +27,7 @@ Manages the scan pipeline:
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -43,30 +44,50 @@ from app.utils.logger import TenantLoggerAdapter
 
 logger = logging.getLogger(__name__)
 
-# Phase definitions with order
-PHASES = [
-    {'id': '0', 'name': 'Seed Ingestion', 'required': True},
-    {'id': '1', 'name': 'Passive Discovery', 'required': True},
-    {'id': '1b', 'name': 'GitHub Dorking', 'required': False},
-    {'id': '1c', 'name': 'WHOIS/RDAP Discovery', 'required': False},
-    {'id': '1d', 'name': 'Cloud Bucket Discovery', 'required': False},
-    {'id': '1e', 'name': 'Cloud Asset Enumeration', 'required': False},
-    {'id': '2', 'name': 'DNS Permutation & Bruteforce', 'required': False},
-    {'id': '3', 'name': 'DNS Resolution', 'required': True},
-    {'id': '4', 'name': 'HTTP Probing', 'required': True},
-    {'id': '4b', 'name': 'TLS Certificate Collection', 'required': False},
-    {'id': '5', 'name': 'Port Scanning', 'required': True},
-    {'id': '5b', 'name': 'CDN/WAF Detection', 'required': False},
-    {'id': '5c', 'name': 'Service Fingerprinting', 'required': False},
-    {'id': '6', 'name': 'Technology Fingerprinting', 'required': True},
-    {'id': '6b', 'name': 'Web Crawling', 'required': True},
-    {'id': '6c', 'name': 'Sensitive Path Discovery', 'required': True},
-    {'id': '7', 'name': 'Visual Recon', 'required': False},
-    {'id': '8', 'name': 'Misconfiguration Detection', 'required': True},
-    {'id': '9', 'name': 'Vulnerability Scanning', 'required': True},
-    {'id': '10', 'name': 'Correlation & Dedup', 'required': True},
-    {'id': '11', 'name': 'Risk Scoring', 'required': True},
-    {'id': '12', 'name': 'Diff & Alerting', 'required': True},
+# Phase definitions (metadata lookup)
+PHASE_DEFS = {
+    '0':  {'name': 'Seed Ingestion', 'required': True},
+    '1':  {'name': 'Passive Discovery', 'required': True},
+    '1b': {'name': 'GitHub Dorking', 'required': False},
+    '1c': {'name': 'WHOIS/RDAP Discovery', 'required': False},
+    '1d': {'name': 'Cloud Bucket Discovery', 'required': False},
+    '1e': {'name': 'Cloud Asset Enumeration', 'required': False},
+    '2':  {'name': 'DNS Permutation & Bruteforce', 'required': False},
+    '3':  {'name': 'DNS Resolution', 'required': True},
+    '4':  {'name': 'HTTP Probing', 'required': True},
+    '4b': {'name': 'TLS Certificate Collection', 'required': False},
+    '5':  {'name': 'Port Scanning', 'required': True},
+    '5b': {'name': 'CDN/WAF Detection', 'required': False},
+    '5c': {'name': 'Service Fingerprinting', 'required': False},
+    '6':  {'name': 'Technology Fingerprinting', 'required': True},
+    '6b': {'name': 'Web Crawling', 'required': True},
+    '6c': {'name': 'Sensitive Path Discovery', 'required': False},
+    '7':  {'name': 'Visual Recon', 'required': False},
+    '8':  {'name': 'Misconfiguration Detection', 'required': True},
+    '9':  {'name': 'Vulnerability Scanning', 'required': True},
+    '10': {'name': 'Correlation & Dedup', 'required': True},
+    '11': {'name': 'Risk Scoring', 'required': True},
+    '12': {'name': 'Diff & Alerting', 'required': True},
+}
+
+# Flat list of all phase IDs (for init and backwards compat)
+PHASES = [{'id': pid, **pdef} for pid, pdef in PHASE_DEFS.items()]
+
+# Execution plan: each step is either a single phase ID (sequential) or a
+# list of phase IDs (run in parallel with ThreadPoolExecutor).
+# Independent phases are grouped to cut total wall-clock time.
+EXECUTION_PLAN = [
+    '0',                            # Seed ingestion (must be first)
+    ['1', '1b', '1c', '1d', '1e'], # Discovery: subfinder, GitHub, WHOIS, cloud in parallel
+    '2',                            # DNS bruteforce (needs Phase 1 results)
+    '3',                            # DNS resolution (needs Phase 2 results)
+    '5b',                           # CDN/WAF detection (before probing — skip CDN IPs)
+    ['4', '4b', '5'],              # Probing: httpx, tlsx, naabu in parallel (all need DNS)
+    ['5c', '6'],                    # Fingerprint, tech detect in parallel
+    ['6b', '6c', '7'],             # Crawl, sensitive paths, screenshots in parallel
+    ['8', '9'],                     # Misconfig + Nuclei in parallel (misconfig is read-only)
+    ['10', '11'],                   # Correlation + Risk scoring in parallel
+    '12',                           # Diff & alerting
 ]
 
 
@@ -122,6 +143,54 @@ def _update_scan_run(db, scan_run_id: int, status: ScanRunStatus,
     db.commit()
 
 
+def _run_single_phase(phase_id, tenant_id, project_id, scan_run_id,
+                       db, tenant_logger, scan_tier, throttle, pipeline_stats):
+    """Execute a single phase sequentially with the main DB session."""
+    phase_def = PHASE_DEFS[phase_id]
+    phase_name = phase_def['name']
+
+    tenant_logger.info(f"Starting phase {phase_id}: {phase_name}")
+    _update_phase(db, scan_run_id, phase_id, PhaseStatus.RUNNING)
+
+    try:
+        result = _execute_phase(
+            phase_id, tenant_id, project_id, scan_run_id, db, tenant_logger,
+            scan_tier=scan_tier
+        )
+
+        _update_phase(db, scan_run_id, phase_id, PhaseStatus.COMPLETED, stats=result)
+        pipeline_stats['phases_completed'] += 1
+
+        if isinstance(result, dict):
+            pipeline_stats['assets_discovered'] += result.get('assets_discovered', 0)
+            pipeline_stats['findings_created'] += result.get('findings_created', 0)
+            pipeline_stats['relationships_created'] += result.get('relationships_created', 0)
+
+            phase_429s = result.get('http_429_count', 0)
+            if phase_429s > 0:
+                for _ in range(phase_429s):
+                    throttle.report_429(f"phase_{phase_id}")
+            else:
+                throttle.report_phase_clean()
+
+        tenant_logger.info(f"Phase {phase_id} ({phase_name}) completed: {result}")
+
+    except Exception as e:
+        error_msg = str(e)
+        tenant_logger.error(f"Phase {phase_id} ({phase_name}) failed: {error_msg}")
+        _update_phase(db, scan_run_id, phase_id, PhaseStatus.FAILED, error=error_msg)
+        pipeline_stats['phases_failed'] += 1
+
+        if phase_def['required']:
+            if phase_id == '0':
+                _update_scan_run(db, scan_run_id, ScanRunStatus.FAILED,
+                                error=f"Phase 0 failed: {error_msg}",
+                                stats=pipeline_stats)
+                pipeline_stats['_fatal'] = True
+                return
+            tenant_logger.warning(f"Required phase {phase_id} failed, continuing pipeline")
+
+
 @celery.task(
     name='app.tasks.pipeline.run_scan_pipeline',
     bind=True,
@@ -132,8 +201,8 @@ def _update_scan_run(db, scan_run_id: int, status: ScanRunStatus,
     retry_jitter=True,
     acks_late=True,
     reject_on_worker_lost=True,
-    soft_time_limit=7200,
-    time_limit=7500,
+    soft_time_limit=10800,
+    time_limit=11100,
 )
 def run_scan_pipeline(self, scan_run_id: int):
     """
@@ -157,6 +226,25 @@ def run_scan_pipeline(self, scan_run_id: int):
         if not scan_run:
             logger.error(f"ScanRun {scan_run_id} not found")
             return {'error': 'ScanRun not found'}
+
+        # Guard against duplicate/stale execution:
+        # 1. Already completed/failed/cancelled — don't re-run
+        # 2. Already running with a different Celery task — skip duplicate
+        if scan_run.status in (ScanRunStatus.COMPLETED, ScanRunStatus.FAILED, ScanRunStatus.CANCELLED):
+            logger.warning(
+                f"ScanRun {scan_run_id} already {scan_run.status.value}, "
+                f"skipping stale execution from task {self.request.id}"
+            )
+            return {'error': f'Already {scan_run.status.value}', 'skipped': True}
+
+        if (scan_run.status == ScanRunStatus.RUNNING
+                and scan_run.celery_task_id
+                and scan_run.celery_task_id != self.request.id):
+            logger.warning(
+                f"ScanRun {scan_run_id} already running (task {scan_run.celery_task_id}), "
+                f"skipping duplicate execution from task {self.request.id}"
+            )
+            return {'error': 'Already running', 'skipped': True}
 
         tenant_id = scan_run.tenant_id
         project_id = scan_run.project_id
@@ -208,75 +296,119 @@ def run_scan_pipeline(self, scan_run_id: int):
             'relationships_created': 0,
         }
 
-        # Execute each phase
-        for phase_def in PHASES:
-            phase_id = phase_def['id']
-            phase_name = phase_def['name']
-
+        # Execute phases following the execution plan (sequential + parallel groups)
+        for step in EXECUTION_PLAN:
             # Check if scan was cancelled
             db.refresh(scan_run)
             if scan_run.status == ScanRunStatus.CANCELLED:
                 tenant_logger.info(f"Scan {scan_run_id} was cancelled, stopping pipeline")
                 break
 
-            # Check if phase should be skipped
-            should_skip, skip_reason = _should_skip_phase(phase_id, project, scan_tier)
-            if should_skip:
-                tenant_logger.info(f"Skipping phase {phase_id} ({phase_name}): {skip_reason}")
-                _update_phase(db, scan_run_id, phase_id, PhaseStatus.SKIPPED,
-                             stats={'skip_reason': skip_reason})
-                pipeline_stats['phases_skipped'] += 1
+            # Normalize step to a list of phase IDs
+            phase_ids = step if isinstance(step, list) else [step]
+
+            # Filter out phases that should be skipped
+            phases_to_run = []
+            for phase_id in phase_ids:
+                phase_def = PHASE_DEFS[phase_id]
+                phase_name = phase_def['name']
+                should_skip, skip_reason = _should_skip_phase(phase_id, project, scan_tier)
+                if should_skip:
+                    tenant_logger.info(f"Skipping phase {phase_id} ({phase_name}): {skip_reason}")
+                    _update_phase(db, scan_run_id, phase_id, PhaseStatus.SKIPPED,
+                                 stats={'skip_reason': skip_reason})
+                    pipeline_stats['phases_skipped'] += 1
+                else:
+                    phases_to_run.append(phase_id)
+
+            if not phases_to_run:
                 continue
 
-            # Execute phase
-            tenant_logger.info(f"Starting phase {phase_id}: {phase_name}")
-            _update_phase(db, scan_run_id, phase_id, PhaseStatus.RUNNING)
-
-            try:
-                result = _execute_phase(
-                    phase_id, tenant_id, project_id, scan_run_id, db, tenant_logger,
-                    scan_tier=scan_tier
+            # Run phases — parallel if multiple, sequential if single
+            if len(phases_to_run) == 1:
+                # Single phase: run directly (reuse main DB session)
+                _run_single_phase(
+                    phases_to_run[0], tenant_id, project_id, scan_run_id,
+                    db, tenant_logger, scan_tier, throttle, pipeline_stats,
                 )
+            else:
+                # Parallel group: each phase gets its own DB session
+                tenant_logger.info(
+                    f"Running parallel group: {', '.join(phases_to_run)}"
+                )
+                # Mark all as RUNNING first
+                for pid in phases_to_run:
+                    _update_phase(db, scan_run_id, pid, PhaseStatus.RUNNING)
 
-                _update_phase(db, scan_run_id, phase_id, PhaseStatus.COMPLETED,
-                             stats=result)
-                pipeline_stats['phases_completed'] += 1
+                def _run_parallel_phase(pid):
+                    """Execute a phase in its own DB session (thread-safe)."""
+                    thread_db = SessionLocal()
+                    try:
+                        result = _execute_phase(
+                            pid, tenant_id, project_id, scan_run_id,
+                            thread_db, tenant_logger, scan_tier=scan_tier,
+                        )
+                        return pid, result, None
+                    except Exception as exc:
+                        return pid, None, str(exc)
+                    finally:
+                        thread_db.close()
 
-                # Accumulate stats
-                if isinstance(result, dict):
-                    pipeline_stats['assets_discovered'] += result.get('assets_discovered', 0)
-                    pipeline_stats['findings_created'] += result.get('findings_created', 0)
-                    pipeline_stats['relationships_created'] += result.get('relationships_created', 0)
+                # Per-group wall-clock timeout: 30 min max for any parallel group.
+                # Prevents the entire pipeline from hanging if one phase is stuck.
+                group_timeout = 1800  # 30 min
 
-                    # Adaptive throttle: check for 429s in phase results
-                    phase_429s = result.get('http_429_count', 0)
-                    if phase_429s > 0:
-                        for _ in range(phase_429s):
-                            throttle.report_429(f"phase_{phase_id}")
-                    else:
-                        throttle.report_phase_clean()
+                with ThreadPoolExecutor(max_workers=len(phases_to_run)) as executor:
+                    futures = {
+                        executor.submit(_run_parallel_phase, pid): pid
+                        for pid in phases_to_run
+                    }
+                    completed_pids = set()
+                    try:
+                        for future in as_completed(futures, timeout=group_timeout):
+                            pid, result, error = future.result()
+                            completed_pids.add(pid)
+                            pdef = PHASE_DEFS[pid]
+                            if error:
+                                tenant_logger.error(f"Phase {pid} ({pdef['name']}) failed: {error}")
+                                _update_phase(db, scan_run_id, pid, PhaseStatus.FAILED, error=error)
+                                pipeline_stats['phases_failed'] += 1
+                                if pdef['required'] and pid == '0':
+                                    _update_scan_run(db, scan_run_id, ScanRunStatus.FAILED,
+                                                    error=f"Phase 0 failed: {error}",
+                                                    stats=pipeline_stats)
+                                    return {'error': error, 'stats': pipeline_stats}
+                            else:
+                                _update_phase(db, scan_run_id, pid, PhaseStatus.COMPLETED, stats=result)
+                                pipeline_stats['phases_completed'] += 1
+                                if isinstance(result, dict):
+                                    pipeline_stats['assets_discovered'] += result.get('assets_discovered', 0)
+                                    pipeline_stats['findings_created'] += result.get('findings_created', 0)
+                                    pipeline_stats['relationships_created'] += result.get('relationships_created', 0)
+                                    phase_429s = result.get('http_429_count', 0)
+                                    if phase_429s > 0:
+                                        for _ in range(phase_429s):
+                                            throttle.report_429(f"phase_{pid}")
+                                    else:
+                                        throttle.report_phase_clean()
+                                tenant_logger.info(f"Phase {pid} ({pdef['name']}) completed: {result}")
+                    except TimeoutError:
+                        # Some phases in this group timed out — mark them as failed
+                        timed_out_pids = set(phases_to_run) - completed_pids
+                        for pid in timed_out_pids:
+                            pdef = PHASE_DEFS[pid]
+                            tenant_logger.error(
+                                f"Phase {pid} ({pdef['name']}) timed out after {group_timeout}s"
+                            )
+                            _update_phase(
+                                db, scan_run_id, pid, PhaseStatus.FAILED,
+                                error=f"Timed out after {group_timeout}s",
+                            )
+                            pipeline_stats['phases_failed'] += 1
 
-                tenant_logger.info(f"Phase {phase_id} ({phase_name}) completed: {result}")
-
-            except Exception as e:
-                error_msg = str(e)
-                tenant_logger.error(f"Phase {phase_id} ({phase_name}) failed: {error_msg}")
-                _update_phase(db, scan_run_id, phase_id, PhaseStatus.FAILED,
-                             error=error_msg)
-                pipeline_stats['phases_failed'] += 1
-
-                # Fail the entire run only for required phases
-                if phase_def['required']:
-                    # For Phase 0 (seed ingestion) failure is fatal
-                    if phase_id == '0':
-                        _update_scan_run(db, scan_run_id, ScanRunStatus.FAILED,
-                                        error=f"Phase 0 failed: {error_msg}",
-                                        stats=pipeline_stats)
-                        return {'error': error_msg, 'stats': pipeline_stats}
-                    # For other required phases, continue but log
-                    tenant_logger.warning(
-                        f"Required phase {phase_id} failed, continuing pipeline"
-                    )
+            # Fatal check: Phase 0 failure means we can't continue
+            if pipeline_stats.get('_fatal'):
+                return {'error': 'Phase 0 failed', 'stats': pipeline_stats}
 
         # Log adaptive throttle summary
         throttle_summary = cleanup_throttle(tenant_id, scan_run_id)
@@ -423,6 +555,49 @@ def _execute_phase(phase_id: str, tenant_id: int, project_id: int,
 # RELATIONSHIP HELPERS
 # ============================================================================
 
+def _get_seed_domains(tenant_id: int, project_id: int, db) -> set:
+    """Get all seed domains for scope filtering.
+
+    Returns a set of root domains (e.g. {'example.com', 'example.org'}).
+    Hostnames must be a subdomain of one of these to be in scope.
+    """
+    from app.models.scanning import Project
+    from app.models.database import Seed
+
+    domains = set()
+
+    # From project seeds
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if project and project.seeds:
+        for seed in project.seeds:
+            if seed.get('type') in ('domain', 'subdomain'):
+                domains.add(seed['value'].lower().strip())
+
+    # From tenant seeds
+    tenant_seeds = db.query(Seed).filter(
+        Seed.tenant_id == tenant_id,
+        Seed.enabled == True,
+        Seed.type.in_(['domain', 'subdomain']),
+    ).all()
+    for s in tenant_seeds:
+        domains.add(s.value.lower().strip())
+
+    return domains
+
+
+def _is_hostname_in_scope(hostname: str, seed_domains: set) -> bool:
+    """Check if a hostname belongs to one of the seed domains.
+
+    E.g., 'api.example.com' is in scope if 'example.com' is a seed.
+    'cdn.b-cdn.net' is NOT in scope if only 'example.com' is a seed.
+    """
+    hostname = hostname.lower().strip().rstrip('.')
+    for domain in seed_domains:
+        if hostname == domain or hostname.endswith('.' + domain):
+            return True
+    return False
+
+
 def _upsert_relationship(db, tenant_id: int, source_asset_id: int,
                          target_asset_id: int, rel_type: str,
                          metadata: dict = None) -> bool:
@@ -431,6 +606,8 @@ def _upsert_relationship(db, tenant_id: int, source_asset_id: int,
     Returns True if a new relationship was created, False if an existing
     one was updated.
     """
+    from sqlalchemy.exc import IntegrityError
+
     existing = db.query(Relationship).filter(
         Relationship.tenant_id == tenant_id,
         Relationship.source_asset_id == source_asset_id,
@@ -441,18 +618,23 @@ def _upsert_relationship(db, tenant_id: int, source_asset_id: int,
     if existing:
         existing.last_seen_at = datetime.now(timezone.utc)
         return False
-    else:
-        rel = Relationship(
-            tenant_id=tenant_id,
-            source_asset_id=source_asset_id,
-            target_asset_id=target_asset_id,
-            rel_type=rel_type,
-            rel_metadata=metadata or {},
-            first_seen_at=datetime.now(timezone.utc),
-            last_seen_at=datetime.now(timezone.utc),
-        )
-        db.add(rel)
-        return True
+
+    rel = Relationship(
+        tenant_id=tenant_id,
+        source_asset_id=source_asset_id,
+        target_asset_id=target_asset_id,
+        rel_type=rel_type,
+        rel_metadata=metadata or {},
+        first_seen_at=datetime.now(timezone.utc),
+        last_seen_at=datetime.now(timezone.utc),
+    )
+    db.add(rel)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        return False
+    return True
 
 
 def _extract_parent_domain(identifier: str) -> Optional[str]:
@@ -689,8 +871,10 @@ def _phase_1_passive_discovery(tenant_id, project_id, scan_run_id, db, tenant_lo
     seed_data = {'domains': domain_list}
     result = run_subfinder(seed_data, tenant_id)
 
-    # Count subdomains found
+    # Count subdomains found, filter to in-scope only
     subdomains = result.get('subdomains', []) if isinstance(result, dict) else []
+    seed_domains = _get_seed_domains(tenant_id, project_id, db)
+    subdomains = [s for s in subdomains if _is_hostname_in_scope(s.strip().lower(), seed_domains)]
     assets_discovered = len(subdomains)
 
     # Upsert discovered subdomains as assets
@@ -808,9 +992,13 @@ def _phase_1c_whois_discovery(tenant_id, project_id, scan_run_id, db, tenant_log
     from app.tasks.network_enrichment import phase_1c_network_enrichment
     from app.models.database import Asset, AssetType
 
+    # Only enrich root DOMAIN + IP assets with full WHOIS/GeoIP.
+    # Subdomains share the same WHOIS as their parent domain, so running
+    # WHOIS on each one is redundant and slow (~0.5-2s per lookup × hundreds).
+    # CDN/WAF detection for subdomains is handled in Phase 5b (cdncheck).
     assets = db.query(Asset).filter(
         Asset.tenant_id == tenant_id,
-        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN, AssetType.IP]),
+        Asset.type.in_([AssetType.DOMAIN, AssetType.IP]),
         Asset.is_active == True  # noqa: E712
     ).all()
 
@@ -818,7 +1006,10 @@ def _phase_1c_whois_discovery(tenant_id, project_id, scan_run_id, db, tenant_log
         return {'assets_discovered': 0, 'assets_enriched': 0}
 
     asset_ids = [a.id for a in assets]
-    tenant_logger.info(f"Phase 1c: {len(asset_ids)} assets for network enrichment")
+    tenant_logger.info(
+        f"Phase 1c: {len(asset_ids)} assets for network enrichment "
+        f"(domains + IPs only, subdomains inherit WHOIS from parent)"
+    )
 
     return phase_1c_network_enrichment(tenant_id, asset_ids, db, tenant_logger)
 
@@ -944,9 +1135,9 @@ def _phase_2_dns_bruteforce(tenant_id, project_id, scan_run_id, db, tenant_logge
 
     subdomain_list = [a.identifier for a in subdomains]
 
-    # Rate limits per tier
-    tier_rate = {2: 100, 3: 300}
-    rate = tier_rate.get(scan_tier, 100)
+    # DNS rate limits per tier (queries/second — distributed across resolvers)
+    tier_rate = {2: 200, 3: 300}
+    rate = tier_rate.get(scan_tier, 200)
 
     # Generate permutations
     candidates = run_alterx(subdomain_list, tenant_id)
@@ -955,6 +1146,16 @@ def _phase_2_dns_bruteforce(tenant_id, project_id, scan_run_id, db, tenant_logge
     # Validate via puredns
     validated = run_puredns(candidates, tenant_id, rate=rate)
     tenant_logger.info("puredns validated %d / %d candidates", len(validated), len(candidates))
+
+    # Filter validated hostnames to only in-scope domains
+    seed_domains = _get_seed_domains(tenant_id, project_id, db)
+    in_scope = [h for h in validated if _is_hostname_in_scope(h.strip().lower(), seed_domains)]
+    if len(in_scope) < len(validated):
+        tenant_logger.info(
+            f"Scope filter: {len(in_scope)} in-scope, "
+            f"{len(validated) - len(in_scope)} out-of-scope filtered"
+        )
+    validated = in_scope
 
     # Upsert validated subdomains
     assets_created = 0
@@ -1075,9 +1276,16 @@ def _phase_3_dns_resolution(tenant_id, project_id, scan_run_id, db, tenant_logge
     if ips_created:
         db.commit()
 
-    # Ensure CNAME targets exist as assets (subdomains)
+    # Ensure CNAME targets exist as assets (subdomains), but only if in scope.
+    # CNAME chains often point to CDN/cloud infrastructure (b-cdn.net,
+    # azureedge.net, etc.) that we must NOT scan.
+    seed_domains = _get_seed_domains(tenant_id, project_id, db)
     cnames_created = 0
+    cnames_skipped = 0
     for cname in unique_cnames:
+        if not _is_hostname_in_scope(cname, seed_domains):
+            cnames_skipped += 1
+            continue
         existing = db.query(Asset.id).filter(
             Asset.tenant_id == tenant_id,
             Asset.identifier == cname,
@@ -1092,6 +1300,11 @@ def _phase_3_dns_resolution(tenant_id, project_id, scan_run_id, db, tenant_logge
             cnames_created += 1
     if cnames_created:
         db.commit()
+    if cnames_skipped:
+        tenant_logger.info(
+            f"Skipped {cnames_skipped} out-of-scope CNAME targets "
+            f"(CDN/cloud infrastructure)"
+        )
 
     # ------------------------------------------------------------------
     # Build asset lookup for relationship creation
@@ -1334,10 +1547,11 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     from app.models.database import Asset, AssetType
 
     # Tier-based port configuration
+    # Tier 1 uses top-100 with 300s timeout (connect scan in Docker is slow)
     tier_config = {
-        1: {'top_ports': '100', 'rate': 100, 'full_scan': False},
-        2: {'top_ports': '1000', 'rate': 500, 'full_scan': False},
-        3: {'top_ports': '1000', 'rate': 1000, 'full_scan': False},
+        1: {'top_ports': '100', 'rate': 100, 'full_scan': False, 'timeout': 300},
+        2: {'top_ports': '1000', 'rate': 500, 'full_scan': False, 'timeout': 600},
+        3: {'top_ports': '1000', 'rate': 1000, 'full_scan': False, 'timeout': 600},
     }
     config = tier_config.get(scan_tier, tier_config[1])
 
@@ -1346,11 +1560,31 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     throttle = get_throttle(tenant_id, scan_run_id)
     effective_rate = throttle.get_rate(config['rate'])
 
-    assets = db.query(Asset).filter(
+    # Get domains/subdomains — naabu resolves hostnames to IPs internally,
+    # so scanning both a subdomain AND its resolved IP is redundant.
+    # Only include standalone IPs (not the target of any resolves_to relationship).
+    hostname_assets = db.query(Asset).filter(
         Asset.tenant_id == tenant_id,
-        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN, AssetType.IP]),
-        Asset.is_active == True
+        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
+        Asset.is_active == True,
     ).all()
+
+    # Find IPs that are NOT covered by any hostname (standalone IPs from seeds/uncover)
+    from sqlalchemy import exists
+    covered_ip_ids = {
+        r.target_asset_id for r in db.query(Relationship.target_asset_id).filter(
+            Relationship.tenant_id == tenant_id,
+            Relationship.rel_type == 'resolves_to',
+        ).all()
+    }
+    standalone_ips = db.query(Asset).filter(
+        Asset.tenant_id == tenant_id,
+        Asset.type == AssetType.IP,
+        Asset.is_active == True,
+        ~Asset.id.in_(covered_ip_ids) if covered_ip_ids else True,
+    ).all()
+
+    assets = hostname_assets + standalone_ips
 
     if not assets:
         return {'ports_discovered': 0, 'scan_tier': scan_tier}
@@ -1359,9 +1593,14 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     tenant_logger.info(
         f"Naabu: top_ports={config['top_ports']}, rate={effective_rate} pkt/s "
         f"{'(throttled) ' if throttle.is_throttled else ''}"
-        f"full_scan={config['full_scan']} (tier {scan_tier}), targets={len(asset_ids)}"
+        f"full_scan={config['full_scan']} (tier {scan_tier}), "
+        f"targets={len(asset_ids)} ({len(hostname_assets)} hostnames + {len(standalone_ips)} standalone IPs, "
+        f"{len(covered_ip_ids)} duplicate IPs skipped)"
     )
-    result = run_naabu(tenant_id, asset_ids, full_scan=config['full_scan'], rate=effective_rate)
+    result = run_naabu(
+        tenant_id, asset_ids, full_scan=config['full_scan'],
+        rate=effective_rate, timeout=config.get('timeout'),
+    )
 
     return {
         'ports_discovered': result.get('ports_discovered', 0) if isinstance(result, dict) else 0,
@@ -1526,23 +1765,37 @@ def _phase_6b_web_crawling(tenant_id, project_id, scan_run_id, db, tenant_logger
     """Phase 6b: Web crawling with Katana.
 
     Katana depends on live HTTP services discovered by Phase 4 (HTTPx).
-    Assets without live web services are filtered out internally by
-    run_katana, so we pass all candidate asset types including IPs.
+    Only crawls hostnames + standalone IPs (skip IPs already resolved from hostnames).
     """
     from app.tasks.enrichment import run_katana
     from app.models.database import Asset, AssetType
 
-    assets = db.query(Asset).filter(
+    hostname_assets = db.query(Asset).filter(
         Asset.tenant_id == tenant_id,
-        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN, AssetType.IP]),
-        Asset.is_active == True
+        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
+        Asset.is_active == True,
     ).all()
+
+    covered_ip_ids = {
+        r.target_asset_id for r in db.query(Relationship.target_asset_id).filter(
+            Relationship.tenant_id == tenant_id,
+            Relationship.rel_type == 'resolves_to',
+        ).all()
+    }
+    standalone_ips = db.query(Asset).filter(
+        Asset.tenant_id == tenant_id,
+        Asset.type == AssetType.IP,
+        Asset.is_active == True,
+        ~Asset.id.in_(covered_ip_ids) if covered_ip_ids else True,
+    ).all()
+
+    assets = hostname_assets + standalone_ips
 
     if not assets:
         return {'endpoints_discovered': 0}
 
     asset_ids = [a.id for a in assets]
-    tenant_logger.info(f"Katana: crawling {len(asset_ids)} assets")
+    tenant_logger.info(f"Katana: crawling {len(asset_ids)} assets (deduped IPs)")
     result = run_katana(tenant_id, asset_ids)
 
     return {
@@ -1557,22 +1810,37 @@ def _phase_6c_sensitive_paths(tenant_id, project_id, scan_run_id, db, tenant_log
 
     Probes assets with HTTP services for commonly exposed sensitive paths
     (config files, VCS metadata, backups, admin panels, debug endpoints).
-    Runs after web crawling so that HTTP services are already discovered.
+    Only scans hostnames + standalone IPs (skip resolved-from-hostname IPs).
     """
     from app.tasks.sensitive_paths import run_sensitive_path_scan
     from app.models.database import Asset, AssetType
 
-    assets = db.query(Asset).filter(
+    hostname_assets = db.query(Asset).filter(
         Asset.tenant_id == tenant_id,
-        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN, AssetType.IP]),
-        Asset.is_active == True  # noqa: E712
+        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
+        Asset.is_active == True,
     ).all()
+
+    covered_ip_ids = {
+        r.target_asset_id for r in db.query(Relationship.target_asset_id).filter(
+            Relationship.tenant_id == tenant_id,
+            Relationship.rel_type == 'resolves_to',
+        ).all()
+    }
+    standalone_ips = db.query(Asset).filter(
+        Asset.tenant_id == tenant_id,
+        Asset.type == AssetType.IP,
+        Asset.is_active == True,
+        ~Asset.id.in_(covered_ip_ids) if covered_ip_ids else True,
+    ).all()
+
+    assets = hostname_assets + standalone_ips
 
     if not assets:
         return {'findings_created': 0, 'assets_scanned': 0}
 
     asset_ids = [a.id for a in assets]
-    tenant_logger.info(f"Sensitive path scan: {len(asset_ids)} candidate assets")
+    tenant_logger.info(f"Sensitive path scan: {len(asset_ids)} assets (deduped IPs)")
     result = run_sensitive_path_scan(
         tenant_id, asset_ids, db=db, scan_run_id=scan_run_id
     )
@@ -1645,7 +1913,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
 
     Tier 1 (Safe):       critical + high only (~1700 templates)
     Tier 2 (Moderate):   critical + high + medium (~4700 templates)
-    Tier 3 (Aggressive): all severities including low + info (~9000+ templates)
+    Tier 3 (Aggressive): critical + high + medium + low (~6000 templates)
 
     Nuclei internally resolves asset IDs to URLs via their HTTPx-enriched
     services, so we include IP assets alongside domains and subdomains to
@@ -1655,23 +1923,51 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     from app.models.database import Asset, AssetType
 
     # Tier-based Nuclei severity configuration
+    # Tier 3 excludes 'info' — those are mostly tech-detection templates
+    # (4000+) that duplicate Phase 6 and add 20+ min to scan time.
     tier_severity = {
         1: ['critical', 'high'],
         2: ['critical', 'high', 'medium'],
-        3: ['critical', 'high', 'medium', 'low', 'info'],
+        3: ['critical', 'high', 'medium', 'low'],
     }
     severity = tier_severity.get(scan_tier, tier_severity[1])
 
-    assets = db.query(Asset).filter(
+    # Only scan hostnames — Nuclei resolves them internally via services.
+    # Skip IP assets that are already covered by a hostname's DNS resolution.
+    hostname_assets = db.query(Asset).filter(
         Asset.tenant_id == tenant_id,
-        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN, AssetType.IP]),
-        Asset.is_active == True
+        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
+        Asset.is_active == True,
     ).all()
 
-    if not assets:
+    covered_ip_ids = {
+        r.target_asset_id for r in db.query(Relationship.target_asset_id).filter(
+            Relationship.tenant_id == tenant_id,
+            Relationship.rel_type == 'resolves_to',
+        ).all()
+    }
+    standalone_ips = db.query(Asset).filter(
+        Asset.tenant_id == tenant_id,
+        Asset.type == AssetType.IP,
+        Asset.is_active == True,
+        ~Asset.id.in_(covered_ip_ids) if covered_ip_ids else True,
+    ).all()
+
+    # Split assets: CDN-fronted hosts only get takeover/ssl checks (CVE scans
+    # would hit the CDN edge, not the origin, producing false positives).
+    all_assets = hostname_assets + standalone_ips
+    direct_assets = [a for a in all_assets if not a.cdn_name]
+    cdn_assets = [a for a in all_assets if a.cdn_name]
+
+    if not all_assets:
         return {'findings_created': 0, 'scan_tier': scan_tier}
 
-    asset_ids = [a.id for a in assets]
+    asset_ids = [a.id for a in direct_assets]
+    cdn_asset_ids = [a.id for a in cdn_assets]
+    tenant_logger.info(
+        f"Nuclei targets: {len(all_assets)} total ({len(direct_assets)} direct + "
+        f"{len(cdn_assets)} CDN-fronted, {len(covered_ip_ids)} duplicate IPs skipped)"
+    )
 
     # Interactsh OOB callback support (Tier 3 only)
     from app.config import settings as app_settings
@@ -1681,9 +1977,15 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         interactsh_server = app_settings.interactsh_server or 'oast.pro'
         tenant_logger.info("Nuclei: interactsh enabled (server=%s)", interactsh_server)
 
-    # Tier-based concurrency: more templates loaded = lower concurrency to avoid OOM
-    tier_concurrency = {1: 25, 2: 15, 3: 10}
-    concurrency = tier_concurrency.get(scan_tier, 15)
+    # Tier-based concurrency, rate limit, and timeout
+    # Tier 1 uses reduced template set (~2k) and finishes in 5-10 min
+    # Tier 2/3 use full template set (~7k) and need more time
+    tier_concurrency = {1: 25, 2: 25, 3: 30}
+    tier_rate_limit = {1: 150, 2: 300, 3: 500}
+    tier_timeout = {1: 600, 2: 1200, 3: 1800}
+    concurrency = tier_concurrency.get(scan_tier, 25)
+    rate_limit = tier_rate_limit.get(scan_tier, 300)
+    timeout = tier_timeout.get(scan_tier, 1800)
 
     # Apply adaptive throttle if active
     from app.services.adaptive_throttle import get_throttle
@@ -1691,23 +1993,71 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     concurrency = throttle.get_rate(concurrency)
 
     tenant_logger.info(
-        f"Nuclei: severity={severity}, concurrency={concurrency} (tier {scan_tier})"
+        f"Nuclei: severity={severity}, rate={rate_limit}rps, concurrency={concurrency} "
+        f"(tier {scan_tier}), timeout={timeout}s"
         f"{' [THROTTLED]' if throttle.is_throttled else ''}, targets={len(asset_ids)}"
     )
-    result = run_nuclei_scan(
-        tenant_id, asset_ids, severity=severity,
-        concurrency=concurrency,
-        interactsh_server=interactsh_server if use_interactsh else None,
-    )
+
+    total_created = 0
+    total_updated = 0
+    total_scanned = 0
+    total_urls = 0
+
+    # Tier 1 "fast" scan: only the highest-value template dirs (~2k templates).
+    # dns/ and network/ are slow (many socket-based checks) and low-yield for EASM.
+    # http/misconfiguration/ overlaps with Phase 8 misconfig.py (50 controls).
+    # Tier 2+ gets the full set for deeper analysis.
+    tier_templates = {
+        1: ['http/cves/', 'http/exposed-panels/', 'http/takeovers/',
+            'http/default-logins/', 'ssl/'],
+        # Tier 2/3: None = use nuclei_service default (all 10 dirs)
+    }
+    templates_for_scan = tier_templates.get(scan_tier)
+
+    # Pass 1: Full scan on direct (non-CDN) assets
+    if asset_ids:
+        result = run_nuclei_scan(
+            tenant_id, asset_ids, severity=severity,
+            templates=templates_for_scan,
+            rate_limit=rate_limit,
+            concurrency=concurrency,
+            timeout=timeout,
+            interactsh_server=interactsh_server if use_interactsh else None,
+        )
+        if isinstance(result, dict):
+            total_created += result.get('findings_created', 0)
+            total_updated += result.get('findings_updated', 0)
+            total_scanned += result.get('assets_scanned', 0)
+            total_urls += result.get('urls_scanned', 0)
+
+    # Pass 2: CDN-fronted assets — only takeover + SSL checks (fast, ~2 min)
+    if cdn_asset_ids:
+        tenant_logger.info(
+            f"Nuclei CDN pass: {len(cdn_asset_ids)} CDN-fronted assets "
+            f"(takeovers + ssl only)"
+        )
+        cdn_result = run_nuclei_scan(
+            tenant_id, cdn_asset_ids, severity=['critical', 'high', 'medium'],
+            templates=['http/takeovers/', 'ssl/'],
+            rate_limit=rate_limit,
+            concurrency=concurrency,
+            timeout=300,  # CDN pass is fast — 5 min max
+        )
+        if isinstance(cdn_result, dict):
+            total_created += cdn_result.get('findings_created', 0)
+            total_updated += cdn_result.get('findings_updated', 0)
+            total_scanned += cdn_result.get('assets_scanned', 0)
+            total_urls += cdn_result.get('urls_scanned', 0)
 
     return {
-        'findings_created': result.get('findings_created', 0) if isinstance(result, dict) else 0,
-        'findings_updated': result.get('findings_updated', 0) if isinstance(result, dict) else 0,
-        'assets_scanned': result.get('assets_scanned', 0) if isinstance(result, dict) else 0,
-        'urls_scanned': result.get('urls_scanned', 0) if isinstance(result, dict) else 0,
+        'findings_created': total_created,
+        'findings_updated': total_updated,
+        'assets_scanned': total_scanned,
+        'urls_scanned': total_urls,
         'scan_tier': scan_tier,
         'severity_filter': severity,
         'interactsh_enabled': use_interactsh,
+        'cdn_assets_scanned': len(cdn_asset_ids),
     }
 
 

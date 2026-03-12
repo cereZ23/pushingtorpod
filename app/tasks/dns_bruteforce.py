@@ -58,7 +58,7 @@ def run_alterx(domains: list[str], tenant_id: int) -> list[str]:
 
             returncode, stdout, stderr = executor.execute(
                 'alterx',
-                ['-l', input_file, '-en', '-silent', '-o', output_file],
+                ['-l', input_file, '-silent', '-o', output_file],
                 timeout=settings.alterx_timeout,
             )
 
@@ -70,6 +70,17 @@ def run_alterx(domains: list[str], tenant_id: int) -> list[str]:
                 line.strip() for line in output_content.split('\n')
                 if line.strip()
             ]
+
+            # Cap candidates to avoid spending excessive time in puredns.
+            # 268k candidates at 300/s = ~15 min just for DNS queries;
+            # 50k keeps it under 3 min with high coverage.
+            MAX_CANDIDATES = 50000
+            if len(candidates) > MAX_CANDIDATES:
+                logger.info(
+                    "alterx generated %d candidates, capping to %d (tenant %d)",
+                    len(candidates), MAX_CANDIDATES, tenant_id,
+                )
+                candidates = candidates[:MAX_CANDIDATES]
 
             logger.info(
                 "alterx generated %d permutation candidates (tenant %d)",

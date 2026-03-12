@@ -98,7 +98,7 @@ def get_graph_nodes(
         )
         .outerjoin(finding_count_sq, Asset.id == finding_count_sq.c.asset_id)
         .outerjoin(service_count_sq, Asset.id == service_count_sq.c.asset_id)
-        .filter(Asset.tenant_id == tenant_id)
+        .filter(Asset.tenant_id == tenant_id, Asset.is_active.is_(True))
     )
 
     if asset_type is not None:
@@ -352,7 +352,7 @@ def get_graph_stats(
     # Node count by type
     node_type_rows = (
         db.query(Asset.type, func.count(Asset.id))
-        .filter(Asset.tenant_id == tenant_id)
+        .filter(Asset.tenant_id == tenant_id, Asset.is_active.is_(True))
         .group_by(Asset.type)
         .all()
     )
@@ -406,7 +406,7 @@ def get_graph_stats(
         db.query(Asset, connection_count)
         .outerjoin(source_counts, Asset.id == source_counts.c.asset_id)
         .outerjoin(target_counts, Asset.id == target_counts.c.asset_id)
-        .filter(Asset.tenant_id == tenant_id)
+        .filter(Asset.tenant_id == tenant_id, Asset.is_active.is_(True))
         .order_by(connection_count.desc())
         .limit(10)
         .all()

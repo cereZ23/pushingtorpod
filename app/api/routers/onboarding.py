@@ -70,8 +70,8 @@ def validate_domain(domain: str) -> bool:
 @router.post("/register", response_model=OnboardingResponse)
 @limiter.limit("3/hour")
 def register_organization(
-    request: OnboardingRequest,
-    http_request: Request,
+    request: Request,
+    body: OnboardingRequest,
     db: Session = Depends(get_db),
 ):
     """
@@ -95,11 +95,11 @@ def register_organization(
         - 429: Rate limit exceeded
         - 500: Internal error during creation
     """
-    logger.info(f"Self-service onboarding for {request.company_name} ({request.email})")
+    logger.info(f"Self-service onboarding for {body.company_name} ({body.email})")
 
     try:
         # 1. Validate all domains
-        for domain in request.domains:
+        for domain in body.domains:
             if not validate_domain(domain):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -107,7 +107,7 @@ def register_organization(
                 )
 
         # 2. Generate slug and check uniqueness
-        base_slug = generate_slug(request.company_name)
+        base_slug = generate_slug(body.company_name)
         slug = base_slug
         counter = 1
 
@@ -116,7 +116,7 @@ def register_organization(
             counter += 1
 
         # 3. Check if email already exists
-        existing_user = db.query(User).filter(User.email == request.email).first()
+        existing_user = db.query(User).filter(User.email == body.email).first()
         if existing_user:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -125,7 +125,7 @@ def register_organization(
 
         # 4. Create tenant
         tenant = Tenant(
-            name=request.company_name,
+            name=body.company_name,
             slug=slug
         )
         db.add(tenant)
@@ -135,7 +135,7 @@ def register_organization(
 
         # 5. Create admin user with unique username
         # Generate unique username from email (handle duplicates)
-        base_username = request.email.split('@')[0]
+        base_username = body.email.split('@')[0]
         username = base_username
         counter = 1
 
@@ -145,9 +145,9 @@ def register_organization(
             counter += 1
 
         user = User(
-            email=request.email,
+            email=body.email,
             username=username,
-            hashed_password=User.hash_password(request.password),
+            hashed_password=User.hash_password(body.password),
             is_active=True,
             is_superuser=False
         )
@@ -167,7 +167,7 @@ def register_organization(
 
         # 7. Add seed domains
         domains_added = 0
-        for domain in request.domains:
+        for domain in body.domains:
             seed = Seed(
                 tenant_id=tenant.id,
                 type='domain',

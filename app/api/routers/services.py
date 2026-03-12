@@ -55,7 +55,10 @@ def list_services(
     - search: Full-text search
     """
     # Build query with tenant isolation
-    query = db.query(Service).join(Asset).filter(Asset.tenant_id == tenant_id)
+    query = db.query(Service).join(Asset).filter(
+        Asset.tenant_id == tenant_id,
+        Asset.is_active == True,  # noqa: E712 — exclude services on deactivated assets
+    )
 
     # Apply filters
     if asset_id:

@@ -255,20 +255,23 @@ def get_tenant_stats(
 def _calculate_tenant_stats(db: Session, tenant_id: int) -> TenantStats:
     """Calculate comprehensive tenant statistics"""
 
-    # Asset statistics
-    total_assets = db.query(Asset).filter(Asset.tenant_id == tenant_id).count()
+    # Asset statistics (active only)
+    total_assets = db.query(Asset).filter(
+        Asset.tenant_id == tenant_id, Asset.is_active.is_(True)
+    ).count()
 
     assets_by_type = {}
     for asset_type in AssetType:
         count = db.query(Asset).filter(
             Asset.tenant_id == tenant_id,
+            Asset.is_active.is_(True),
             Asset.type == asset_type
         ).count()
         assets_by_type[asset_type.value] = count
 
-    # Service count
+    # Service count (active assets only)
     total_services = db.query(Service).join(Asset).filter(
-        Asset.tenant_id == tenant_id
+        Asset.tenant_id == tenant_id, Asset.is_active.is_(True)
     ).count()
 
     # Certificate count

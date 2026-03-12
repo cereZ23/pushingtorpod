@@ -35,6 +35,7 @@ def run_nuclei_scan(
     templates: Optional[List[str]] = None,
     rate_limit: int = 300,
     concurrency: int = 50,
+    timeout: int = 1800,
     interactsh_server: Optional[str] = None,
 ):
     """
@@ -143,11 +144,12 @@ def run_nuclei_scan(
         # Use asyncio to run async method
         scan_result = asyncio.run(
             nuclei_service.scan_urls(
-                urls=scan_targets,  # Scan both base URLs and crawled endpoints
+                urls=scan_targets,
                 templates=templates,
                 severity=severity or ['critical', 'high', 'medium'],
                 rate_limit=rate_limit,
                 concurrency=concurrency,
+                timeout=timeout,
                 interactsh_server=interactsh_server,
             )
         )

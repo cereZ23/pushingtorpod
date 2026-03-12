@@ -55,7 +55,10 @@ def list_certificates(
     Useful for TLS/SSL hygiene and compliance
     """
     # Build query with tenant isolation
-    query = db.query(Certificate).join(Asset).filter(Asset.tenant_id == tenant_id)
+    query = db.query(Certificate).join(Asset).filter(
+        Asset.tenant_id == tenant_id,
+        Asset.is_active == True,  # noqa: E712
+    )
 
     # Apply filters
     if asset_id:

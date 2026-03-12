@@ -256,7 +256,14 @@ def list_findings(
         Finding,
         Asset.identifier.label('asset_identifier'),
         Asset.type.label('asset_type')
-    ).join(Asset).filter(Asset.tenant_id == tenant_id)
+    ).join(Asset).filter(
+        Asset.tenant_id == tenant_id,
+        Asset.is_active == True,  # noqa: E712 — exclude deactivated/out-of-scope assets
+    )
+
+    # Default to 'open' findings when no status filter is specified
+    if not finding_status:
+        query = query.filter(Finding.status == FindingStatus.OPEN)
 
     # Apply filters
     if asset_id:
@@ -290,6 +297,7 @@ def list_findings(
 
     if finding_status:
         try:
+            # Override the default 'open' filter above
             query = query.filter(Finding.status == FindingStatus(finding_status))
         except ValueError:
             raise HTTPException(

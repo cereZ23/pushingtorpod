@@ -328,11 +328,11 @@ def run_httpx(tenant_id: int, asset_ids: List[int]):
                     '-max-redirects', '3',      # Limit redirects
                     '-no-color',                # Disable colors
                     '-silent',                  # Minimal output
-                    '-threads', '10',           # Thread count
-                    '-timeout', str(settings.httpx_timeout),
+                    '-threads', '50',           # Concurrent requests (was 10, too slow for 1200 URLs)
+                    '-timeout', '10',           # Per-request timeout: 10s (EASM targets, not deep crawl)
                     '-rate-limit', str(settings.httpx_rate_limit)
                 ],
-                timeout=settings.httpx_timeout,
+                timeout=settings.httpx_timeout + 600,  # Process timeout = config + 10 min buffer
                 stdin_data=urls_content        # Pass URLs via stdin
             )
 
@@ -581,7 +581,7 @@ def sanitize_html(text: str) -> str:
 # =============================================================================
 
 @celery.task(name='app.tasks.enrichment.run_naabu')
-def run_naabu(tenant_id: int, asset_ids: List[int], full_scan: bool = False, rate: int = 0):
+def run_naabu(tenant_id: int, asset_ids: List[int], full_scan: bool = False, rate: int = 0, timeout: Optional[int] = None):
     """
     Run Naabu for port scanning
 
@@ -684,7 +684,7 @@ def run_naabu(tenant_id: int, asset_ids: List[int], full_scan: bool = False, rat
             returncode, stdout, stderr = executor.execute(
                 'naabu',
                 args,
-                timeout=settings.naabu_timeout,
+                timeout=timeout or settings.naabu_timeout,
                 stdin_data=hosts_content
             )
 
@@ -1172,12 +1172,12 @@ def parse_tlsx_result(result: Dict, tenant_logger) -> Optional[Dict]:
         for date_format in ('%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%d %H:%M:%S'):
             if not_before_str and not not_before:
                 try:
-                    not_before = datetime.strptime(not_before_str.replace('+00:00', 'Z').rstrip('Z') + 'Z', '%Y-%m-%dT%H:%M:%SZ')
+                    not_before = datetime.strptime(not_before_str.replace('+00:00', 'Z').rstrip('Z') + 'Z', '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
                 except ValueError:
                     pass
             if not_after_str and not not_after:
                 try:
-                    not_after = datetime.strptime(not_after_str.replace('+00:00', 'Z').rstrip('Z') + 'Z', '%Y-%m-%dT%H:%M:%SZ')
+                    not_after = datetime.strptime(not_after_str.replace('+00:00', 'Z').rstrip('Z') + 'Z', '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
                 except ValueError:
                     pass
 
@@ -1343,17 +1343,21 @@ def run_katana(tenant_id: int, asset_ids: List[int]):
 
         # Execute Katana with secure executor
         with SecureToolExecutor(tenant_id) as executor:
+            # Katana does NOT read from stdin — must use -list with a file
             urls_content = '\n'.join(urls)
+            urls_file = executor.create_input_file('katana_urls.txt', urls_content)
 
             max_depth = str(settings.katana_max_depth)
-            max_pages = str(settings.katana_max_pages)
+            crawl_duration = str(settings.katana_timeout)  # seconds
 
             args = [
-                '-json',
+                '-list', urls_file,
+                '-jsonl',
                 '-silent',
-                '-js-crawl',
+                '-jc',                        # js-crawl (short form)
                 '-d', max_depth,
-                '-ct', max_pages
+                '-ct', f'{crawl_duration}s',   # crawl duration (not max pages)
+                '-rl', '100',                  # rate limit requests/sec
             ]
 
             # Katana respects robots.txt by default.
@@ -1364,8 +1368,7 @@ def run_katana(tenant_id: int, asset_ids: List[int]):
             returncode, stdout, stderr = executor.execute(
                 'katana',
                 args,
-                timeout=settings.katana_timeout,
-                stdin_data=urls_content
+                timeout=settings.katana_timeout + 30,  # extra buffer beyond crawl duration
             )
 
             if returncode != 0:

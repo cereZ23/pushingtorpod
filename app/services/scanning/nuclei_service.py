@@ -157,6 +157,12 @@ class NucleiService:
                 if returncode != 0 and returncode != 1:  # 1 is OK (findings found)
                     logger.warning(f"Nuclei returned code {returncode}: {stderr[:500]}")
 
+                # Log stats from stderr (progress info)
+                if stderr:
+                    for line in stderr.strip().split('\n')[-10:]:
+                        if line.strip():
+                            logger.info(f"Nuclei stats: {line.strip()}")
+
             except ToolExecutionError as e:
                 logger.error(f"Nuclei execution failed for tenant {self.tenant_id}: {e}")
                 return {
@@ -283,18 +289,25 @@ class NucleiService:
         Returns:
             List of command arguments
         """
+        # Template base directory — use pre-installed templates
+        nuclei_templates_dir = '/home/appuser/nuclei-templates'
+
         args = [
             '-l', urls_file,           # Input URLs file
             '-jsonl',                  # JSONL output (Nuclei v3+)
-            '-silent',                 # Minimal console output
             '-no-color',               # Disable colors
+            '-duc',                    # Disable update check (saves 5-10 min startup)
+            '-ss', 'host-spray',       # Host-spray: all templates per host (less RAM, reuses connections)
+            '-stats',                  # Print periodic stats to stderr
+            '-si', '30',               # Stats interval: every 30 seconds
             '-rl', str(rate_limit),    # Rate limit
             '-c', str(concurrency),    # Concurrency
-            '-timeout', '10',          # Request timeout (seconds)
-            '-retries', '1',           # Retry failed requests
-            '-bs', '25',               # Bulk size per template
-            '-headc', '5',             # Headless concurrency limit
-            '-hbs', '5',               # Headless bulk size limit
+            '-timeout', '7',           # Request timeout (seconds, was 10)
+            '-retries', '0',           # No retries (saves ~15% time on fast pass)
+            '-bs', '50',               # Bulk size per template (was 25)
+            '-mhe', '5',               # Max host errors before skipping (avoid stuck hosts)
+            '-no-httpx',               # Skip Nuclei's built-in httpx probe (Phase 4 already did it)
+            '-response-size-read', '2097152',  # 2MB max response read (saves RAM)
         ]
 
         # Add severity filter
@@ -302,18 +315,25 @@ class NucleiService:
             severity_str = ','.join(severity)
             args.extend(['-severity', severity_str])
 
-        # Add templates only if explicitly provided; otherwise let Nuclei
-        # use ALL templates filtered by the -severity flag above.
-        # Nuclei v3 reorganised template paths (e.g. http/cves/) so
-        # hard-coding old paths like 'cves/' causes 0 matches.
+        # Select EASM-relevant template categories to avoid loading all 12k+ templates.
+        # Use absolute paths so Nuclei finds them even with -duc (no update check).
         if templates:
             for template in templates:
+                # Convert relative paths to absolute using the templates dir
+                if not template.startswith('/'):
+                    template = f'{nuclei_templates_dir}/{template}'
                 args.extend(['-t', template])
+        else:
+            for tpl_dir in [
+                'http/cves/', 'http/exposed-panels/', 'http/misconfiguration/',
+                'http/default-logins/', 'http/takeovers/', 'http/exposures/',
+                'http/vulnerabilities/', 'dns/', 'ssl/', 'network/',
+            ]:
+                args.extend(['-t', f'{nuclei_templates_dir}/{tpl_dir}'])
 
-        # Exclude certain templates that may cause DoS or are too noisy
-        # Only exclude actual DoS templates, allow fuzzing/intrusive tests
+        # Exclude templates that are slow, destructive, or redundant with other phases
         args.extend([
-            '-exclude-tags', 'dos'  # Only exclude DoS attacks
+            '-exclude-tags', 'dos,headless,fuzz,osint,token-spray',
         ])
 
         # Interactsh OOB callback support (Tier 3 aggressive scans)

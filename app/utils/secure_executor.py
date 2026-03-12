@@ -9,10 +9,12 @@ Provides:
 """
 
 import subprocess
+import signal
 import shlex
 import os
 import tempfile
 import resource
+import threading
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 import logging
@@ -38,6 +40,12 @@ class SecureToolExecutor:
     DEFAULT_CPU_LIMIT = 600  # 10 minutes CPU time
     DEFAULT_MEMORY_LIMIT = 8 * 1024 * 1024 * 1024  # 8GB (increased for Nuclei)
     DEFAULT_FILE_SIZE_LIMIT = 100 * 1024 * 1024  # 100MB
+
+    # Paths allowed outside the temp directory (read-only resources)
+    SAFE_PATH_PREFIXES = (
+        '/home/appuser/nuclei-templates',
+        '/app/data/',
+    )
 
     def __init__(self, tenant_id: int):
         """
@@ -114,6 +122,10 @@ class SecureToolExecutor:
 
             # Validate file paths
             if safe_arg.startswith('/') or safe_arg.startswith('./'):
+                # Allow pre-approved safe paths (read-only resources like templates)
+                if any(safe_arg.startswith(prefix) for prefix in self.SAFE_PATH_PREFIXES):
+                    sanitized.append(safe_arg)
+                    continue
                 # Ensure path is within temp directory
                 try:
                     arg_path = Path(safe_arg).resolve()
@@ -128,19 +140,21 @@ class SecureToolExecutor:
 
         return sanitized
 
-    def set_resource_limits(self):
-        """Set resource limits for subprocess (Unix-only)"""
+    def _preexec_new_pgrp(self):
+        """Create new process group and set resource limits (Unix-only).
+
+        Running in a new process group allows us to kill the entire tree
+        via ``os.killpg`` even when called from a ThreadPoolExecutor thread
+        (where Python signal-based timeouts do not fire).
+        """
+        os.setpgrp()
         try:
-            # CPU time limit
             resource.setrlimit(resource.RLIMIT_CPU, (self.DEFAULT_CPU_LIMIT, self.DEFAULT_CPU_LIMIT))
-
-            # Memory limit
             resource.setrlimit(resource.RLIMIT_AS, (self.DEFAULT_MEMORY_LIMIT, self.DEFAULT_MEMORY_LIMIT))
-
-            # File size limit (prevent filling disk)
             resource.setrlimit(resource.RLIMIT_FSIZE, (self.DEFAULT_FILE_SIZE_LIMIT, self.DEFAULT_FILE_SIZE_LIMIT))
         except Exception as e:
-            logger.warning(f"Could not set resource limits: {e}")
+            # Log to stderr (logger is not fork-safe)
+            pass
 
     def execute(
         self,
@@ -151,7 +165,11 @@ class SecureToolExecutor:
         stdin_data: Optional[str] = None
     ) -> Tuple[int, str, str]:
         """
-        Execute tool with security controls
+        Execute tool with security controls.
+
+        Uses Popen + threading watchdog instead of subprocess.run() to
+        guarantee process termination even when called from worker threads
+        (where signal-based timeouts in subprocess.run are unreliable).
 
         Args:
             tool: Tool name (must be in whitelist)
@@ -166,16 +184,10 @@ class SecureToolExecutor:
         Raises:
             ToolExecutionError: If execution fails
         """
-        # Validate tool
         tool = self.validate_tool(tool)
-
-        # Sanitize arguments
         safe_args = self.sanitize_args(args)
-
-        # Build command
         cmd = [tool] + safe_args
 
-        # Restricted environment (include /usr/local/pd-tools for ProjectDiscovery tools)
         env = {
             'PATH': '/usr/local/pd-tools:/usr/local/bin:/usr/bin:/bin',
             'HOME': str(self.temp_dir) if self.temp_dir else '/tmp',
@@ -187,30 +199,56 @@ class SecureToolExecutor:
 
         logger.info(f"Executing tool for tenant {self.tenant_id}: {tool} (timeout: {timeout}s)")
 
-        try:
-            # Execute with resource limits (Unix only)
-            if os.name == 'posix':
-                preexec_fn = self.set_resource_limits
-            else:
-                preexec_fn = None
+        proc = None
+        timed_out = False
 
-            result = subprocess.run(
+        try:
+            preexec_fn = self._preexec_new_pgrp if os.name == 'posix' else None
+
+            proc = subprocess.Popen(
                 cmd,
-                input=stdin_data,  # Pass stdin data if provided
-                capture_output=capture_output,
+                stdin=subprocess.PIPE if stdin_data else subprocess.DEVNULL,
+                stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+                stderr=subprocess.PIPE if capture_output else subprocess.DEVNULL,
                 text=True,
-                timeout=timeout,
                 env=env,
                 cwd=str(self.temp_dir) if self.temp_dir else '/tmp',
                 preexec_fn=preexec_fn,
-                shell=False  # CRITICAL: Never use shell=True
+                shell=False,
             )
 
-            return result.returncode, result.stdout, result.stderr
+            # Watchdog timer — kills the process group even from worker threads
+            def _kill_on_timeout():
+                nonlocal timed_out
+                timed_out = True
+                logger.error(
+                    f"Tool '{tool}' timed out after {timeout}s for tenant {self.tenant_id} "
+                    f"(PID {proc.pid}) — killing process group"
+                )
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except OSError:
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
 
-        except subprocess.TimeoutExpired as e:
-            logger.error(f"Tool '{tool}' timed out after {timeout}s for tenant {self.tenant_id}")
-            raise ToolExecutionError(f"Execution timed out after {timeout}s") from e
+            timer = threading.Timer(timeout, _kill_on_timeout)
+            timer.daemon = True
+            timer.start()
+
+            try:
+                stdout, stderr = proc.communicate(input=stdin_data)
+            finally:
+                timer.cancel()
+
+            if timed_out:
+                raise ToolExecutionError(f"Execution timed out after {timeout}s")
+
+            return proc.returncode, stdout or '', stderr or ''
+
+        except ToolExecutionError:
+            raise
 
         except subprocess.SubprocessError as e:
             logger.error(f"Tool '{tool}' execution failed for tenant {self.tenant_id}: {e}")
@@ -219,6 +257,17 @@ class SecureToolExecutor:
         except Exception as e:
             logger.error(f"Unexpected error executing '{tool}' for tenant {self.tenant_id}: {e}")
             raise ToolExecutionError(f"Unexpected error: {e}") from e
+
+        finally:
+            # Ensure the process and its group are dead
+            if proc and proc.poll() is None:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except OSError:
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
 
     def create_input_file(self, filename: str, content: str) -> str:
         """

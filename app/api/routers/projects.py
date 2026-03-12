@@ -1273,7 +1273,9 @@ def delete_scan_run_by_id(
             detail="Cannot delete a running or pending scan. Cancel it first.",
         )
 
-    # Delete phase results first (FK constraint)
+    # Delete dependent records first (FK constraints)
+    from app.models.risk import RiskScore
+    db.query(RiskScore).filter(RiskScore.scan_run_id == run_id).delete()
     db.query(PhaseResult).filter(PhaseResult.scan_run_id == run_id).delete()
     db.query(Observation).filter(Observation.scan_run_id == run_id).delete()
     db.delete(scan_run)
