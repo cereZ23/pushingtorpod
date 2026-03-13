@@ -224,6 +224,7 @@ class Settings(BaseSettings):
     # MUST be a valid Fernet key in production (32 url-safe base64-encoded bytes)
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     mfa_encryption_key: Optional[str] = None  # None = plaintext (dev only)
+    jwt_private_key_passphrase: Optional[str] = None  # None = no passphrase (dev only)
 
     # SAML SSO
     saml_enabled: bool = False

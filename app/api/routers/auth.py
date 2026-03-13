@@ -214,8 +214,10 @@ def login(
 
 
 @router.post("/refresh", response_model=RefreshTokenResponse)
+@limiter.limit("10/minute")
 def refresh_token(
-    request: RefreshTokenRequest
+    request: Request,
+    payload: RefreshTokenRequest,
 ):
     """
     Refresh access token using refresh token
@@ -226,7 +228,7 @@ def refresh_token(
         - 401: Invalid or expired refresh token
     """
     try:
-        result = jwt_manager.refresh_access_token(request.refresh_token)
+        result = jwt_manager.refresh_access_token(payload.refresh_token)
 
         logger.info("Token refreshed successfully")
 
@@ -527,8 +529,9 @@ def accept_invite(
     Raises:
         - 400: Invalid, expired, or already-accepted invitation
     """
+    token_hash = hashlib.sha256(payload.token.encode()).hexdigest()
     invitation = db.query(UserInvitation).filter(
-        UserInvitation.token == payload.token,
+        UserInvitation.token == token_hash,
     ).first()
 
     if not invitation:

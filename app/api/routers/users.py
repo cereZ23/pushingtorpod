@@ -7,6 +7,7 @@ All endpoints require admin permission on the tenant.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -339,11 +340,14 @@ def create_invitation(
                 detail="User is already a member of this tenant",
             )
 
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+
     invitation = UserInvitation(
         email=payload.email,
         tenant_id=tenant_id,
         role=payload.role,
-        token=secrets.token_urlsafe(32),
+        token=token_hash,
         invited_by=membership.user_id,
         expires_at=datetime.now(timezone.utc) + timedelta(days=INVITATION_EXPIRY_DAYS),
     )
@@ -351,7 +355,7 @@ def create_invitation(
     db.commit()
     db.refresh(invitation)
 
-    # Send invitation email (best-effort)
+    # Send invitation email (best-effort) — use raw token, not hash
     try:
         from app.services.email_service import send_invitation_email
 
@@ -359,7 +363,7 @@ def create_invitation(
         tenant = invitation.tenant
         send_invitation_email(
             email=payload.email,
-            token=invitation.token,
+            token=raw_token,
             tenant_name=tenant.name if tenant else "EASM Platform",
             inviter_name=inviter.full_name or inviter.email if inviter else "Admin",
         )

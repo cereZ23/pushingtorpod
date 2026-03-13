@@ -557,6 +557,7 @@ def calculate_all_tenant_risk_scores():
     Returns:
         Dict with overall statistics
     """
+    from celery import group as celery_group
     from app.database import SessionLocal
     from app.models.database import Tenant
 
@@ -564,41 +565,28 @@ def calculate_all_tenant_risk_scores():
 
     try:
         tenants = db.query(Tenant).all()
-        logger.info(f"Calculating risk scores for {len(tenants)} tenants")
-
-        results = []
-
-        for tenant in tenants:
-            try:
-                result = calculate_comprehensive_risk_scores.delay(tenant.id).get()
-                results.append(result)
-            except Exception as e:
-                logger.error(f"Failed to calculate risk scores for tenant {tenant.id}: {e}")
-                results.append({
-                    'tenant_id': tenant.id,
-                    'success': False,
-                    'error': str(e)
-                })
-
-        successful = sum(1 for r in results if r.get('success'))
-        failed = len(results) - successful
-
-        logger.info(f"Risk scoring complete: {successful} successful, {failed} failed")
-
-        return {
-            'total_tenants': len(tenants),
-            'successful': successful,
-            'failed': failed,
-            'results': results,
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        }
-
-    except Exception as e:
-        logger.error(f"Failed to calculate risk scores for all tenants: {e}", exc_info=True)
-        return {
-            'success': False,
-            'error': str(e),
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        }
+        tenant_ids = [t.id for t in tenants]
     finally:
         db.close()
+
+    if not tenant_ids:
+        return {
+            'total_tenants': 0,
+            'status': 'no_tenants',
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+        }
+
+    logger.info(f"Queuing risk score calculation for {len(tenant_ids)} tenants")
+
+    # Use group() to run in parallel without blocking the worker
+    job = celery_group(
+        calculate_comprehensive_risk_scores.s(tid) for tid in tenant_ids
+    )
+    result = job.apply_async()
+
+    return {
+        'total_tenants': len(tenant_ids),
+        'status': 'queued',
+        'group_id': result.id,
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+    }

@@ -268,7 +268,7 @@ def get_asset_neighbors(
             )
             .outerjoin(finding_count_sq, Asset.id == finding_count_sq.c.asset_id)
             .outerjoin(service_count_sq, Asset.id == service_count_sq.c.asset_id)
-            .filter(Asset.id.in_(neighbor_ids))
+            .filter(Asset.id.in_(neighbor_ids), Asset.tenant_id == tenant_id)
             .all()
         )
         neighbor_nodes = [
@@ -457,21 +457,17 @@ def _verify_tenant_exists(db: Session, tenant_id: int) -> None:
 
 
 def _risk_to_criticality(risk_score: Optional[float]) -> str:
-    """
-    Map a numeric risk score to a human-readable criticality tier.
+    """Map a numeric risk score to a criticality tier.
 
-    Args:
-        risk_score: Numeric score between 0 and 100, or None.
-
-    Returns:
-        One of 'critical', 'high', 'medium', 'low'.
+    Thresholds aligned with GRADE_THRESHOLDS in risk_engine.py:
+    F/critical > 80, D/high > 60, C/medium > 40, A-B/low <= 40.
     """
     if risk_score is None:
         return "low"
-    if risk_score >= 80:
+    if risk_score > 80:
         return "critical"
-    if risk_score >= 60:
+    if risk_score > 60:
         return "high"
-    if risk_score >= 40:
+    if risk_score > 40:
         return "medium"
     return "low"

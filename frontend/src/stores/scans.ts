@@ -405,6 +405,15 @@ export const useScanStore = defineStore("scans", () => {
     error.value = "";
   }
 
+  function $reset() {
+    projects.value = [];
+    selectedProject.value = null;
+    scanRuns.value = [];
+    currentScanRun.value = null;
+    phaseProgress.value = [];
+    error.value = "";
+  }
+
   return {
     projects,
     selectedProject,
@@ -426,5 +435,6 @@ export const useScanStore = defineStore("scans", () => {
     updateProject,
     selectProject,
     clearError,
+    $reset,
   };
 });

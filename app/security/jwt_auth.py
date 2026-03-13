@@ -455,26 +455,6 @@ async def get_current_user(
     return jwt_manager.verify_token(credentials)
 
 
-async def get_current_active_user(
-    current_user: Dict = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """
-    FastAPI dependency to get current active user
-
-    Args:
-        current_user: Current user from token
-
-    Returns:
-        User payload
-
-    Raises:
-        HTTPException: If user is inactive
-    """
-    # Add logic to check if user is active in database
-    # For now, assume all authenticated users are active
-    return current_user
-
-
 def require_permission(required_permission: str):
     """
     Decorator to require specific permission

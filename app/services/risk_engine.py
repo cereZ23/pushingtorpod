@@ -23,14 +23,24 @@ CRITICALITY_WEIGHTS: dict[str, float] = {
 }
 
 
+# Canonical grade thresholds — shared across:
+#   - app/services/risk_engine.py (score_to_grade)
+#   - app/services/risk_scoring.py (RiskScoringEngine docstring)
+#   - app/api/routers/graph.py (_risk_to_criticality)
+#   - frontend/src/utils/severity.ts (getRiskGrade, getRiskScoreClasses)
+GRADE_THRESHOLDS = {
+    'A': (0, 20),    # Minimal / Info
+    'B': (21, 40),   # Low
+    'C': (41, 60),   # Medium
+    'D': (61, 80),   # High
+    'F': (81, 100),  # Critical
+}
+
+
 def score_to_grade(score: float) -> str:
     """Map a numeric risk score (0-100) to a letter grade.
 
-    Args:
-        score: Numeric risk score between 0 and 100.
-
-    Returns:
-        Single-character grade: A, B, C, D, or F.
+    Uses GRADE_THRESHOLDS — keep in sync with frontend severity.ts.
     """
     if score <= 20:
         return 'A'
@@ -142,6 +152,11 @@ def compute_issue_score(input: IssueScoreInput) -> IssueScoreResult:
 def compute_asset_score(input: AssetScoreInput) -> AssetScoreResult:
     """Compute asset score from sorted issue scores with geometric decay.
 
+    .. note:: This function is part of the explainable risk engine but is
+       **not called in the production pipeline**.  The pipeline uses
+       ``risk_scoring.recalculate_asset_risk`` instead.  Kept for the
+       correlation engine and potential future use.
+
     Issues are sorted descending and weighted by ``0.85^index`` so the
     most severe issue dominates.  The weighted sum is then multiplied by
     the asset's criticality weight.
@@ -198,9 +213,13 @@ def compute_org_score(
 
     sorted_scores = sorted(asset_scores, reverse=True)
 
-    # Top 20 assets contribute 60%
+    # Top 20 assets contribute 60%.  Scale the weight up for small portfolios
+    # so that a single high-risk asset isn't understated (e.g. 1 asset at 80
+    # should produce grade D, not C).
     top_20 = sorted_scores[:20]
-    top_contribution = (sum(top_20) / max(len(top_20), 1)) * 0.6
+    n = len(top_20)
+    top_weight = min(1.0, 0.6 + 0.4 * (1 - n / 20)) if n < 20 else 0.6
+    top_contribution = (sum(top_20) / n) * top_weight
 
     # Breadth penalty
     high_risk_count = sum(1 for s in sorted_scores if s > 50)

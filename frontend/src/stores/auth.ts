@@ -22,11 +22,14 @@ export const useAuthStore = defineStore("auth", () => {
   const isAuthenticated = computed(() => !!accessToken.value);
   const currentUser = computed(() => user.value);
 
-  // RBAC helpers
-  const currentTenantId = computed((): number | null => {
-    const stored = localStorage.getItem("currentTenantId");
-    return stored ? Number(stored) : null;
-  });
+  // RBAC helpers — reactive tenant ID (synced with localStorage)
+  const _currentTenantId = ref<number | null>(
+    (() => {
+      const stored = localStorage.getItem("currentTenantId");
+      return stored ? Number(stored) : null;
+    })(),
+  );
+  const currentTenantId = computed(() => _currentTenantId.value);
 
   const currentRole = computed((): string | null => {
     if (!user.value?.tenant_roles || !currentTenantId.value) return null;
@@ -67,6 +70,7 @@ export const useAuthStore = defineStore("auth", () => {
     mfaRequired.value = false;
     mfaToken.value = null;
     localStorage.removeItem("currentTenantId");
+    _currentTenantId.value = null;
     router.push("/");
   }
 
@@ -78,6 +82,7 @@ export const useAuthStore = defineStore("auth", () => {
     mfaRequired.value = false;
     mfaToken.value = null;
     localStorage.removeItem("currentTenantId");
+    _currentTenantId.value = null;
     router.push("/");
   }
 
@@ -120,6 +125,7 @@ export const useAuthStore = defineStore("auth", () => {
     localStorage.removeItem("accessToken");
     localStorage.removeItem("refreshToken");
     localStorage.removeItem("currentTenantId");
+    _currentTenantId.value = null;
     // Reset tenant store to avoid stale tenant on user switch
     useTenantStore().$reset();
   }

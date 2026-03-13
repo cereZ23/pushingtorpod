@@ -200,8 +200,8 @@ def log_audit_event(
         method=method
     )
 
+    db = None
     try:
-        # Write to database (async)
         db = next(get_db())
         db.add(audit_entry)
         db.commit()
@@ -230,7 +230,12 @@ def log_audit_event(
 
     except Exception as e:
         # Never fail the application due to audit logging
+        if db:
+            db.rollback()
         logger.error(f"Failed to write audit log: {e}", exc_info=True)
+    finally:
+        if db:
+            db.close()
 
 
 def sanitize_log_string(s: str, max_length: int = 1000) -> str:
@@ -486,22 +491,25 @@ def get_audit_logs(
         List of audit log entries
     """
     db = next(get_db())
-    query = db.query(AuditLog)
+    try:
+        query = db.query(AuditLog)
 
-    if user_id:
-        query = query.filter(AuditLog.user_id == user_id)
-    if tenant_id:
-        query = query.filter(AuditLog.tenant_id == tenant_id)
-    if event_type:
-        query = query.filter(AuditLog.event_type == event_type.value)
-    if severity:
-        query = query.filter(AuditLog.severity == severity)
-    if start_time:
-        query = query.filter(AuditLog.timestamp >= start_time)
-    if end_time:
-        query = query.filter(AuditLog.timestamp <= end_time)
+        if user_id:
+            query = query.filter(AuditLog.user_id == user_id)
+        if tenant_id:
+            query = query.filter(AuditLog.tenant_id == tenant_id)
+        if event_type:
+            query = query.filter(AuditLog.event_type == event_type.value)
+        if severity:
+            query = query.filter(AuditLog.severity == severity)
+        if start_time:
+            query = query.filter(AuditLog.timestamp >= start_time)
+        if end_time:
+            query = query.filter(AuditLog.timestamp <= end_time)
 
-    query = query.order_by(AuditLog.timestamp.desc())
-    query = query.limit(limit).offset(offset)
+        query = query.order_by(AuditLog.timestamp.desc())
+        query = query.limit(limit).offset(offset)
 
-    return query.all()
+        return query.all()
+    finally:
+        db.close()

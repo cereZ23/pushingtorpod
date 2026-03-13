@@ -2,6 +2,9 @@ import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import type { Tenant } from "@/api/types";
 import { tenantApi } from "@/api/tenants";
+import { useScanStore } from "./scans";
+import { useIssueStore } from "./issues";
+import { useGraphStore } from "./graph";
 
 export const useTenantStore = defineStore("tenant", () => {
   const currentTenant = ref<Tenant | null>(null);
@@ -44,6 +47,10 @@ export const useTenantStore = defineStore("tenant", () => {
     if (tenant) {
       currentTenant.value = tenant;
       localStorage.setItem("currentTenantId", String(tenantId));
+      // Clear tenant-scoped data from dependent stores
+      useScanStore().$reset();
+      useIssueStore().$reset();
+      useGraphStore().$reset();
     }
   }
 

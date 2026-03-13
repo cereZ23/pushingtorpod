@@ -70,10 +70,11 @@ class SecurityKeys:
         try:
             if private_key_path.exists() and public_key_path.exists():
                 # Load existing keys
+                passphrase = settings.jwt_private_key_passphrase
                 with open(private_key_path, "rb") as f:
                     self.private_key = serialization.load_pem_private_key(
                         f.read(),
-                        password=None,
+                        password=passphrase.encode() if passphrase else None,
                         backend=default_backend()
                     )
                 with open(public_key_path, "rb") as f:
@@ -82,6 +83,14 @@ class SecurityKeys:
                         backend=default_backend()
                     )
                 logger.info("Loaded RSA keys from disk")
+                # Warn if key file has overly permissive permissions
+                import os
+                mode = os.stat(private_key_path).st_mode & 0o777
+                if mode & 0o077:
+                    logger.warning(
+                        "RSA private key %s has permissive mode %o — should be 600",
+                        private_key_path, mode,
+                    )
             else:
                 # Generate new keys
                 logger.warning("RSA keys not found, generating new keys")
@@ -108,11 +117,17 @@ class SecurityKeys:
         # Save keys
         private_path.parent.mkdir(parents=True, exist_ok=True)
 
+        passphrase = settings.jwt_private_key_passphrase
+        enc_algo = (
+            serialization.BestAvailableEncryption(passphrase.encode())
+            if passphrase
+            else serialization.NoEncryption()
+        )
         with open(private_path, "wb") as f:
             f.write(private_key.private_bytes(
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption()
+                encryption_algorithm=enc_algo,
             ))
 
         with open(public_path, "wb") as f:
@@ -271,7 +286,7 @@ def create_access_token(
     try:
         redis_client = get_redis_client()
         redis_client.setex(
-            f"jwt:active:{jti}",
+            f"jwt:access:{jti}",
             int(expires_delta.total_seconds()),
             subject
         )

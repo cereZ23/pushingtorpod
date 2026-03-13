@@ -45,7 +45,12 @@ def encrypt_mfa_secret(plaintext: str) -> str:
     """
     f = _get_fernet()
     if f is None:
-        logger.debug("MFA encryption key not configured — storing plaintext (dev mode)")
+        if settings.environment == "production":
+            raise RuntimeError(
+                "MFA_ENCRYPTION_KEY must be set in production. "
+                "MFA secrets cannot be stored in plaintext."
+            )
+        logger.warning("MFA encryption key not configured — storing plaintext (dev mode only)")
         return plaintext
     token = f.encrypt(plaintext.encode()).decode()
     return f"enc:{token}"
