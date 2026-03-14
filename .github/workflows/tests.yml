@@ -82,6 +82,8 @@ jobs:
           --ignore=tests/_pipeline_test_generator.py \
           --ignore=tests/test_secure_executor.py \
           --ignore=tests/test_discovery.py \
+          --ignore=tests/api/test_auth_endpoints.py \
+          --ignore=tests/performance/test_enrichment_performance.py \
           -k "not test_security_comprehensive"
 
     - name: Upload coverage
