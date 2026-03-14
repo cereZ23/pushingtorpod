@@ -640,8 +640,10 @@ class TestRunNetworkEnrichmentTask:
         from app.tasks.network_enrichment import run_network_enrichment
 
         # Call the underlying function directly (skip Celery binding)
+        # __wrapped__ on a Celery bind=True task strips self from the signature;
+        # Celery auto-injects the task instance as self — do NOT pass a positional mock
         result = run_network_enrichment.__wrapped__(
-            MagicMock(), tenant_id=1, asset_ids=None
+            tenant_id=1, asset_ids=None
         )
 
         assert result["status"] == "no_candidates"
@@ -682,7 +684,7 @@ class TestRunNetworkEnrichmentTask:
         from app.tasks.network_enrichment import run_network_enrichment
 
         result = run_network_enrichment.__wrapped__(
-            MagicMock(), tenant_id=1, asset_ids=[42]
+            tenant_id=1, asset_ids=[42]
         )
 
         assert result["status"] == "completed"
@@ -717,7 +719,7 @@ class TestRunNetworkEnrichmentTask:
         from app.tasks.network_enrichment import run_network_enrichment
 
         result = run_network_enrichment.__wrapped__(
-            MagicMock(), tenant_id=1, asset_ids=[99]
+            tenant_id=1, asset_ids=[99]
         )
 
         assert result["status"] == "completed"

@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
 
-from app.api.dependencies import get_db, get_current_user, get_current_user_payload, require_admin
+from app.api.dependencies import get_db, get_current_user, get_current_user_async, get_current_user_payload, require_admin
 from app.api.schemas.auth import (
     LoginRequest,
     LoginResponse,
@@ -295,13 +295,14 @@ def logout(
 
 
 @router.get("/me", response_model=UserResponse)
-def get_current_user_info(
-    current_user: User = Depends(get_current_user)
+async def get_current_user_info(
+    current_user: User = Depends(get_current_user_async),
 ):
     """
     Get current user information
 
-    Returns user profile based on JWT token with tenant roles
+    Returns user profile based on JWT token with tenant roles.
+    Uses async DB session — tenant_memberships are eagerly loaded.
 
     Raises:
         - 401: Invalid or expired token

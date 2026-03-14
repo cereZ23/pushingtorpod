@@ -129,7 +129,7 @@ class TestUpdatePhase:
 
         _update_phase(mock_db, scan_run_id=1, phase_id='1',
                       status=PhaseStatus.FAILED, error="Timed out after 300s")
-        assert existing.error == "Timed out after 300s"
+        assert existing.error_message == "Timed out after 300s"
 
 
 # ── Tier configuration ───────────────────────────────────────────────

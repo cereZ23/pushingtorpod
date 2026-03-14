@@ -368,7 +368,7 @@ class TestJiraProvider:
         mock_client.is_closed = False
         provider._client = mock_client
 
-        with patch("app.services.ticketing.jira_provider.time.sleep"):
+        with patch("time.sleep"):  # time imported locally inside _request_with_retry
             assert provider.test_connection() is True
 
 
@@ -936,7 +936,7 @@ class TestTicketSchemas:
 class TestCeleryTasks:
     """Tests for Celery ticket sync tasks."""
 
-    @patch("app.tasks.ticket_sync.SessionLocal")
+    @patch("app.database.SessionLocal")  # SessionLocal imported locally inside each task function
     @patch("app.tasks.ticket_sync.settings")
     def test_sync_all_tenant_tickets_no_configs(self, mock_settings, mock_session_local):
         from app.tasks.ticket_sync import sync_all_tenant_tickets
@@ -949,7 +949,7 @@ class TestCeleryTasks:
         result = sync_all_tenant_tickets()
         assert result["tenants_processed"] == 0
 
-    @patch("app.tasks.ticket_sync.SessionLocal")
+    @patch("app.database.SessionLocal")  # SessionLocal imported locally inside each task function
     @patch("app.tasks.ticket_sync.settings")
     def test_create_ticket_for_finding_task(self, mock_settings, mock_session_local):
         from app.tasks.ticket_sync import create_ticket_for_finding
@@ -973,7 +973,7 @@ class TestCeleryTasks:
         assert result["status"] == "created"
         assert result["external_id"] == "TEST-99"
 
-    @patch("app.tasks.ticket_sync.SessionLocal")
+    @patch("app.database.SessionLocal")  # SessionLocal imported locally inside each task function
     @patch("app.tasks.ticket_sync.settings")
     def test_create_ticket_for_finding_task_failure(self, mock_settings, mock_session_local):
         from app.tasks.ticket_sync import create_ticket_for_finding
@@ -991,7 +991,7 @@ class TestCeleryTasks:
 
         assert result["status"] == "failed"
 
-    @patch("app.tasks.ticket_sync.SessionLocal")
+    @patch("app.database.SessionLocal")  # SessionLocal imported locally inside each task function
     @patch("app.tasks.ticket_sync.settings")
     def test_sync_single_ticket_task(self, mock_settings, mock_session_local):
         from app.tasks.ticket_sync import sync_single_ticket
@@ -1019,7 +1019,7 @@ class TestCeleryTasks:
         assert result["inbound"] is True
         assert result["outbound"] is True
 
-    @patch("app.tasks.ticket_sync.SessionLocal")
+    @patch("app.database.SessionLocal")  # SessionLocal imported locally inside each task function
     @patch("app.tasks.ticket_sync.settings")
     def test_sync_single_ticket_not_found(self, mock_settings, mock_session_local):
         from app.tasks.ticket_sync import sync_single_ticket

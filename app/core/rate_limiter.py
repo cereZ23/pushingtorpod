@@ -261,11 +261,13 @@ def rate_limit(
                 auth_header = request.headers.get("Authorization")
                 if auth_header and auth_header.startswith("Bearer "):
                     try:
-                        from app.core.security import verify_token
+                        from app.security.jwt_auth import jwt_manager
+                        from fastapi.security import HTTPAuthorizationCredentials
                         token = auth_header[7:]
-                        payload = verify_token(token)
+                        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+                        payload = jwt_manager.verify_token(creds)
                         identifier = payload.get("sub", request.client.host)
-                    except:
+                    except Exception:
                         identifier = request.client.host
                 else:
                     identifier = request.client.host

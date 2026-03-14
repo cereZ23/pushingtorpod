@@ -260,10 +260,11 @@ class RiskScoringEngine:
     """Comprehensive risk scoring engine for EASM assets.
 
     Score Range: 0.0 to 100.0
-        - 0-20:  Low Risk (Green)
-        - 21-40: Medium Risk (Yellow)
-        - 41-70: High Risk (Orange)
-        - 71-100: Critical Risk (Red)
+        - 0-20:  Minimal Risk / Info (Green)
+        - 21-40: Low Risk (Blue)
+        - 41-60: Medium Risk (Yellow)
+        - 61-80: High Risk (Orange)
+        - 81-100: Critical Risk (Red)
 
     The engine computes a **finding-level score** for each open finding
     (CVSS + EPSS + KEV), then derives the **asset-level score** as the
@@ -703,7 +704,7 @@ class RiskScoringEngine:
                 'risk_distribution': {},
             }
 
-        risk_levels = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}
+        risk_levels = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'info': 0}
         total_score = 0.0
         high_risk_assets: List[Dict] = []
 

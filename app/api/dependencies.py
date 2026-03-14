@@ -2,15 +2,24 @@
 FastAPI Dependencies
 
 Common dependencies for authentication, database sessions, pagination, and multi-tenant isolation.
+
+Two parallel dependency chains exist:
+  - **Sync** (get_db → get_current_user → verify_tenant_access):
+    used by most endpoints, runs in threadpool automatically.
+  - **Async** (get_async_db → get_current_user_async → verify_tenant_access_async):
+    used by high-traffic endpoints for true async I/O.
 """
 
+from collections.abc import AsyncGenerator
 from typing import Optional, Dict, Any, Generator
 from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session, selectinload
 import logging
 
-from app.database import SessionLocal
+from app.database import SessionLocal, AsyncSessionLocal
 from app.security.jwt_auth import jwt_manager
 from app.models.auth import User, TenantMembership
 
@@ -20,18 +29,10 @@ logger = logging.getLogger(__name__)
 security = HTTPBearer()
 
 
-# Database session dependency
+# ─── Sync dependency chain (used by most endpoints) ──────────────
+
 def get_db() -> Generator[Session, None, None]:
-    """
-    Dependency to provide database session
-
-    Yields:
-        Database session
-
-    Ensures:
-        - Session is properly closed after request
-        - Transactions are committed or rolled back
-    """
+    """Sync database session dependency."""
     db = SessionLocal()
     try:
         yield db
@@ -39,22 +40,10 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-# Authentication dependencies
 async def get_current_user_payload(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ) -> Dict[str, Any]:
-    """
-    Get current user payload from JWT token
-
-    Args:
-        credentials: HTTP authorization credentials
-
-    Returns:
-        User payload from JWT token
-
-    Raises:
-        HTTPException: If token is invalid
-    """
+    """Extract and verify JWT payload from Authorization header."""
     return jwt_manager.verify_token(credentials)
 
 
@@ -62,19 +51,7 @@ async def get_current_user(
     payload: Dict[str, Any] = Depends(get_current_user_payload),
     db: Session = Depends(get_db)
 ) -> User:
-    """
-    Get current authenticated user from database
-
-    Args:
-        payload: JWT token payload
-        db: Database session
-
-    Returns:
-        User object
-
-    Raises:
-        HTTPException: If user not found or inactive
-    """
+    """Load current user from DB using sync session."""
     user_id = payload.get("sub")
 
     if not user_id:
@@ -103,51 +80,24 @@ async def get_current_user(
 async def get_current_active_user(
     current_user: User = Depends(get_current_user)
 ) -> User:
-    """
-    Get current active user (alias for compatibility)
-
-    Args:
-        current_user: Current user
-
-    Returns:
-        User object
-    """
+    """Alias for get_current_user (backward compatibility)."""
     return current_user
 
 
-# Tenant access control
 async def verify_tenant_access(
     tenant_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     required_permission: str = "read"
 ) -> TenantMembership:
-    """
-    Verify user has access to tenant with required permission
-
-    Args:
-        tenant_id: Tenant ID to access
-        current_user: Current authenticated user
-        db: Database session
-        required_permission: Required permission (read, write, admin)
-
-    Returns:
-        TenantMembership object
-
-    Raises:
-        HTTPException: If user doesn't have access or permission
-    """
-    # Superusers have access to all tenants
+    """Verify user has tenant access with required permission (sync)."""
     if current_user.is_superuser:
-        # Return a mock membership for superusers
-        mock_membership = TenantMembership(
+        return TenantMembership(
             user_id=current_user.id,
             tenant_id=tenant_id,
             role="admin"
         )
-        return mock_membership
 
-    # Check tenant membership
     membership = db.query(TenantMembership).filter(
         TenantMembership.user_id == current_user.id,
         TenantMembership.tenant_id == tenant_id,
@@ -163,7 +113,6 @@ async def verify_tenant_access(
             detail="Access denied: not a member of this tenant"
         )
 
-    # Check permission
     if not membership.has_permission(required_permission):
         logger.warning(
             f"User {current_user.id} lacks {required_permission} permission for tenant {tenant_id}"
@@ -177,15 +126,7 @@ async def verify_tenant_access(
 
 
 def require_tenant_permission(permission: str = "read"):
-    """
-    Factory to create tenant permission dependency
-
-    Args:
-        permission: Required permission level
-
-    Returns:
-        Dependency function
-    """
+    """Factory for sync tenant permission dependency."""
     async def dependency(
         tenant_id: int,
         current_user: User = Depends(get_current_user),
@@ -194,6 +135,101 @@ def require_tenant_permission(permission: str = "read"):
         return await verify_tenant_access(tenant_id, current_user, db, permission)
 
     return dependency
+
+
+# ─── Async dependency chain (for high-traffic endpoints) ─────────
+
+async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
+    """Async database session dependency."""
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def get_current_user_async(
+    payload: Dict[str, Any] = Depends(get_current_user_payload),
+    db: AsyncSession = Depends(get_async_db)
+) -> User:
+    """Load current user from DB using async session.
+
+    Eagerly loads tenant_memberships to avoid lazy-load exceptions
+    outside the session scope.
+    """
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: missing user ID"
+        )
+
+    result = await db.execute(
+        select(User)
+        .options(
+            selectinload(User.tenant_memberships)
+            .selectinload(TenantMembership.tenant)
+        )
+        .where(User.id == int(user_id))
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found"
+        )
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is inactive"
+        )
+    return user
+
+
+async def verify_tenant_access_async(
+    tenant_id: int,
+    current_user: User = Depends(get_current_user_async),
+    db: AsyncSession = Depends(get_async_db),
+    required_permission: str = "read"
+) -> TenantMembership:
+    """Verify user has tenant access with required permission (async)."""
+    if current_user.is_superuser:
+        return TenantMembership(
+            user_id=current_user.id,
+            tenant_id=tenant_id,
+            role="admin"
+        )
+
+    result = await db.execute(
+        select(TenantMembership).where(
+            TenantMembership.user_id == current_user.id,
+            TenantMembership.tenant_id == tenant_id,
+            TenantMembership.is_active == True,
+        )
+    )
+    membership = result.scalar_one_or_none()
+
+    if not membership:
+        logger.warning(
+            f"User {current_user.id} attempted to access tenant {tenant_id} without membership"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: not a member of this tenant"
+        )
+
+    if not membership.has_permission(required_permission):
+        logger.warning(
+            f"User {current_user.id} lacks {required_permission} permission for tenant {tenant_id}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Access denied: {required_permission} permission required"
+        )
+
+    return membership
 
 
 # Pagination

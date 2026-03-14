@@ -5,8 +5,9 @@ Provides liveness and readiness probes for load balancers and
 orchestrators (e.g. Kubernetes, Docker health checks).
 
 Endpoints:
-    GET /health  - Liveness probe (DB + Redis)
-    GET /ready   - Readiness probe (DB + Redis + Celery worker)
+    GET /health    - Liveness probe (DB + Redis)
+    GET /ready     - Readiness probe (DB + Redis + Celery worker)
+    GET /metrics   - App-level metrics (assets, findings, scans, uptime)
 
 These endpoints do NOT require authentication.
 """
@@ -14,11 +15,12 @@ These endpoints do NOT require authentication.
 from __future__ import annotations
 
 import logging
+import time
 
 import redis
 from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
-from sqlalchemy import text
+from sqlalchemy import func, text
 
 from app.config import settings
 from app.database import engine
@@ -26,6 +28,8 @@ from app.database import engine
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Health"])
+
+_start_time = time.monotonic()
 
 
 def _check_database() -> str:
@@ -121,3 +125,53 @@ def readiness() -> Response:
 
     status_code = 200 if core_healthy else 503
     return JSONResponse(content=payload, status_code=status_code)
+
+
+@router.get("/health/metrics")
+def health_metrics() -> Response:
+    """
+    App-level business metrics for monitoring dashboards.
+
+    Returns tenant count, asset/finding totals, scan run stats,
+    and process uptime. Complements Prometheus /metrics with
+    business-level counters. Does NOT require authentication.
+    """
+    from app.database import SessionLocal
+    from app.models.database import Tenant, Asset, Finding, FindingStatus
+
+    uptime_seconds = round(time.monotonic() - _start_time, 1)
+    data: dict = {"uptime_seconds": uptime_seconds}
+
+    try:
+        db = SessionLocal()
+        try:
+            data["tenants"] = db.execute(text("SELECT count(*) FROM tenants")).scalar()
+            data["assets_active"] = db.execute(
+                text("SELECT count(*) FROM assets WHERE is_active = true")
+            ).scalar()
+            data["findings_open"] = db.execute(
+                text("SELECT count(*) FROM findings WHERE status = 'open'")
+            ).scalar()
+
+            scan_row = db.execute(text(
+                "SELECT count(*), "
+                "       count(*) FILTER (WHERE status = 'completed'), "
+                "       count(*) FILTER (WHERE status = 'failed') "
+                "FROM scan_runs"
+            )).fetchone()
+            if scan_row:
+                data["scan_runs_total"] = scan_row[0]
+                data["scan_runs_completed"] = scan_row[1]
+                data["scan_runs_failed"] = scan_row[2]
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.error("Metrics query failed: %s", exc)
+        data["error"] = "metrics_query_failed"
+
+    db_status = _check_database()
+    redis_status = _check_redis()
+    data["database"] = db_status
+    data["redis"] = redis_status
+
+    return JSONResponse(content=data)

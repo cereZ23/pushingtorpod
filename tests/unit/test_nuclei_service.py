@@ -117,8 +117,8 @@ class TestNucleiService:
 
         assert '-l' in args
         assert '/tmp/urls.txt' in args
-        assert '-json' in args
-        assert '-silent' in args
+        assert '-jsonl' in args  # Nuclei v3+ uses -jsonl instead of -json
+        assert '-no-color' in args  # -silent was replaced with -no-color + -duc
         assert '-severity' in args
         assert 'critical,high' in args
         assert '-rl' in args
@@ -126,9 +126,9 @@ class TestNucleiService:
         assert '-c' in args
         assert '50' in args
 
-        # Default templates
-        assert 'cves/' in args
-        assert 'exposed-panels/' in args
+        # Default templates are built with absolute paths
+        assert any('cves/' in a for a in args)
+        assert any('exposed-panels/' in a for a in args)
 
     def test_build_nuclei_args_custom_templates(self, nuclei_service):
         """Test building Nuclei arguments with custom templates"""
