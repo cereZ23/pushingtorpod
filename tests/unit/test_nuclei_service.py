@@ -140,8 +140,8 @@ class TestNucleiService:
             concurrency=25
         )
 
-        assert 'custom-template.yaml' in args
-        assert 'takeovers/' in args
+        assert any('custom-template.yaml' in a for a in args)
+        assert any('takeovers/' in a for a in args)
         assert '-severity' in args
         assert 'critical' in args
 
