@@ -137,6 +137,32 @@ class TechnologyStackResponse(BaseModel):
     )
 
 
+class TechnologyItem(BaseModel):
+    """Single technology in the inventory"""
+
+    name: str = Field(..., description="Technology name")
+    category: str = Field(..., description="Category slug")
+    category_label: str = Field(..., description="Human-readable category")
+    description: str = Field("", description="Short description")
+    icon: str = Field("", description="Simple Icons slug for logo")
+    service_count: int = Field(..., description="Number of services using this technology")
+    versions: Dict[str, int] = Field(default_factory=dict, description="Version distribution")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "Nginx",
+                "category": "web-server",
+                "category_label": "Web Servers",
+                "description": "High-performance web server and reverse proxy.",
+                "icon": "nginx",
+                "service_count": 15,
+                "versions": {"1.21.0": 10, "1.20.2": 5},
+            }
+        }
+    )
+
+
 class PortDistributionResponse(BaseModel):
     """Port distribution statistics"""
 

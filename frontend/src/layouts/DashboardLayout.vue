@@ -66,6 +66,11 @@ const navGroups: NavGroup[] = [
         activeNames: ["ServiceList"],
       },
       {
+        label: "Technologies",
+        to: "/technologies",
+        activeNames: ["Technologies"],
+      },
+      {
         label: "Certificates",
         to: "/certificates",
         activePaths: ["/certificates"],

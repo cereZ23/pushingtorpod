@@ -15,10 +15,12 @@ from app.api.schemas.service import (
     ServiceResponse,
     ServiceListRequest,
     TechnologyStackResponse,
+    TechnologyItem,
     PortDistributionResponse
 )
 from app.api.schemas.envelope import PaginatedEnvelope, PaginationMeta
 from app.models.database import Asset, Service
+from app.services.tech_catalog import get_tech_info
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +184,82 @@ def get_technology_stack(
         )
         for tech in sorted(tech_stack.values(), key=lambda x: x['count'], reverse=True)
     ]
+
+
+@router.get("/technologies", response_model=List[TechnologyItem])
+def get_technologies(
+    tenant_id: int,
+    category: Optional[str] = Query(None, description="Filter by category slug"),
+    search: Optional[str] = Query(None, description="Search by technology name"),
+    db: Session = Depends(get_db),
+    membership=Depends(verify_tenant_access),
+):
+    """
+    Technology inventory aggregated from all services.
+
+    Combines Service.product and Service.http_technologies into a unified
+    view with categories, descriptions, icons, and service counts.
+    """
+    services = (
+        db.query(Service.product, Service.version, Service.http_technologies)
+        .join(Asset)
+        .filter(Asset.tenant_id == tenant_id, Asset.is_active.is_(True))
+        .all()
+    )
+
+    # Aggregate: tech_name → {count, versions}
+    tech_agg: dict[str, dict] = {}
+
+    for product, version, http_techs in services:
+        seen_in_row: set[str] = set()
+
+        # Count product (web server / service product)
+        if product:
+            seen_in_row.add(product)
+            if product not in tech_agg:
+                tech_agg[product] = {"count": 0, "versions": {}}
+            tech_agg[product]["count"] += 1
+            if version:
+                tech_agg[product]["versions"][version] = (
+                    tech_agg[product]["versions"].get(version, 0) + 1
+                )
+
+        # Count each detected technology from httpx
+        techs = http_techs if isinstance(http_techs, list) else []
+        for tech_name in techs:
+            if not tech_name or tech_name in seen_in_row:
+                continue
+            seen_in_row.add(tech_name)
+            if tech_name not in tech_agg:
+                tech_agg[tech_name] = {"count": 0, "versions": {}}
+            tech_agg[tech_name]["count"] += 1
+
+    # Enrich with catalog metadata and build response
+    results: list[TechnologyItem] = []
+    search_lower = search.lower() if search else None
+
+    for name, agg in tech_agg.items():
+        info = get_tech_info(name)
+
+        if category and info["category"] != category:
+            continue
+        if search_lower and search_lower not in name.lower():
+            continue
+
+        results.append(
+            TechnologyItem(
+                name=name,
+                category=info["category"],
+                category_label=info["category_label"],
+                description=info["description"],
+                icon=info["icon"],
+                service_count=agg["count"],
+                versions=agg["versions"],
+            )
+        )
+
+    results.sort(key=lambda t: t.service_count, reverse=True)
+    return results
 
 
 @router.get("/ports/distribution", response_model=List[PortDistributionResponse])

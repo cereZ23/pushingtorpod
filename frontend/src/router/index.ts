@@ -97,6 +97,12 @@ const router = createRouter({
           meta: { title: "Services" },
         },
         {
+          path: "technologies",
+          name: "Technologies",
+          component: () => import("@/views/technologies/TechnologiesView.vue"),
+          meta: { title: "Technologies" },
+        },
+        {
           path: "scans",
           name: "Scans",
           component: () => import("@/views/scans/ScanManagement.vue"),
