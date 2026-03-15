@@ -13,14 +13,10 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 # Severity base scores
-SEVERITY_BASES: dict[str, int] = {
-    'critical': 40, 'high': 25, 'medium': 12, 'low': 5, 'info': 1
-}
+SEVERITY_BASES: dict[str, int] = {"critical": 40, "high": 25, "medium": 12, "low": 5, "info": 1}
 
 # Criticality weights
-CRITICALITY_WEIGHTS: dict[str, float] = {
-    'critical': 1.5, 'high': 1.2, 'standard': 1.0, 'low': 0.8
-}
+CRITICALITY_WEIGHTS: dict[str, float] = {"critical": 1.5, "high": 1.2, "standard": 1.0, "low": 0.8}
 
 
 # Canonical grade thresholds — shared across:
@@ -29,11 +25,11 @@ CRITICALITY_WEIGHTS: dict[str, float] = {
 #   - app/api/routers/graph.py (_risk_to_criticality)
 #   - frontend/src/utils/severity.ts (getRiskGrade, getRiskScoreClasses)
 GRADE_THRESHOLDS = {
-    'A': (0, 20),    # Minimal / Info
-    'B': (21, 40),   # Low
-    'C': (41, 60),   # Medium
-    'D': (61, 80),   # High
-    'F': (81, 100),  # Critical
+    "A": (0, 20),  # Minimal / Info
+    "B": (21, 40),  # Low
+    "C": (41, 60),  # Medium
+    "D": (61, 80),  # High
+    "F": (81, 100),  # Critical
 }
 
 
@@ -43,14 +39,14 @@ def score_to_grade(score: float) -> str:
     Uses GRADE_THRESHOLDS — keep in sync with frontend severity.ts.
     """
     if score <= 20:
-        return 'A'
+        return "A"
     if score <= 40:
-        return 'B'
+        return "B"
     if score <= 60:
-        return 'C'
+        return "C"
     if score <= 80:
-        return 'D'
-    return 'F'
+        return "D"
+    return "F"
 
 
 @dataclass
@@ -79,7 +75,7 @@ class AssetScoreInput:
     """Input parameters for computing an asset-level risk score."""
 
     asset_id: int
-    criticality: str = 'standard'
+    criticality: str = "standard"
     issue_scores: list[float] = field(default_factory=list)
 
 
@@ -131,21 +127,21 @@ def compute_issue_score(input: IssueScoreInput) -> IssueScoreResult:
         raw *= 0.7  # from settings.risk_cdn_discount
 
     # Mitigation factor
-    raw *= (1 - min(input.mitigation_factor, 0.5))
+    raw *= 1 - min(input.mitigation_factor, 0.5)
 
     score = min(100, raw)
 
     return IssueScoreResult(
         score=round(score, 2),
         components={
-            'base_severity': base,
-            'confidence': input.confidence,
-            'exposure_factor': input.exposure_factor,
-            'kev_boost': kev_boost,
-            'epss_boost': epss_boost,
-            'cdn_discount': 0.7 if input.is_cdn_fronted else 1.0,
-            'mitigation_factor': input.mitigation_factor,
-        }
+            "base_severity": base,
+            "confidence": input.confidence,
+            "exposure_factor": input.exposure_factor,
+            "kev_boost": kev_boost,
+            "epss_boost": epss_boost,
+            "cdn_discount": 0.7 if input.is_cdn_fronted else 1.0,
+            "mitigation_factor": input.mitigation_factor,
+        },
     )
 
 
@@ -168,10 +164,10 @@ def compute_asset_score(input: AssetScoreInput) -> AssetScoreResult:
         Scored result clamped to 0-100 with grade and component breakdown.
     """
     if not input.issue_scores:
-        return AssetScoreResult(score=0, grade='A', components={}, top_drivers=[])
+        return AssetScoreResult(score=0, grade="A", components={}, top_drivers=[])
 
     sorted_scores = sorted(input.issue_scores, reverse=True)
-    weighted_sum = sum(score * (0.85 ** i) for i, score in enumerate(sorted_scores))
+    weighted_sum = sum(score * (0.85**i) for i, score in enumerate(sorted_scores))
     criticality_weight = CRITICALITY_WEIGHTS.get(input.criticality, 1.0)
     raw = weighted_sum * criticality_weight
     score = min(100, raw)
@@ -180,12 +176,12 @@ def compute_asset_score(input: AssetScoreInput) -> AssetScoreResult:
         score=round(score, 2),
         grade=score_to_grade(score),
         components={
-            'issue_count': len(sorted_scores),
-            'criticality': input.criticality,
-            'criticality_weight': criticality_weight,
-            'top_issue_score': sorted_scores[0] if sorted_scores else 0,
+            "issue_count": len(sorted_scores),
+            "criticality": input.criticality,
+            "criticality_weight": criticality_weight,
+            "top_issue_score": sorted_scores[0] if sorted_scores else 0,
         },
-        top_drivers=[]  # Filled by caller with issue descriptions
+        top_drivers=[],  # Filled by caller with issue descriptions
     )
 
 
@@ -209,7 +205,7 @@ def compute_org_score(
         Scored result clamped to 0-100 with grade, delta, and driver info.
     """
     if not asset_scores:
-        return OrgScoreResult(score=0, grade='A', top_drivers=[])
+        return OrgScoreResult(score=0, grade="A", top_drivers=[])
 
     sorted_scores = sorted(asset_scores, reverse=True)
 

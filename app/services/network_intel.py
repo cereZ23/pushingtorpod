@@ -203,28 +203,20 @@ def whois_lookup(domain: str) -> dict:
         result["country"] = w.country if hasattr(w, "country") else None
 
         # Dates: python-whois returns datetime or list[datetime]
-        result["created"] = _serialize_date(
-            getattr(w, "creation_date", None)
-        )
-        result["expires"] = _serialize_date(
-            getattr(w, "expiration_date", None)
-        )
+        result["created"] = _serialize_date(getattr(w, "creation_date", None))
+        result["expires"] = _serialize_date(getattr(w, "expiration_date", None))
 
         # Nameservers: list of strings (lowercase)
         raw_ns = getattr(w, "name_servers", None) or []
         if isinstance(raw_ns, str):
             raw_ns = [raw_ns]
-        result["nameservers"] = sorted(
-            {ns.lower().rstrip(".") for ns in raw_ns if isinstance(ns, str)}
-        )
+        result["nameservers"] = sorted({ns.lower().rstrip(".") for ns in raw_ns if isinstance(ns, str)})
 
         # Emails
         raw_emails = getattr(w, "emails", None) or []
         if isinstance(raw_emails, str):
             raw_emails = [raw_emails]
-        result["emails"] = sorted(
-            {e.lower() for e in raw_emails if isinstance(e, str)}
-        )
+        result["emails"] = sorted({e.lower() for e in raw_emails if isinstance(e, str)})
 
     except Exception as exc:
         logger.debug("WHOIS lookup failed for %s: %s", domain, exc)
@@ -328,8 +320,7 @@ def geoip_lookup(ip: str) -> Optional[dict]:
         return None
 
     # Fill missing keys with None for consistent downstream access
-    for key in ("country", "country_code", "region", "city", "lat", "lon",
-                "isp", "org", "as_name", "asn"):
+    for key in ("country", "country_code", "region", "city", "lat", "lon", "isp", "org", "as_name", "asn"):
         result.setdefault(key, None)
 
     return result

@@ -37,6 +37,7 @@ router = APIRouter(
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _verify_tenant_exists(db: Session, tenant_id: int) -> None:
     """Raise 404 if the tenant does not exist."""
     exists = db.query(Tenant.id).filter(Tenant.id == tenant_id).first()
@@ -75,6 +76,7 @@ def _schedule_to_response(schedule: ReportSchedule) -> ReportScheduleResponse:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.get("/", response_model=List[ReportScheduleResponse])
 def list_report_schedules(

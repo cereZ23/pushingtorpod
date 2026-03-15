@@ -49,6 +49,7 @@ router = APIRouter(
 # Ticketing configuration endpoints
 # ------------------------------------------------------------------
 
+
 @router.post(
     "/integrations/ticketing",
     response_model=TicketingConfigResponse,
@@ -271,6 +272,7 @@ def test_ticketing_connection(
 # Finding-level ticket endpoints
 # ------------------------------------------------------------------
 
+
 @router.post(
     "/findings/{finding_id}/ticket",
     response_model=TicketResponse,
@@ -297,12 +299,7 @@ def create_ticket_for_finding(
         )
 
     # Verify finding exists and belongs to tenant
-    finding = (
-        db.query(Finding)
-        .join(Asset)
-        .filter(Finding.id == finding_id, Asset.tenant_id == tenant_id)
-        .first()
-    )
+    finding = db.query(Finding).join(Asset).filter(Finding.id == finding_id, Asset.tenant_id == tenant_id).first()
     if not finding:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -310,11 +307,7 @@ def create_ticket_for_finding(
         )
 
     # Check for existing ticket
-    existing = (
-        db.query(Ticket)
-        .filter(Ticket.finding_id == finding_id, Ticket.tenant_id == tenant_id)
-        .first()
-    )
+    existing = db.query(Ticket).filter(Ticket.finding_id == finding_id, Ticket.tenant_id == tenant_id).first()
     if existing:
         return TicketResponse.model_validate(existing)
 
@@ -348,23 +341,14 @@ def get_ticket_for_finding(
     Returns 404 if no ticket has been created for this finding.
     """
     # Verify finding exists and belongs to tenant
-    finding = (
-        db.query(Finding)
-        .join(Asset)
-        .filter(Finding.id == finding_id, Asset.tenant_id == tenant_id)
-        .first()
-    )
+    finding = db.query(Finding).join(Asset).filter(Finding.id == finding_id, Asset.tenant_id == tenant_id).first()
     if not finding:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Finding not found",
         )
 
-    ticket = (
-        db.query(Ticket)
-        .filter(Ticket.finding_id == finding_id, Ticket.tenant_id == tenant_id)
-        .first()
-    )
+    ticket = db.query(Ticket).filter(Ticket.finding_id == finding_id, Ticket.tenant_id == tenant_id).first()
 
     if not ticket:
         raise HTTPException(
@@ -395,11 +379,7 @@ def sync_ticket_for_finding(
             detail="Write permission required",
         )
 
-    ticket = (
-        db.query(Ticket)
-        .filter(Ticket.finding_id == finding_id, Ticket.tenant_id == tenant_id)
-        .first()
-    )
+    ticket = db.query(Ticket).filter(Ticket.finding_id == finding_id, Ticket.tenant_id == tenant_id).first()
     if not ticket:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -424,6 +404,7 @@ def sync_ticket_for_finding(
 # ------------------------------------------------------------------
 # Bulk sync endpoint
 # ------------------------------------------------------------------
+
 
 @router.post(
     "/tickets/sync",
@@ -462,6 +443,7 @@ def trigger_full_sync(
 # ------------------------------------------------------------------
 # Validation helpers
 # ------------------------------------------------------------------
+
 
 def _validate_provider_config(provider: str, config: dict) -> None:
     """

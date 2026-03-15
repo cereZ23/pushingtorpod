@@ -42,12 +42,7 @@ class RateLimiter:
     - Low latency (single Redis call)
     """
 
-    def __init__(
-        self,
-        redis_client: Optional[redis.Redis] = None,
-        default_limit: int = 100,
-        default_window: int = 60
-    ):
+    def __init__(self, redis_client: Optional[redis.Redis] = None, default_limit: int = 100, default_window: int = 60):
         """
         Initialize rate limiter
 
@@ -66,7 +61,7 @@ class RateLimiter:
                 password=settings.redis_password,
                 decode_responses=True,
                 socket_connect_timeout=2,
-                socket_timeout=2
+                socket_timeout=2,
             )
 
         self.default_limit = default_limit
@@ -86,11 +81,7 @@ class RateLimiter:
         return f"ratelimit:{scope}:{identifier}"
 
     def check_rate_limit(
-        self,
-        identifier: str,
-        limit: int = None,
-        window: int = None,
-        scope: str = "global"
+        self, identifier: str, limit: int = None, window: int = None, scope: str = "global"
     ) -> Tuple[bool, int, int]:
         """
         Check if request is within rate limit
@@ -148,10 +139,7 @@ class RateLimiter:
             is_allowed = current_count < limit
 
             if not is_allowed:
-                logger.warning(
-                    f"Rate limit exceeded for {identifier} "
-                    f"(scope={scope}, limit={limit}/{window}s)"
-                )
+                logger.warning(f"Rate limit exceeded for {identifier} (scope={scope}, limit={limit}/{window}s)")
 
             return is_allowed, remaining, reset_time
 
@@ -208,12 +196,7 @@ class RateLimiter:
 _rate_limiter = RateLimiter()
 
 
-def rate_limit(
-    limit: int = 100,
-    window: int = 60,
-    scope: str = "user",
-    key_func = None
-):
+def rate_limit(limit: int = 100, window: int = 60, scope: str = "user", key_func=None):
     """
     Rate limit decorator for FastAPI endpoints
 
@@ -234,6 +217,7 @@ def rate_limit(
         - Prevents DoS attacks
         - Protects expensive operations
     """
+
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -245,7 +229,7 @@ def rate_limit(
                     break
 
             if request is None:
-                request = kwargs.get('request')
+                request = kwargs.get("request")
 
             if request is None:
                 logger.warning("Rate limit decorator: No request object found")
@@ -263,6 +247,7 @@ def rate_limit(
                     try:
                         from app.security.jwt_auth import jwt_manager
                         from fastapi.security import HTTPAuthorizationCredentials
+
                         token = auth_header[7:]
                         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
                         payload = jwt_manager.verify_token(creds)
@@ -278,10 +263,7 @@ def rate_limit(
 
             # Check rate limit
             is_allowed, remaining, reset_time = _rate_limiter.check_rate_limit(
-                identifier=identifier,
-                limit=limit,
-                window=window,
-                scope=scope
+                identifier=identifier, limit=limit, window=window, scope=scope
             )
 
             # Add rate limit headers to response
@@ -295,20 +277,21 @@ def rate_limit(
                         "limit": limit,
                         "window": window,
                         "reset_time": reset_time,
-                        "retry_after": reset_time - int(time.time())
+                        "retry_after": reset_time - int(time.time()),
                     },
                     headers={
                         "X-RateLimit-Limit": str(limit),
                         "X-RateLimit-Remaining": "0",
                         "X-RateLimit-Reset": str(reset_time),
-                        "Retry-After": str(reset_time - int(time.time()))
-                    }
+                        "Retry-After": str(reset_time - int(time.time())),
+                    },
                 )
 
             # Execute endpoint
             return await func(*args, **kwargs)
 
         return wrapper
+
     return decorator
 
 
@@ -324,13 +307,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     This runs before route handlers and provides baseline protection.
     """
 
-    def __init__(
-        self,
-        app,
-        global_limit: int = 10000,
-        ip_limit: int = 500,
-        window: int = 60
-    ):
+    def __init__(self, app, global_limit: int = 10000, ip_limit: int = 500, window: int = 60):
         """
         Initialize middleware
 
@@ -361,10 +338,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Check global rate limit
         is_allowed, remaining, reset_time = self.rate_limiter.check_rate_limit(
-            identifier="global",
-            limit=self.global_limit,
-            window=self.window,
-            scope="global"
+            identifier="global", limit=self.global_limit, window=self.window, scope="global"
         )
 
         if not is_allowed:
@@ -376,16 +350,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     "X-RateLimit-Limit": str(self.global_limit),
                     "X-RateLimit-Remaining": "0",
                     "X-RateLimit-Reset": str(reset_time),
-                    "Retry-After": str(reset_time - int(time.time()))
-                }
+                    "Retry-After": str(reset_time - int(time.time())),
+                },
             )
 
         # Check per-IP rate limit
         is_allowed, remaining, reset_time = self.rate_limiter.check_rate_limit(
-            identifier=client_ip,
-            limit=self.ip_limit,
-            window=self.window,
-            scope="ip"
+            identifier=client_ip, limit=self.ip_limit, window=self.window, scope="ip"
         )
 
         if not is_allowed:
@@ -397,8 +368,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     "X-RateLimit-Limit": str(self.ip_limit),
                     "X-RateLimit-Remaining": "0",
                     "X-RateLimit-Reset": str(reset_time),
-                    "Retry-After": str(reset_time - int(time.time()))
-                }
+                    "Retry-After": str(reset_time - int(time.time())),
+                },
             )
 
         # Process request

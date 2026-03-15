@@ -95,8 +95,21 @@ def get_registered_controls() -> dict[str, dict[str, Any]]:
 
 # Ports that are NOT HTTP/HTTPS web services (should not trigger header checks)
 _NON_HTTP_PORTS: set[int] = {
-    25, 110, 143, 465, 587, 993, 995,  # mail protocols
-    21, 22, 53, 123, 389, 636, 3306, 5432,  # FTP, SSH, DNS, NTP, LDAP, DB
+    25,
+    110,
+    143,
+    465,
+    587,
+    993,
+    995,  # mail protocols
+    21,
+    22,
+    53,
+    123,
+    389,
+    636,
+    3306,
+    5432,  # FTP, SSH, DNS, NTP, LDAP, DB
 }
 
 # Common HTTP/HTTPS ports — run header checks even if http_status is NULL
@@ -104,8 +117,19 @@ _HTTP_PORTS: set[int] = {80, 443, 8080, 8443}
 
 # Protocols that indicate non-web services
 _NON_HTTP_PROTOCOLS: set[str] = {
-    'smtp', 'smtps', 'imap', 'imaps', 'pop3', 'pop3s',
-    'ftp', 'ssh', 'dns', 'ldap', 'ldaps', 'mysql', 'postgres',
+    "smtp",
+    "smtps",
+    "imap",
+    "imaps",
+    "pop3",
+    "pop3s",
+    "ftp",
+    "ssh",
+    "dns",
+    "ldap",
+    "ldaps",
+    "mysql",
+    "postgres",
 }
 
 
@@ -118,7 +142,7 @@ def _is_web_service(service: Service) -> bool:
     """
     if service.port in _NON_HTTP_PORTS:
         return False
-    proto = (service.protocol or '').lower()
+    proto = (service.protocol or "").lower()
     if proto in _NON_HTTP_PROTOCOLS:
         return False
     return True
@@ -164,15 +188,14 @@ def _load_hsts_preload_list() -> set[str]:
 
     try:
         import urllib.request
+
         url = "https://chromium.googlesource.com/chromium/src/+/main/net/http/transport_security_state_static.json?format=TEXT"
         import base64
+
         with urllib.request.urlopen(url, timeout=30) as resp:
             raw = base64.b64decode(resp.read()).decode("utf-8")
         # Parse JSON (strip // comments first)
-        lines = [
-            line for line in raw.splitlines()
-            if not line.strip().startswith("//")
-        ]
+        lines = [line for line in raw.splitlines() if not line.strip().startswith("//")]
         data = json.loads("\n".join(lines))
         entries = data.get("entries", [])
         domains = set()
@@ -187,8 +210,7 @@ def _load_hsts_preload_list() -> set[str]:
         _hsts_preload_last_fetch = now
         logger.info("HSTS preload list loaded: %d entries", len(domains))
     except (OSError, ValueError, json.JSONDecodeError, KeyError) as exc:
-        logger.debug("Failed to fetch HSTS preload list, using cached (%d entries): %s",
-                     len(_hsts_preload_cache), exc)
+        logger.debug("Failed to fetch HSTS preload list, using cached (%d entries): %s", len(_hsts_preload_cache), exc)
     return _hsts_preload_cache
 
 
@@ -274,6 +296,7 @@ def _severity_enum(value: str) -> FindingSeverity:
 # TLS Certificate Intelligence (TLS-001 .. TLS-010)
 # ---------------------------------------------------------------------------
 
+
 @register(
     control_id="TLS-001",
     name="Certificate expiring within 30 days",
@@ -291,8 +314,16 @@ def check_tls_001(
     """Detect certificates that will expire within 30 days."""
     # ACME providers auto-renew at ~30 days; only alert if renewal seems stuck
     ACME_ISSUERS = (
-        "let's encrypt", "letsencrypt", "r3", "r10", "r11", "e5", "e6",
-        "zerossl", "buypass", "google trust services",
+        "let's encrypt",
+        "letsencrypt",
+        "r3",
+        "r10",
+        "r11",
+        "e5",
+        "e6",
+        "zerossl",
+        "buypass",
+        "google trust services",
     )
 
     findings: list[dict] = []
@@ -323,28 +354,30 @@ def check_tls_001(
                 sev = "medium"
 
         acme_note = " (ACME auto-renewal may have failed)" if is_acme else ""
-        findings.append({
-            "name": f"TLS certificate expires in {days_left} days{acme_note}",
-            "severity": sev,
-            "confidence": 0.90 if is_acme else 0.95,
-            "evidence": {
-                "subject_cn": cert.subject_cn,
-                "not_after": str(cert.not_after),
-                "days_until_expiry": days_left,
-                "issuer": cert.issuer,
-                "auto_renew_expected": is_acme,
-            },
-            "control_id": "TLS-001",
-            "finding_key": f"TLS-001:{asset.identifier}:{cert.serial_number}",
-            "remediation": (
-                "Check that the ACME client (certbot/acme.sh) is running and the "
-                "renewal cron/timer is active. Verify DNS and HTTP-01 challenge access."
-                if is_acme else
-                "Renew the TLS certificate before expiration. Consider using "
-                "automated certificate management (e.g. Let's Encrypt with "
-                "certbot or ACME protocol) to prevent future lapses."
+        findings.append(
+            {
+                "name": f"TLS certificate expires in {days_left} days{acme_note}",
+                "severity": sev,
+                "confidence": 0.90 if is_acme else 0.95,
+                "evidence": {
+                    "subject_cn": cert.subject_cn,
+                    "not_after": str(cert.not_after),
+                    "days_until_expiry": days_left,
+                    "issuer": cert.issuer,
+                    "auto_renew_expected": is_acme,
+                },
+                "control_id": "TLS-001",
+                "finding_key": f"TLS-001:{asset.identifier}:{cert.serial_number}",
+                "remediation": (
+                    "Check that the ACME client (certbot/acme.sh) is running and the "
+                    "renewal cron/timer is active. Verify DNS and HTTP-01 challenge access."
+                    if is_acme
+                    else "Renew the TLS certificate before expiration. Consider using "
+                    "automated certificate management (e.g. Let's Encrypt with "
+                    "certbot or ACME protocol) to prevent future lapses."
                 ),
-            })
+            }
+        )
     return findings
 
 
@@ -370,22 +403,24 @@ def check_tls_002(
             continue
         version_lower = svc.tls_version.strip().lower().replace(" ", "")
         if version_lower in weak_versions:
-            findings.append({
-                "name": f"Weak TLS version: {svc.tls_version}",
-                "severity": "high",
-                "confidence": 0.90,
-                "evidence": {
-                    "port": svc.port,
-                    "tls_version": svc.tls_version,
-                    "product": svc.product,
-                },
-                "control_id": "TLS-002",
-                "finding_key": f"TLS-002:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    "Disable TLSv1.0 and TLSv1.1 on this service and enforce "
-                    "a minimum of TLSv1.2. Prefer TLSv1.3 where possible."
-                ),
-            })
+            findings.append(
+                {
+                    "name": f"Weak TLS version: {svc.tls_version}",
+                    "severity": "high",
+                    "confidence": 0.90,
+                    "evidence": {
+                        "port": svc.port,
+                        "tls_version": svc.tls_version,
+                        "product": svc.product,
+                    },
+                    "control_id": "TLS-002",
+                    "finding_key": f"TLS-002:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Disable TLSv1.0 and TLSv1.1 on this service and enforce "
+                        "a minimum of TLSv1.2. Prefer TLSv1.3 where possible."
+                    ),
+                }
+            )
     return findings
 
 
@@ -416,22 +451,24 @@ def check_tls_003(
         if not headers:
             continue  # No header data collected — can't assert missing
         if "strict-transport-security" not in headers:
-            findings.append({
-                "name": "Missing HSTS header on HTTPS service",
-                "severity": "medium",
-                "confidence": 0.85,
-                "evidence": {
-                    "port": svc.port,
-                    "url": svc.redirect_url or f"https://{asset.identifier}:{svc.port}",
-                },
-                "control_id": "TLS-003",
-                "finding_key": f"TLS-003:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    "Add the Strict-Transport-Security header with a max-age of "
-                    "at least 31536000 (1 year). Include 'includeSubDomains' if "
-                    "all subdomains also support HTTPS."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "Missing HSTS header on HTTPS service",
+                    "severity": "medium",
+                    "confidence": 0.85,
+                    "evidence": {
+                        "port": svc.port,
+                        "url": svc.redirect_url or f"https://{asset.identifier}:{svc.port}",
+                    },
+                    "control_id": "TLS-003",
+                    "finding_key": f"TLS-003:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Add the Strict-Transport-Security header with a max-age of "
+                        "at least 31536000 (1 year). Include 'includeSubDomains' if "
+                        "all subdomains also support HTTPS."
+                    ),
+                }
+            )
     return findings
 
 
@@ -453,23 +490,25 @@ def check_tls_004(
     findings: list[dict] = []
     for cert in certificates:
         if cert.is_self_signed:
-            findings.append({
-                "name": "Self-signed TLS certificate",
-                "severity": "medium",
-                "confidence": 0.95,
-                "evidence": {
-                    "subject_cn": cert.subject_cn,
-                    "issuer": cert.issuer,
-                    "serial_number": cert.serial_number,
-                },
-                "control_id": "TLS-004",
-                "finding_key": f"TLS-004:{asset.identifier}:{cert.serial_number}",
-                "remediation": (
-                    "Replace the self-signed certificate with one issued by a "
-                    "trusted Certificate Authority. Self-signed certificates "
-                    "are not trusted by browsers and clients."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "Self-signed TLS certificate",
+                    "severity": "medium",
+                    "confidence": 0.95,
+                    "evidence": {
+                        "subject_cn": cert.subject_cn,
+                        "issuer": cert.issuer,
+                        "serial_number": cert.serial_number,
+                    },
+                    "control_id": "TLS-004",
+                    "finding_key": f"TLS-004:{asset.identifier}:{cert.serial_number}",
+                    "remediation": (
+                        "Replace the self-signed certificate with one issued by a "
+                        "trusted Certificate Authority. Self-signed certificates "
+                        "are not trusted by browsers and clients."
+                    ),
+                }
+            )
     return findings
 
 
@@ -491,24 +530,26 @@ def check_tls_007(
     findings: list[dict] = []
     for cert in certificates:
         if cert.is_expired:
-            findings.append({
-                "name": "Expired TLS certificate",
-                "severity": "critical",
-                "confidence": 0.99,
-                "evidence": {
-                    "subject_cn": cert.subject_cn,
-                    "not_after": str(cert.not_after),
-                    "days_until_expiry": cert.days_until_expiry,
-                    "issuer": cert.issuer,
-                },
-                "control_id": "TLS-007",
-                "finding_key": f"TLS-007:{asset.identifier}:{cert.serial_number}",
-                "remediation": (
-                    "Immediately renew the expired certificate. An expired "
-                    "certificate causes browsers to display security warnings "
-                    "and may break automated integrations."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "Expired TLS certificate",
+                    "severity": "critical",
+                    "confidence": 0.99,
+                    "evidence": {
+                        "subject_cn": cert.subject_cn,
+                        "not_after": str(cert.not_after),
+                        "days_until_expiry": cert.days_until_expiry,
+                        "issuer": cert.issuer,
+                    },
+                    "control_id": "TLS-007",
+                    "finding_key": f"TLS-007:{asset.identifier}:{cert.serial_number}",
+                    "remediation": (
+                        "Immediately renew the expired certificate. An expired "
+                        "certificate causes browsers to display security warnings "
+                        "and may break automated integrations."
+                    ),
+                }
+            )
     return findings
 
 
@@ -550,24 +591,26 @@ def check_tls_008(
                     break
 
         if not covered:
-            findings.append({
-                "name": f"Certificate does not match hostname {hostname}",
-                "severity": "high",
-                "confidence": 0.80,
-                "evidence": {
-                    "hostname": hostname,
-                    "subject_cn": cert.subject_cn,
-                    "san_domains": cert.san_domains,
-                    "serial_number": cert.serial_number,
-                },
-                "control_id": "TLS-008",
-                "finding_key": f"TLS-008:{asset.identifier}:{cert.serial_number}",
-                "remediation": (
-                    "Reissue the certificate with a Subject Alternative Name "
-                    "that covers this hostname, or deploy the correct certificate "
-                    "for this service."
-                ),
-            })
+            findings.append(
+                {
+                    "name": f"Certificate does not match hostname {hostname}",
+                    "severity": "high",
+                    "confidence": 0.80,
+                    "evidence": {
+                        "hostname": hostname,
+                        "subject_cn": cert.subject_cn,
+                        "san_domains": cert.san_domains,
+                        "serial_number": cert.serial_number,
+                    },
+                    "control_id": "TLS-008",
+                    "finding_key": f"TLS-008:{asset.identifier}:{cert.serial_number}",
+                    "remediation": (
+                        "Reissue the certificate with a Subject Alternative Name "
+                        "that covers this hostname, or deploy the correct certificate "
+                        "for this service."
+                    ),
+                }
+            )
     return findings
 
 
@@ -589,22 +632,24 @@ def check_tls_009(
     findings: list[dict] = []
     for cert in certificates:
         if cert.has_weak_signature:
-            findings.append({
-                "name": f"Weak signature algorithm: {cert.signature_algorithm}",
-                "severity": "high",
-                "confidence": 0.90,
-                "evidence": {
-                    "subject_cn": cert.subject_cn,
-                    "signature_algorithm": cert.signature_algorithm,
-                    "serial_number": cert.serial_number,
-                },
-                "control_id": "TLS-009",
-                "finding_key": f"TLS-009:{asset.identifier}:{cert.serial_number}",
-                "remediation": (
-                    "Reissue the certificate using SHA-256 or stronger. MD5 and "
-                    "SHA-1 signatures are considered cryptographically broken."
-                ),
-            })
+            findings.append(
+                {
+                    "name": f"Weak signature algorithm: {cert.signature_algorithm}",
+                    "severity": "high",
+                    "confidence": 0.90,
+                    "evidence": {
+                        "subject_cn": cert.subject_cn,
+                        "signature_algorithm": cert.signature_algorithm,
+                        "serial_number": cert.serial_number,
+                    },
+                    "control_id": "TLS-009",
+                    "finding_key": f"TLS-009:{asset.identifier}:{cert.serial_number}",
+                    "remediation": (
+                        "Reissue the certificate using SHA-256 or stronger. MD5 and "
+                        "SHA-1 signatures are considered cryptographically broken."
+                    ),
+                }
+            )
     return findings
 
 
@@ -628,23 +673,25 @@ def check_tls_005(
         algo = (cert.public_key_algorithm or "").upper()
         bits = cert.public_key_bits
         if algo == "RSA" and bits is not None and bits < 2048:
-            findings.append({
-                "name": f"Weak RSA key size: {bits} bits",
-                "severity": "medium",
-                "confidence": 0.90,
-                "evidence": {
-                    "subject_cn": cert.subject_cn,
-                    "public_key_algorithm": cert.public_key_algorithm,
-                    "public_key_bits": bits,
-                },
-                "control_id": "TLS-005",
-                "finding_key": f"TLS-005:{asset.identifier}:{cert.serial_number}",
-                "remediation": (
-                    "Reissue the certificate with an RSA key of at least 2048 "
-                    "bits, or migrate to ECDSA P-256 or higher for better "
-                    "performance and equivalent security."
-                ),
-            })
+            findings.append(
+                {
+                    "name": f"Weak RSA key size: {bits} bits",
+                    "severity": "medium",
+                    "confidence": 0.90,
+                    "evidence": {
+                        "subject_cn": cert.subject_cn,
+                        "public_key_algorithm": cert.public_key_algorithm,
+                        "public_key_bits": bits,
+                    },
+                    "control_id": "TLS-005",
+                    "finding_key": f"TLS-005:{asset.identifier}:{cert.serial_number}",
+                    "remediation": (
+                        "Reissue the certificate with an RSA key of at least 2048 "
+                        "bits, or migrate to ECDSA P-256 or higher for better "
+                        "performance and equivalent security."
+                    ),
+                }
+            )
     return findings
 
 
@@ -666,22 +713,24 @@ def check_tls_006(
     findings: list[dict] = []
     for cert in certificates:
         if cert.is_wildcard:
-            findings.append({
-                "name": "Wildcard certificate in use",
-                "severity": "low",
-                "confidence": 0.60,
-                "evidence": {
-                    "subject_cn": cert.subject_cn,
-                    "san_domains": cert.san_domains,
-                },
-                "control_id": "TLS-006",
-                "finding_key": f"TLS-006:{asset.identifier}:{cert.serial_number}",
-                "remediation": (
-                    "Consider using dedicated certificates per service instead "
-                    "of wildcard certificates to limit blast radius if a "
-                    "private key is compromised."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "Wildcard certificate in use",
+                    "severity": "low",
+                    "confidence": 0.60,
+                    "evidence": {
+                        "subject_cn": cert.subject_cn,
+                        "san_domains": cert.san_domains,
+                    },
+                    "control_id": "TLS-006",
+                    "finding_key": f"TLS-006:{asset.identifier}:{cert.serial_number}",
+                    "remediation": (
+                        "Consider using dedicated certificates per service instead "
+                        "of wildcard certificates to limit blast radius if a "
+                        "private key is compromised."
+                    ),
+                }
+            )
     return findings
 
 
@@ -710,27 +759,30 @@ def check_tls_010(
                 raw = {}
         sct_present = raw.get("sct_list") or raw.get("signed_certificate_timestamps")
         if not sct_present and not cert.is_self_signed:
-            findings.append({
-                "name": "No SCT (Signed Certificate Timestamp) detected",
-                "severity": "info",
-                "confidence": 0.50,
-                "evidence": {
-                    "subject_cn": cert.subject_cn,
-                    "issuer": cert.issuer,
-                },
-                "control_id": "TLS-010",
-                "finding_key": f"TLS-010:{asset.identifier}:{cert.serial_number}",
-                "remediation": (
-                    "Ensure the CA embeds Signed Certificate Timestamps (SCTs) "
-                    "for Certificate Transparency compliance."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "No SCT (Signed Certificate Timestamp) detected",
+                    "severity": "info",
+                    "confidence": 0.50,
+                    "evidence": {
+                        "subject_cn": cert.subject_cn,
+                        "issuer": cert.issuer,
+                    },
+                    "control_id": "TLS-010",
+                    "finding_key": f"TLS-010:{asset.identifier}:{cert.serial_number}",
+                    "remediation": (
+                        "Ensure the CA embeds Signed Certificate Timestamps (SCTs) "
+                        "for Certificate Transparency compliance."
+                    ),
+                }
+            )
     return findings
 
 
 # ---------------------------------------------------------------------------
 # Security Headers (HDR-001 .. HDR-008)
 # ---------------------------------------------------------------------------
+
 
 @register(
     control_id="HDR-001",
@@ -760,23 +812,25 @@ def check_hdr_001(
         if not headers:
             continue  # No header data collected — can't assert missing
         if "x-frame-options" not in headers:
-            findings.append({
-                "name": "Missing X-Frame-Options header",
-                "severity": "medium",
-                "confidence": 0.85,
-                "evidence": {
-                    "port": svc.port,
-                    "http_status": svc.http_status,
-                    "url": svc.redirect_url or f"http://{asset.identifier}:{svc.port}",
-                },
-                "control_id": "HDR-001",
-                "finding_key": f"HDR-001:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    "Add the X-Frame-Options header set to DENY or SAMEORIGIN "
-                    "to prevent clickjacking attacks. Alternatively, use the "
-                    "frame-ancestors directive in Content-Security-Policy."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "Missing X-Frame-Options header",
+                    "severity": "medium",
+                    "confidence": 0.85,
+                    "evidence": {
+                        "port": svc.port,
+                        "http_status": svc.http_status,
+                        "url": svc.redirect_url or f"http://{asset.identifier}:{svc.port}",
+                    },
+                    "control_id": "HDR-001",
+                    "finding_key": f"HDR-001:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Add the X-Frame-Options header set to DENY or SAMEORIGIN "
+                        "to prevent clickjacking attacks. Alternatively, use the "
+                        "frame-ancestors directive in Content-Security-Policy."
+                    ),
+                }
+            )
     return findings
 
 
@@ -808,21 +862,20 @@ def check_hdr_002(
         if not headers:
             continue  # No header data collected — can't assert missing
         if "x-content-type-options" not in headers:
-            findings.append({
-                "name": "Missing X-Content-Type-Options header",
-                "severity": "low",
-                "confidence": 0.85,
-                "evidence": {
-                    "port": svc.port,
-                    "http_status": svc.http_status,
-                },
-                "control_id": "HDR-002",
-                "finding_key": f"HDR-002:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    "Add 'X-Content-Type-Options: nosniff' to prevent MIME-type "
-                    "sniffing attacks."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "Missing X-Content-Type-Options header",
+                    "severity": "low",
+                    "confidence": 0.85,
+                    "evidence": {
+                        "port": svc.port,
+                        "http_status": svc.http_status,
+                    },
+                    "control_id": "HDR-002",
+                    "finding_key": f"HDR-002:{asset.identifier}:{svc.port}",
+                    "remediation": ("Add 'X-Content-Type-Options: nosniff' to prevent MIME-type sniffing attacks."),
+                }
+            )
     return findings
 
 
@@ -854,22 +907,24 @@ def check_hdr_003(
         if not headers:
             continue  # No header data collected — can't assert missing
         if "content-security-policy" not in headers:
-            findings.append({
-                "name": "Missing Content-Security-Policy header",
-                "severity": "medium",
-                "confidence": 0.80,
-                "evidence": {
-                    "port": svc.port,
-                    "http_status": svc.http_status,
-                },
-                "control_id": "HDR-003",
-                "finding_key": f"HDR-003:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    "Implement a Content-Security-Policy header to mitigate XSS "
-                    "and data injection attacks. Start with a report-only policy "
-                    "to identify issues before enforcing."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "Missing Content-Security-Policy header",
+                    "severity": "medium",
+                    "confidence": 0.80,
+                    "evidence": {
+                        "port": svc.port,
+                        "http_status": svc.http_status,
+                    },
+                    "control_id": "HDR-003",
+                    "finding_key": f"HDR-003:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Implement a Content-Security-Policy header to mitigate XSS "
+                        "and data injection attacks. Start with a report-only policy "
+                        "to identify issues before enforcing."
+                    ),
+                }
+            )
     return findings
 
 
@@ -901,38 +956,40 @@ def check_hdr_004(
             continue  # No header data collected — can't assert missing
         hsts = headers.get("strict-transport-security", "")
         if not hsts:
-            findings.append({
-                "name": "Missing HSTS header (Security Headers check)",
-                "severity": "medium",
-                "confidence": 0.85,
-                "evidence": {"port": svc.port},
-                "control_id": "HDR-004",
-                "finding_key": f"HDR-004:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    "Set Strict-Transport-Security with max-age >= 31536000 and "
-                    "includeSubDomains where applicable."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "Missing HSTS header (Security Headers check)",
+                    "severity": "medium",
+                    "confidence": 0.85,
+                    "evidence": {"port": svc.port},
+                    "control_id": "HDR-004",
+                    "finding_key": f"HDR-004:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Set Strict-Transport-Security with max-age >= 31536000 and includeSubDomains where applicable."
+                    ),
+                }
+            )
         elif hsts:
             # Check for weak max-age (< 6 months)
             match = re.search(r"max-age=(\d+)", hsts, re.IGNORECASE)
             if match and int(match.group(1)) < 15768000:
-                findings.append({
-                    "name": f"HSTS max-age too short ({match.group(1)} seconds)",
-                    "severity": "low",
-                    "confidence": 0.75,
-                    "evidence": {
-                        "port": svc.port,
-                        "hsts_value": hsts,
-                        "max_age_seconds": int(match.group(1)),
-                    },
-                    "control_id": "HDR-004",
-                    "finding_key": f"HDR-004-weak:{asset.identifier}:{svc.port}",
-                    "remediation": (
-                        "Increase the HSTS max-age to at least 31536000 seconds "
-                        "(1 year) for adequate protection."
-                    ),
-                })
+                findings.append(
+                    {
+                        "name": f"HSTS max-age too short ({match.group(1)} seconds)",
+                        "severity": "low",
+                        "confidence": 0.75,
+                        "evidence": {
+                            "port": svc.port,
+                            "hsts_value": hsts,
+                            "max_age_seconds": int(match.group(1)),
+                        },
+                        "control_id": "HDR-004",
+                        "finding_key": f"HDR-004-weak:{asset.identifier}:{svc.port}",
+                        "remediation": (
+                            "Increase the HSTS max-age to at least 31536000 seconds (1 year) for adequate protection."
+                        ),
+                    }
+                )
     return findings
 
 
@@ -964,18 +1021,20 @@ def check_hdr_005(
         if not headers:
             continue  # No header data collected — can't assert missing
         if "referrer-policy" not in headers:
-            findings.append({
-                "name": "Missing Referrer-Policy header",
-                "severity": "low",
-                "confidence": 0.75,
-                "evidence": {"port": svc.port},
-                "control_id": "HDR-005",
-                "finding_key": f"HDR-005:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    "Set Referrer-Policy to 'strict-origin-when-cross-origin' or "
-                    "'no-referrer' to prevent leaking URL paths to third parties."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "Missing Referrer-Policy header",
+                    "severity": "low",
+                    "confidence": 0.75,
+                    "evidence": {"port": svc.port},
+                    "control_id": "HDR-005",
+                    "finding_key": f"HDR-005:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Set Referrer-Policy to 'strict-origin-when-cross-origin' or "
+                        "'no-referrer' to prevent leaking URL paths to third parties."
+                    ),
+                }
+            )
     return findings
 
 
@@ -1007,18 +1066,20 @@ def check_hdr_006(
         if not headers:
             continue  # No header data collected — can't assert missing
         if "permissions-policy" not in headers and "feature-policy" not in headers:
-            findings.append({
-                "name": "Missing Permissions-Policy header",
-                "severity": "info",
-                "confidence": 0.70,
-                "evidence": {"port": svc.port},
-                "control_id": "HDR-006",
-                "finding_key": f"HDR-006:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    "Add a Permissions-Policy header to restrict browser features "
-                    "like geolocation, camera, and microphone access."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "Missing Permissions-Policy header",
+                    "severity": "info",
+                    "confidence": 0.70,
+                    "evidence": {"port": svc.port},
+                    "control_id": "HDR-006",
+                    "finding_key": f"HDR-006:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Add a Permissions-Policy header to restrict browser features "
+                        "like geolocation, camera, and microphone access."
+                    ),
+                }
+            )
     return findings
 
 
@@ -1049,23 +1110,25 @@ def check_hdr_007(
             # Check if credentials are also allowed (worst case)
             acac = headers.get("access-control-allow-credentials", "").lower()
             sev = "critical" if acac == "true" else "high"
-            findings.append({
-                "name": "Permissive CORS: Access-Control-Allow-Origin is wildcard",
-                "severity": sev,
-                "confidence": 0.85,
-                "evidence": {
-                    "port": svc.port,
-                    "access_control_allow_origin": acao,
-                    "access_control_allow_credentials": acac or "not set",
-                },
-                "control_id": "HDR-007",
-                "finding_key": f"HDR-007:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    "Restrict Access-Control-Allow-Origin to specific trusted "
-                    "origins instead of using the wildcard '*'. Never combine "
-                    "'*' with Access-Control-Allow-Credentials: true."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "Permissive CORS: Access-Control-Allow-Origin is wildcard",
+                    "severity": sev,
+                    "confidence": 0.85,
+                    "evidence": {
+                        "port": svc.port,
+                        "access_control_allow_origin": acao,
+                        "access_control_allow_credentials": acac or "not set",
+                    },
+                    "control_id": "HDR-007",
+                    "finding_key": f"HDR-007:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Restrict Access-Control-Allow-Origin to specific trusted "
+                        "origins instead of using the wildcard '*'. Never combine "
+                        "'*' with Access-Control-Allow-Credentials: true."
+                    ),
+                }
+            )
     return findings
 
 
@@ -1089,21 +1152,23 @@ def check_hdr_008(
         headers = _get_http_headers(svc)
         powered_by = headers.get("x-powered-by", "")
         if powered_by:
-            findings.append({
-                "name": f"X-Powered-By header reveals: {powered_by}",
-                "severity": "low",
-                "confidence": 0.90,
-                "evidence": {
-                    "port": svc.port,
-                    "x_powered_by": powered_by,
-                },
-                "control_id": "HDR-008",
-                "finding_key": f"HDR-008:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    "Remove the X-Powered-By header to reduce information "
-                    "available to attackers for technology fingerprinting."
-                ),
-            })
+            findings.append(
+                {
+                    "name": f"X-Powered-By header reveals: {powered_by}",
+                    "severity": "low",
+                    "confidence": 0.90,
+                    "evidence": {
+                        "port": svc.port,
+                        "x_powered_by": powered_by,
+                    },
+                    "control_id": "HDR-008",
+                    "finding_key": f"HDR-008:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Remove the X-Powered-By header to reduce information "
+                        "available to attackers for technology fingerprinting."
+                    ),
+                }
+            )
     return findings
 
 
@@ -1112,8 +1177,14 @@ def check_hdr_008(
 # ---------------------------------------------------------------------------
 
 _ADMIN_PATH_PATTERNS = [
-    r"/admin", r"/wp-admin", r"/administrator", r"/manager",
-    r"/cpanel", r"/phpmyadmin", r"/adminer", r"/webmin",
+    r"/admin",
+    r"/wp-admin",
+    r"/administrator",
+    r"/manager",
+    r"/cpanel",
+    r"/phpmyadmin",
+    r"/adminer",
+    r"/webmin",
 ]
 
 _ADMIN_TITLE_PATTERNS = [
@@ -1147,23 +1218,25 @@ def check_adm_001(
         title = svc.http_title or ""
         for pattern in _ADMIN_TITLE_PATTERNS:
             if re.search(pattern, title, re.IGNORECASE):
-                findings.append({
-                    "name": f"Admin panel detected: {title[:100]}",
-                    "severity": "medium",
-                    "confidence": 0.75,
-                    "evidence": {
-                        "port": svc.port,
-                        "http_title": title,
-                        "matched_pattern": pattern,
-                    },
-                    "control_id": "ADM-001",
-                    "finding_key": f"ADM-001:{asset.identifier}:{svc.port}",
-                    "remediation": (
-                        "Restrict access to admin panels using IP allowlists, "
-                        "VPN, or zero-trust network access. Never expose admin "
-                        "interfaces directly to the internet."
-                    ),
-                })
+                findings.append(
+                    {
+                        "name": f"Admin panel detected: {title[:100]}",
+                        "severity": "medium",
+                        "confidence": 0.75,
+                        "evidence": {
+                            "port": svc.port,
+                            "http_title": title,
+                            "matched_pattern": pattern,
+                        },
+                        "control_id": "ADM-001",
+                        "finding_key": f"ADM-001:{asset.identifier}:{svc.port}",
+                        "remediation": (
+                            "Restrict access to admin panels using IP allowlists, "
+                            "VPN, or zero-trust network access. Never expose admin "
+                            "interfaces directly to the internet."
+                        ),
+                    }
+                )
                 break  # One finding per service
     return findings
 
@@ -1185,28 +1258,33 @@ def check_adm_002(
     """Flag services whose title suggests a default/setup page."""
     findings: list[dict] = []
     default_patterns = [
-        r"setup wizard", r"initial setup", r"installation",
-        r"first run", r"default password", r"getting started",
+        r"setup wizard",
+        r"initial setup",
+        r"installation",
+        r"first run",
+        r"default password",
+        r"getting started",
     ]
     for svc in services:
         title = (svc.http_title or "").lower()
         for pattern in default_patterns:
             if re.search(pattern, title, re.IGNORECASE):
-                findings.append({
-                    "name": f"Default setup/installation page exposed: {svc.http_title[:100]}",
-                    "severity": "high",
-                    "confidence": 0.65,
-                    "evidence": {
-                        "port": svc.port,
-                        "http_title": svc.http_title,
-                    },
-                    "control_id": "ADM-002",
-                    "finding_key": f"ADM-002:{asset.identifier}:{svc.port}",
-                    "remediation": (
-                        "Complete the application setup and remove or restrict "
-                        "access to setup/installation pages."
-                    ),
-                })
+                findings.append(
+                    {
+                        "name": f"Default setup/installation page exposed: {svc.http_title[:100]}",
+                        "severity": "high",
+                        "confidence": 0.65,
+                        "evidence": {
+                            "port": svc.port,
+                            "http_title": svc.http_title,
+                        },
+                        "control_id": "ADM-002",
+                        "finding_key": f"ADM-002:{asset.identifier}:{svc.port}",
+                        "remediation": (
+                            "Complete the application setup and remove or restrict access to setup/installation pages."
+                        ),
+                    }
+                )
                 break
     return findings
 
@@ -1251,22 +1329,24 @@ def check_cld_001(
     detected = storage_indicators & techs
 
     if detected:
-        findings.append({
-            "name": f"Public cloud storage detected: {', '.join(detected)}",
-            "severity": "medium",
-            "confidence": 0.70,
-            "evidence": {
-                "technologies_detected": list(detected),
-                "hostname": asset.identifier,
-            },
-            "control_id": "CLD-001",
-            "finding_key": f"CLD-001:{asset.identifier}",
-            "remediation": (
-                "Verify that the cloud storage bucket/container has appropriate "
-                "access controls. Ensure public listing is disabled and "
-                "sensitive data is not publicly accessible."
-            ),
-        })
+        findings.append(
+            {
+                "name": f"Public cloud storage detected: {', '.join(detected)}",
+                "severity": "medium",
+                "confidence": 0.70,
+                "evidence": {
+                    "technologies_detected": list(detected),
+                    "hostname": asset.identifier,
+                },
+                "control_id": "CLD-001",
+                "finding_key": f"CLD-001:{asset.identifier}",
+                "remediation": (
+                    "Verify that the cloud storage bucket/container has appropriate "
+                    "access controls. Ensure public listing is disabled and "
+                    "sensitive data is not publicly accessible."
+                ),
+            }
+        )
     return findings
 
 
@@ -1294,23 +1374,25 @@ def check_cld_002(
         all_signals = set(techs) | {server}
         detected = [cdn for cdn in cdn_indicators if any(cdn in s for s in all_signals)]
         if detected:
-            findings.append({
-                "name": f"CDN/proxy detected: {', '.join(detected)}",
-                "severity": "info",
-                "confidence": 0.60,
-                "evidence": {
-                    "port": svc.port,
-                    "cdn_providers": detected,
-                    "server_header": headers.get("server", ""),
-                },
-                "control_id": "CLD-002",
-                "finding_key": f"CLD-002:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    "Ensure the origin server is not directly accessible, "
-                    "bypassing the CDN. Use origin authentication headers "
-                    "or IP allowlisting."
-                ),
-            })
+            findings.append(
+                {
+                    "name": f"CDN/proxy detected: {', '.join(detected)}",
+                    "severity": "info",
+                    "confidence": 0.60,
+                    "evidence": {
+                        "port": svc.port,
+                        "cdn_providers": detected,
+                        "server_header": headers.get("server", ""),
+                    },
+                    "control_id": "CLD-002",
+                    "finding_key": f"CLD-002:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Ensure the origin server is not directly accessible, "
+                        "bypassing the CDN. Use origin authentication headers "
+                        "or IP allowlisting."
+                    ),
+                }
+            )
             break  # One per asset
     return findings
 
@@ -1355,52 +1437,57 @@ def check_tko_001(
         title = (svc.http_title or "").strip()
         for fingerprint, provider in _TAKEOVER_FINGERPRINTS.items():
             if fingerprint.lower() in title.lower():
-                findings.append({
-                    "name": f"Potential subdomain takeover ({provider})",
-                    "severity": "critical",
-                    "confidence": 0.70,
-                    "evidence": {
-                        "hostname": asset.identifier,
-                        "http_title": title,
-                        "provider": provider,
-                        "fingerprint_matched": fingerprint,
-                        "port": svc.port,
-                    },
-                    "control_id": "TKO-001",
-                    "finding_key": f"TKO-001:{asset.identifier}:{provider}",
-                    "remediation": (
-                        f"Remove the DNS record pointing to {provider} or "
-                        f"reclaim the resource on {provider}. Dangling CNAMEs "
-                        "can be hijacked by attackers to serve malicious content."
-                    ),
-                })
+                findings.append(
+                    {
+                        "name": f"Potential subdomain takeover ({provider})",
+                        "severity": "critical",
+                        "confidence": 0.70,
+                        "evidence": {
+                            "hostname": asset.identifier,
+                            "http_title": title,
+                            "provider": provider,
+                            "fingerprint_matched": fingerprint,
+                            "port": svc.port,
+                        },
+                        "control_id": "TKO-001",
+                        "finding_key": f"TKO-001:{asset.identifier}:{provider}",
+                        "remediation": (
+                            f"Remove the DNS record pointing to {provider} or "
+                            f"reclaim the resource on {provider}. Dangling CNAMEs "
+                            "can be hijacked by attackers to serve malicious content."
+                        ),
+                    }
+                )
                 break
 
     # Also check for NXDOMAIN-like indicators (no services at all with specific status codes)
     if not services:
         # Asset exists but has no services - could indicate a dangling record
         # This is low confidence since the asset might just not have been probed
-        findings.append({
-            "name": "Subdomain with no resolvable services (possible dangling record)",
-            "severity": "medium",
-            "confidence": 0.35,
-            "evidence": {
-                "hostname": asset.identifier,
-                "services_count": 0,
-            },
-            "control_id": "TKO-001",
-            "finding_key": f"TKO-001:nxdomain:{asset.identifier}",
-            "remediation": (
-                "Investigate whether this subdomain's DNS record points to an "
-                "unclaimed resource. If unused, remove the DNS record."
-            ),
-        })
+        findings.append(
+            {
+                "name": "Subdomain with no resolvable services (possible dangling record)",
+                "severity": "medium",
+                "confidence": 0.35,
+                "evidence": {
+                    "hostname": asset.identifier,
+                    "services_count": 0,
+                },
+                "control_id": "TKO-001",
+                "finding_key": f"TKO-001:nxdomain:{asset.identifier}",
+                "remediation": (
+                    "Investigate whether this subdomain's DNS record points to an "
+                    "unclaimed resource. If unused, remove the DNS record."
+                ),
+            }
+        )
     return findings
 
 
 # ---------------------------------------------------------------------------
 # Email Security (EML-001 .. EML-005)
 # ---------------------------------------------------------------------------
+
 
 @register(
     control_id="EML-001",
@@ -1429,21 +1516,23 @@ def check_eml_001(
     has_spf = any("v=spf1" in str(txt).lower() for txt in dns_txt)
 
     if dns_txt and not has_spf:
-        findings.append({
-            "name": f"Missing SPF record for {asset.identifier}",
-            "severity": "medium",
-            "confidence": 0.60,
-            "evidence": {
-                "domain": asset.identifier,
-                "txt_records": dns_txt[:5],
-            },
-            "control_id": "EML-001",
-            "finding_key": f"EML-001:{asset.identifier}",
-            "remediation": (
-                "Add an SPF TXT record (e.g. 'v=spf1 include:_spf.google.com "
-                "-all') to prevent email spoofing from this domain."
-            ),
-        })
+        findings.append(
+            {
+                "name": f"Missing SPF record for {asset.identifier}",
+                "severity": "medium",
+                "confidence": 0.60,
+                "evidence": {
+                    "domain": asset.identifier,
+                    "txt_records": dns_txt[:5],
+                },
+                "control_id": "EML-001",
+                "finding_key": f"EML-001:{asset.identifier}",
+                "remediation": (
+                    "Add an SPF TXT record (e.g. 'v=spf1 include:_spf.google.com "
+                    "-all') to prevent email spoofing from this domain."
+                ),
+            }
+        )
     return findings
 
 
@@ -1471,21 +1560,23 @@ def check_eml_003(
     has_dmarc = any("v=dmarc1" in str(txt).lower() for txt in all_txt)
 
     if all_txt and not has_dmarc:
-        findings.append({
-            "name": f"Missing DMARC record for {asset.identifier}",
-            "severity": "medium",
-            "confidence": 0.60,
-            "evidence": {
-                "domain": asset.identifier,
-            },
-            "control_id": "EML-003",
-            "finding_key": f"EML-003:{asset.identifier}",
-            "remediation": (
-                "Add a DMARC TXT record at _dmarc.{domain} (e.g. "
-                "'v=DMARC1; p=quarantine; rua=mailto:dmarc@example.com') "
-                "to enable email authentication reporting and enforcement."
-            ),
-        })
+        findings.append(
+            {
+                "name": f"Missing DMARC record for {asset.identifier}",
+                "severity": "medium",
+                "confidence": 0.60,
+                "evidence": {
+                    "domain": asset.identifier,
+                },
+                "control_id": "EML-003",
+                "finding_key": f"EML-003:{asset.identifier}",
+                "remediation": (
+                    "Add a DMARC TXT record at _dmarc.{domain} (e.g. "
+                    "'v=DMARC1; p=quarantine; rua=mailto:dmarc@example.com') "
+                    "to enable email authentication reporting and enforcement."
+                ),
+            }
+        )
     return findings
 
 
@@ -1511,27 +1602,30 @@ def check_eml_002(
     for txt in dns_txt:
         txt_str = str(txt).lower()
         if "v=spf1" in txt_str and "+all" in txt_str:
-            findings.append({
-                "name": "SPF record has permissive +all policy",
-                "severity": "high",
-                "confidence": 0.85,
-                "evidence": {
-                    "domain": asset.identifier,
-                    "spf_record": str(txt),
-                },
-                "control_id": "EML-002",
-                "finding_key": f"EML-002:{asset.identifier}",
-                "remediation": (
-                    "Change the SPF policy from '+all' to '-all' (hard fail) "
-                    "or '~all' (soft fail) to prevent unauthorized email senders."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "SPF record has permissive +all policy",
+                    "severity": "high",
+                    "confidence": 0.85,
+                    "evidence": {
+                        "domain": asset.identifier,
+                        "spf_record": str(txt),
+                    },
+                    "control_id": "EML-002",
+                    "finding_key": f"EML-002:{asset.identifier}",
+                    "remediation": (
+                        "Change the SPF policy from '+all' to '-all' (hard fail) "
+                        "or '~all' (soft fail) to prevent unauthorized email senders."
+                    ),
+                }
+            )
     return findings
 
 
 # ---------------------------------------------------------------------------
 # DNS Security (DNS-001 .. DNS-004)
 # ---------------------------------------------------------------------------
+
 
 @register(
     control_id="DNS-001",
@@ -1551,21 +1645,23 @@ def check_dns_001(
     findings: list[dict] = []
     metadata = _parse_raw_metadata(asset)
     if metadata.get("axfr_possible"):
-        findings.append({
-            "name": f"DNS zone transfer (AXFR) possible on {asset.identifier}",
-            "severity": "high",
-            "confidence": 0.50,
-            "evidence": {
-                "domain": asset.identifier,
-                "nameservers": metadata.get("nameservers", []),
-            },
-            "control_id": "DNS-001",
-            "finding_key": f"DNS-001:{asset.identifier}",
-            "remediation": (
-                "Restrict AXFR zone transfers to authorized secondary DNS "
-                "servers only. Zone transfers expose the full DNS zone contents."
-            ),
-        })
+        findings.append(
+            {
+                "name": f"DNS zone transfer (AXFR) possible on {asset.identifier}",
+                "severity": "high",
+                "confidence": 0.50,
+                "evidence": {
+                    "domain": asset.identifier,
+                    "nameservers": metadata.get("nameservers", []),
+                },
+                "control_id": "DNS-001",
+                "finding_key": f"DNS-001:{asset.identifier}",
+                "remediation": (
+                    "Restrict AXFR zone transfers to authorized secondary DNS "
+                    "servers only. Zone transfers expose the full DNS zone contents."
+                ),
+            }
+        )
     return findings
 
 
@@ -1600,22 +1696,24 @@ def check_inf_001(
         headers = _get_http_headers(svc)
         server = headers.get("server", "") or (svc.web_server or "")
         if _VERSION_PATTERN.search(server):
-            findings.append({
-                "name": f"Server version disclosed: {server[:120]}",
-                "severity": "low",
-                "confidence": 0.90,
-                "evidence": {
-                    "port": svc.port,
-                    "server_header": server,
-                },
-                "control_id": "INF-001",
-                "finding_key": f"INF-001:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    "Configure the web server to suppress version information "
-                    "in the Server header. For nginx: 'server_tokens off;'. "
-                    "For Apache: 'ServerTokens Prod'."
-                ),
-            })
+            findings.append(
+                {
+                    "name": f"Server version disclosed: {server[:120]}",
+                    "severity": "low",
+                    "confidence": 0.90,
+                    "evidence": {
+                        "port": svc.port,
+                        "server_header": server,
+                    },
+                    "control_id": "INF-001",
+                    "finding_key": f"INF-001:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Configure the web server to suppress version information "
+                        "in the Server header. For nginx: 'server_tokens off;'. "
+                        "For Apache: 'ServerTokens Prod'."
+                    ),
+                }
+            )
     return findings
 
 
@@ -1645,22 +1743,24 @@ def check_inf_003(
         title = svc.http_title or ""
         for pattern in dir_listing_patterns:
             if re.search(pattern, title, re.IGNORECASE):
-                findings.append({
-                    "name": f"Directory listing enabled: {title[:100]}",
-                    "severity": "medium",
-                    "confidence": 0.80,
-                    "evidence": {
-                        "port": svc.port,
-                        "http_title": title,
-                    },
-                    "control_id": "INF-003",
-                    "finding_key": f"INF-003:{asset.identifier}:{svc.port}",
-                    "remediation": (
-                        "Disable directory listing on the web server. For "
-                        "Apache: 'Options -Indexes'. For nginx: remove "
-                        "'autoindex on' from the configuration."
-                    ),
-                })
+                findings.append(
+                    {
+                        "name": f"Directory listing enabled: {title[:100]}",
+                        "severity": "medium",
+                        "confidence": 0.80,
+                        "evidence": {
+                            "port": svc.port,
+                            "http_title": title,
+                        },
+                        "control_id": "INF-003",
+                        "finding_key": f"INF-003:{asset.identifier}:{svc.port}",
+                        "remediation": (
+                            "Disable directory listing on the web server. For "
+                            "Apache: 'Options -Indexes'. For nginx: remove "
+                            "'autoindex on' from the configuration."
+                        ),
+                    }
+                )
                 break
     return findings
 
@@ -1696,31 +1796,30 @@ def check_inf_005(
 
         # Check title for common debug page patterns
         title = (svc.http_title or "").lower()
-        debug_title = any(
-            p in title
-            for p in ["werkzeug debugger", "django debug", "debug toolbar", "stack trace"]
-        )
+        debug_title = any(p in title for p in ["werkzeug debugger", "django debug", "debug toolbar", "stack trace"])
 
         if debug_found or debug_tech_found or debug_title:
-            findings.append({
-                "name": "Debug mode appears to be enabled",
-                "severity": "high",
-                "confidence": 0.75,
-                "evidence": {
-                    "port": svc.port,
-                    "debug_headers": debug_found,
-                    "debug_technologies": debug_tech_found,
-                    "debug_title": debug_title,
-                    "http_title": svc.http_title,
-                },
-                "control_id": "INF-005",
-                "finding_key": f"INF-005:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    "Disable debug mode in production. Debug endpoints expose "
-                    "sensitive internals including source code, environment "
-                    "variables, and database credentials."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "Debug mode appears to be enabled",
+                    "severity": "high",
+                    "confidence": 0.75,
+                    "evidence": {
+                        "port": svc.port,
+                        "debug_headers": debug_found,
+                        "debug_technologies": debug_tech_found,
+                        "debug_title": debug_title,
+                        "http_title": svc.http_title,
+                    },
+                    "control_id": "INF-005",
+                    "finding_key": f"INF-005:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Disable debug mode in production. Debug endpoints expose "
+                        "sensitive internals including source code, environment "
+                        "variables, and database credentials."
+                    ),
+                }
+            )
     return findings
 
 
@@ -1751,22 +1850,24 @@ def check_inf_002(
         title = svc.http_title or ""
         for pattern in error_patterns:
             if re.search(pattern, title, re.IGNORECASE):
-                findings.append({
-                    "name": f"Error page information leakage: {title[:100]}",
-                    "severity": "low",
-                    "confidence": 0.65,
-                    "evidence": {
-                        "port": svc.port,
-                        "http_title": title,
-                        "http_status": svc.http_status,
-                    },
-                    "control_id": "INF-002",
-                    "finding_key": f"INF-002:{asset.identifier}:{svc.port}",
-                    "remediation": (
-                        "Configure custom error pages that do not expose stack "
-                        "traces, internal paths, or software versions."
-                    ),
-                })
+                findings.append(
+                    {
+                        "name": f"Error page information leakage: {title[:100]}",
+                        "severity": "low",
+                        "confidence": 0.65,
+                        "evidence": {
+                            "port": svc.port,
+                            "http_title": title,
+                            "http_status": svc.http_status,
+                        },
+                        "control_id": "INF-002",
+                        "finding_key": f"INF-002:{asset.identifier}:{svc.port}",
+                        "remediation": (
+                            "Configure custom error pages that do not expose stack "
+                            "traces, internal paths, or software versions."
+                        ),
+                    }
+                )
                 break
     return findings
 
@@ -1807,33 +1908,40 @@ def check_inf_004(
     # Check crawled endpoints if available
     try:
         from app.models.enrichment import Endpoint
-        endpoints = db.query(Endpoint).filter(
-            Endpoint.asset_id == asset.id,
-            Endpoint.status_code.in_([200, 301, 302, 403]),
-        ).all()
+
+        endpoints = (
+            db.query(Endpoint)
+            .filter(
+                Endpoint.asset_id == asset.id,
+                Endpoint.status_code.in_([200, 301, 302, 403]),
+            )
+            .all()
+        )
 
         for ep in endpoints:
             path = ep.path or ep.url or ""
             for pattern, desc in sensitive_patterns:
                 if re.search(pattern, path, re.IGNORECASE):
-                    findings.append({
-                        "name": f"Sensitive path exposed: {desc}",
-                        "severity": "medium",
-                        "confidence": 0.65,
-                        "evidence": {
-                            "url": ep.url,
-                            "path": ep.path,
-                            "status_code": ep.status_code,
-                            "description": desc,
-                        },
-                        "control_id": "INF-004",
-                        "finding_key": f"INF-004:{asset.identifier}:{path[:100]}",
-                        "remediation": (
-                            f"Block access to {desc} via web server configuration "
-                            "rules. These files may contain sensitive credentials, "
-                            "configuration data, or source code."
-                        ),
-                    })
+                    findings.append(
+                        {
+                            "name": f"Sensitive path exposed: {desc}",
+                            "severity": "medium",
+                            "confidence": 0.65,
+                            "evidence": {
+                                "url": ep.url,
+                                "path": ep.path,
+                                "status_code": ep.status_code,
+                                "description": desc,
+                            },
+                            "control_id": "INF-004",
+                            "finding_key": f"INF-004:{asset.identifier}:{path[:100]}",
+                            "remediation": (
+                                f"Block access to {desc} via web server configuration "
+                                "rules. These files may contain sensitive credentials, "
+                                "configuration data, or source code."
+                            ),
+                        }
+                    )
                     break
     except (ImportError, AttributeError) as exc:
         # Endpoint model might not be available in all deployments
@@ -1847,6 +1955,7 @@ def check_inf_004(
 # ---------------------------------------------------------------------------
 # Authentication (AUTH-001 .. AUTH-004)
 # ---------------------------------------------------------------------------
+
 
 @register(
     control_id="AUTH-001",
@@ -1870,23 +1979,25 @@ def check_auth_001(
             continue
         title = (svc.http_title or "").lower()
         if any(indicator in title for indicator in login_indicators):
-            findings.append({
-                "name": "Login page served over unencrypted HTTP",
-                "severity": "high",
-                "confidence": 0.80,
-                "evidence": {
-                    "port": svc.port,
-                    "http_title": svc.http_title,
-                    "has_tls": False,
-                },
-                "control_id": "AUTH-001",
-                "finding_key": f"AUTH-001:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    "Enable HTTPS for all pages handling authentication. "
-                    "Credentials transmitted over HTTP can be intercepted "
-                    "by network attackers."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "Login page served over unencrypted HTTP",
+                    "severity": "high",
+                    "confidence": 0.80,
+                    "evidence": {
+                        "port": svc.port,
+                        "http_title": svc.http_title,
+                        "has_tls": False,
+                    },
+                    "control_id": "AUTH-001",
+                    "finding_key": f"AUTH-001:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Enable HTTPS for all pages handling authentication. "
+                        "Credentials transmitted over HTTP can be intercepted "
+                        "by network attackers."
+                    ),
+                }
+            )
     return findings
 
 
@@ -1912,23 +2023,25 @@ def check_auth_002(
         headers = _get_http_headers(svc)
         www_auth = headers.get("www-authenticate", "").lower()
         if "basic" in www_auth:
-            findings.append({
-                "name": "HTTP Basic Authentication over unencrypted connection",
-                "severity": "high",
-                "confidence": 0.85,
-                "evidence": {
-                    "port": svc.port,
-                    "www_authenticate": headers.get("www-authenticate", ""),
-                    "http_status": svc.http_status,
-                },
-                "control_id": "AUTH-002",
-                "finding_key": f"AUTH-002:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    "Enable HTTPS on this service. HTTP Basic Authentication "
-                    "sends base64-encoded credentials which are trivially "
-                    "decoded by network attackers."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "HTTP Basic Authentication over unencrypted connection",
+                    "severity": "high",
+                    "confidence": 0.85,
+                    "evidence": {
+                        "port": svc.port,
+                        "www_authenticate": headers.get("www-authenticate", ""),
+                        "http_status": svc.http_status,
+                    },
+                    "control_id": "AUTH-002",
+                    "finding_key": f"AUTH-002:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Enable HTTPS on this service. HTTP Basic Authentication "
+                        "sends base64-encoded credentials which are trivially "
+                        "decoded by network attackers."
+                    ),
+                }
+            )
     return findings
 
 
@@ -1974,24 +2087,26 @@ def check_exp_002(
             # Increase confidence if product name matches
             product_match = svc.product and db_name.lower() in (svc.product or "").lower()
             conf = 0.95 if product_match else 0.90
-            findings.append({
-                "name": f"{db_name} port {svc.port} exposed",
-                "severity": "critical",
-                "confidence": conf,
-                "evidence": {
-                    "port": svc.port,
-                    "database": db_name,
-                    "product": svc.product,
-                    "version": svc.version,
-                },
-                "control_id": "EXP-002",
-                "finding_key": f"EXP-002:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    f"Restrict access to {db_name} (port {svc.port}) using "
-                    "firewall rules or security groups. Database ports should "
-                    "never be directly accessible from the internet."
-                ),
-            })
+            findings.append(
+                {
+                    "name": f"{db_name} port {svc.port} exposed",
+                    "severity": "critical",
+                    "confidence": conf,
+                    "evidence": {
+                        "port": svc.port,
+                        "database": db_name,
+                        "product": svc.product,
+                        "version": svc.version,
+                    },
+                    "control_id": "EXP-002",
+                    "finding_key": f"EXP-002:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        f"Restrict access to {db_name} (port {svc.port}) using "
+                        "firewall rules or security groups. Database ports should "
+                        "never be directly accessible from the internet."
+                    ),
+                }
+            )
     return findings
 
 
@@ -2030,18 +2145,25 @@ def check_exp_003(
     # where a mail server runs — flagging grafana.example.com:143 is a
     # false positive. Only report on hosts whose name suggests mail service.
     _MAIL_HOST_PATTERNS = {
-        "mail", "smtp", "imap", "pop", "pop3", "mx", "webmail",
-        "postfix", "dovecot", "exchange", "mta", "relay",
+        "mail",
+        "smtp",
+        "imap",
+        "pop",
+        "pop3",
+        "mx",
+        "webmail",
+        "postfix",
+        "dovecot",
+        "exchange",
+        "mta",
+        "relay",
     }
     _MAIL_PORTS = {110, 143}
 
     def _is_mail_host(hostname: str) -> bool:
         """Return True if hostname looks like a mail server."""
         parts = hostname.lower().split(".")
-        return any(
-            part in _MAIL_HOST_PATTERNS or part.startswith("mx")
-            for part in parts
-        )
+        return any(part in _MAIL_HOST_PATTERNS or part.startswith("mx") for part in parts)
 
     # Collect the set of open ports so we can check for encrypted counterparts
     open_ports = {svc.port for svc in services if svc.port}
@@ -2070,25 +2192,24 @@ def check_exp_003(
         if svc.port in _MAIL_PORTS:
             severity = "info"
 
-        findings.append({
-            "name": f"Unencrypted {proto_name} service on port {svc.port}",
-            "severity": severity,
-            "confidence": 0.85 if severity == "high" else 0.60,
-            "evidence": {
-                "port": svc.port,
-                "protocol": proto_name,
-                "product": svc.product,
-                "encrypted_counterpart_open": bool(
-                    counterpart and counterpart in open_ports
+        findings.append(
+            {
+                "name": f"Unencrypted {proto_name} service on port {svc.port}",
+                "severity": severity,
+                "confidence": 0.85 if severity == "high" else 0.60,
+                "evidence": {
+                    "port": svc.port,
+                    "protocol": proto_name,
+                    "product": svc.product,
+                    "encrypted_counterpart_open": bool(counterpart and counterpart in open_ports),
+                },
+                "control_id": "EXP-003",
+                "finding_key": f"EXP-003:{asset.identifier}:{svc.port}",
+                "remediation": (
+                    f"Replace {proto_name} with {replacement} to ensure credentials and data are encrypted in transit."
                 ),
-            },
-            "control_id": "EXP-003",
-            "finding_key": f"EXP-003:{asset.identifier}:{svc.port}",
-            "remediation": (
-                f"Replace {proto_name} with {replacement} to ensure "
-                "credentials and data are encrypted in transit."
-            ),
-        })
+            }
+        )
     return findings
 
 
@@ -2119,23 +2240,25 @@ def check_exp_004(
         all_text = f"{product_lower} {title_lower} {' '.join(techs)}"
 
         if any(indicator in all_text for indicator in k8s_indicators):
-            findings.append({
-                "name": f"Kubernetes API server exposed on port {svc.port}",
-                "severity": "critical",
-                "confidence": 0.80,
-                "evidence": {
-                    "port": svc.port,
-                    "product": svc.product,
-                    "http_title": svc.http_title,
-                },
-                "control_id": "EXP-004",
-                "finding_key": f"EXP-004:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    "Restrict Kubernetes API server access to authorized "
-                    "networks only. Use RBAC, network policies, and API "
-                    "server flags (--anonymous-auth=false) to secure the cluster."
-                ),
-            })
+            findings.append(
+                {
+                    "name": f"Kubernetes API server exposed on port {svc.port}",
+                    "severity": "critical",
+                    "confidence": 0.80,
+                    "evidence": {
+                        "port": svc.port,
+                        "product": svc.product,
+                        "http_title": svc.http_title,
+                    },
+                    "control_id": "EXP-004",
+                    "finding_key": f"EXP-004:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Restrict Kubernetes API server access to authorized "
+                        "networks only. Use RBAC, network policies, and API "
+                        "server flags (--anonymous-auth=false) to secure the cluster."
+                    ),
+                }
+            )
     return findings
 
 
@@ -2157,23 +2280,25 @@ def check_exp_005(
     findings: list[dict] = []
     for svc in services:
         if svc.port == 3389:
-            findings.append({
-                "name": "RDP service exposed on port 3389",
-                "severity": "critical",
-                "confidence": 0.90,
-                "evidence": {
-                    "port": svc.port,
-                    "product": svc.product,
-                    "version": svc.version,
-                },
-                "control_id": "EXP-005",
-                "finding_key": f"EXP-005:{asset.identifier}:3389",
-                "remediation": (
-                    "Disable public RDP access and use a VPN or bastion host "
-                    "for remote desktop connections. RDP is a high-value "
-                    "target for brute-force and exploitation attacks."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "RDP service exposed on port 3389",
+                    "severity": "critical",
+                    "confidence": 0.90,
+                    "evidence": {
+                        "port": svc.port,
+                        "product": svc.product,
+                        "version": svc.version,
+                    },
+                    "control_id": "EXP-005",
+                    "finding_key": f"EXP-005:{asset.identifier}:3389",
+                    "remediation": (
+                        "Disable public RDP access and use a VPN or bastion host "
+                        "for remote desktop connections. RDP is a high-value "
+                        "target for brute-force and exploitation attacks."
+                    ),
+                }
+            )
     return findings
 
 
@@ -2197,22 +2322,24 @@ def check_exp_001(
         is_ssh = svc.port == 22 or (svc.product and "ssh" in (svc.product or "").lower())
         if is_ssh:
             sev = "info" if svc.port == 22 else "low"
-            findings.append({
-                "name": f"SSH service detected on port {svc.port}",
-                "severity": sev,
-                "confidence": 0.70,
-                "evidence": {
-                    "port": svc.port,
-                    "product": svc.product,
-                    "version": svc.version,
-                },
-                "control_id": "EXP-001",
-                "finding_key": f"EXP-001:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    "Ensure SSH access is restricted by IP allowlist and uses "
-                    "key-based authentication. Disable password authentication."
-                ),
-            })
+            findings.append(
+                {
+                    "name": f"SSH service detected on port {svc.port}",
+                    "severity": sev,
+                    "confidence": 0.70,
+                    "evidence": {
+                        "port": svc.port,
+                        "product": svc.product,
+                        "version": svc.version,
+                    },
+                    "control_id": "EXP-001",
+                    "finding_key": f"EXP-001:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Ensure SSH access is restricted by IP allowlist and uses "
+                        "key-based authentication. Disable password authentication."
+                    ),
+                }
+            )
     return findings
 
 
@@ -2255,22 +2382,24 @@ def check_exp_006(
                     for kw in ["prometheus", "grafana", "console", "admin", "management", "tomcat"]
                 ):
                     continue
-            findings.append({
-                "name": f"{name} exposed on port {svc.port}",
-                "severity": sev,
-                "confidence": 0.80,
-                "evidence": {
-                    "port": svc.port,
-                    "service_name": name,
-                    "product": svc.product,
-                },
-                "control_id": "EXP-006",
-                "finding_key": f"EXP-006:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    f"Restrict access to {name} using firewall rules. "
-                    "Management interfaces must not be exposed to the public internet."
-                ),
-            })
+            findings.append(
+                {
+                    "name": f"{name} exposed on port {svc.port}",
+                    "severity": sev,
+                    "confidence": 0.80,
+                    "evidence": {
+                        "port": svc.port,
+                        "service_name": name,
+                        "product": svc.product,
+                    },
+                    "control_id": "EXP-006",
+                    "finding_key": f"EXP-006:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        f"Restrict access to {name} using firewall rules. "
+                        "Management interfaces must not be exposed to the public internet."
+                    ),
+                }
+            )
     return findings
 
 
@@ -2279,6 +2408,7 @@ def check_exp_006(
 # These are registered with the correct metadata but contain simplified logic
 # that will be expanded as additional enrichment data becomes available.
 # ---------------------------------------------------------------------------
+
 
 @register(
     control_id="ADM-003",
@@ -2289,23 +2419,27 @@ def check_exp_006(
     asset_types=["domain", "subdomain"],
 )
 def check_adm_003(
-    asset: Asset, services: list[Service],
-    certificates: list[Certificate], db: Any,
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
 ) -> list[dict]:
     """Detect WordPress installations via technology fingerprint."""
     findings: list[dict] = []
     for svc in services:
         techs = _get_technologies(svc)
         if "wordpress" in techs:
-            findings.append({
-                "name": "WordPress detected (wp-admin likely accessible)",
-                "severity": "medium",
-                "confidence": 0.75,
-                "evidence": {"port": svc.port, "technologies": techs},
-                "control_id": "ADM-003",
-                "finding_key": f"ADM-003:{asset.identifier}:{svc.port}",
-                "remediation": "Restrict wp-admin access via IP allowlist or WAF rules.",
-            })
+            findings.append(
+                {
+                    "name": "WordPress detected (wp-admin likely accessible)",
+                    "severity": "medium",
+                    "confidence": 0.75,
+                    "evidence": {"port": svc.port, "technologies": techs},
+                    "control_id": "ADM-003",
+                    "finding_key": f"ADM-003:{asset.identifier}:{svc.port}",
+                    "remediation": "Restrict wp-admin access via IP allowlist or WAF rules.",
+                }
+            )
     return findings
 
 
@@ -2318,8 +2452,10 @@ def check_adm_003(
     asset_types=["domain", "subdomain"],
 )
 def check_adm_004(
-    asset: Asset, services: list[Service],
-    certificates: list[Certificate], db: Any,
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
 ) -> list[dict]:
     """Detect phpMyAdmin via title or technology fingerprint."""
     findings: list[dict] = []
@@ -2327,18 +2463,20 @@ def check_adm_004(
         title = (svc.http_title or "").lower()
         techs = _get_technologies(svc)
         if "phpmyadmin" in title or "phpmyadmin" in techs:
-            findings.append({
-                "name": "phpMyAdmin detected",
-                "severity": "high",
-                "confidence": 0.80,
-                "evidence": {"port": svc.port, "http_title": svc.http_title},
-                "control_id": "ADM-004",
-                "finding_key": f"ADM-004:{asset.identifier}:{svc.port}",
-                "remediation": (
-                    "Remove phpMyAdmin from public-facing servers or restrict "
-                    "access via IP allowlists and strong authentication."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "phpMyAdmin detected",
+                    "severity": "high",
+                    "confidence": 0.80,
+                    "evidence": {"port": svc.port, "http_title": svc.http_title},
+                    "control_id": "ADM-004",
+                    "finding_key": f"ADM-004:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Remove phpMyAdmin from public-facing servers or restrict "
+                        "access via IP allowlists and strong authentication."
+                    ),
+                }
+            )
     return findings
 
 
@@ -2351,8 +2489,10 @@ def check_adm_004(
     asset_types=["domain", "subdomain", "ip"],
 )
 def check_cld_003(
-    asset: Asset, services: list[Service],
-    certificates: list[Certificate], db: Any,
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
 ) -> list[dict]:
     # TODO: Requires SSRF probing or endpoint crawl data
     return []
@@ -2367,8 +2507,10 @@ def check_cld_003(
     asset_types=["domain", "subdomain"],
 )
 def check_cld_004(
-    asset: Asset, services: list[Service],
-    certificates: list[Certificate], db: Any,
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
 ) -> list[dict]:
     # TODO: Detect Lambda/Cloud Function URLs via CNAME or title
     return []
@@ -2383,8 +2525,10 @@ def check_cld_004(
     asset_types=["subdomain"],
 )
 def check_tko_002(
-    asset: Asset, services: list[Service],
-    certificates: list[Certificate], db: Any,
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
 ) -> list[dict]:
     # TODO: Requires CNAME resolution data
     return []
@@ -2399,8 +2543,10 @@ def check_tko_002(
     asset_types=["subdomain"],
 )
 def check_tko_003(
-    asset: Asset, services: list[Service],
-    certificates: list[Certificate], db: Any,
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
 ) -> list[dict]:
     # TODO: Requires HTTP body fingerprint analysis
     return []
@@ -2415,8 +2561,10 @@ def check_tko_003(
     asset_types=["domain"],
 )
 def check_eml_004(
-    asset: Asset, services: list[Service],
-    certificates: list[Certificate], db: Any,
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
 ) -> list[dict]:
     findings: list[dict] = []
     metadata = _parse_raw_metadata(asset)
@@ -2424,18 +2572,20 @@ def check_eml_004(
     for txt in dmarc_records:
         txt_str = str(txt).lower()
         if "v=dmarc1" in txt_str and "p=none" in txt_str:
-            findings.append({
-                "name": "DMARC policy set to none (monitor only)",
-                "severity": "low",
-                "confidence": 0.60,
-                "evidence": {"domain": asset.identifier, "dmarc_record": str(txt)},
-                "control_id": "EML-004",
-                "finding_key": f"EML-004:{asset.identifier}",
-                "remediation": (
-                    "Upgrade DMARC policy from p=none to p=quarantine or p=reject "
-                    "after verifying legitimate senders are aligned."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "DMARC policy set to none (monitor only)",
+                    "severity": "low",
+                    "confidence": 0.60,
+                    "evidence": {"domain": asset.identifier, "dmarc_record": str(txt)},
+                    "control_id": "EML-004",
+                    "finding_key": f"EML-004:{asset.identifier}",
+                    "remediation": (
+                        "Upgrade DMARC policy from p=none to p=quarantine or p=reject "
+                        "after verifying legitimate senders are aligned."
+                    ),
+                }
+            )
     return findings
 
 
@@ -2448,8 +2598,10 @@ def check_eml_004(
     asset_types=["domain"],
 )
 def check_eml_005(
-    asset: Asset, services: list[Service],
-    certificates: list[Certificate], db: Any,
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
 ) -> list[dict]:
     # TODO: Requires DKIM selector enumeration via DNS
     return []
@@ -2464,8 +2616,10 @@ def check_eml_005(
     asset_types=["domain"],
 )
 def check_dns_002(
-    asset: Asset, services: list[Service],
-    certificates: list[Certificate], db: Any,
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
 ) -> list[dict]:
     # TODO: Requires DNSSEC validation probing
     return []
@@ -2480,26 +2634,30 @@ def check_dns_002(
     asset_types=["ip"],
 )
 def check_dns_003(
-    asset: Asset, services: list[Service],
-    certificates: list[Certificate], db: Any,
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
 ) -> list[dict]:
     """Flag DNS services on port 53 that could be open resolvers."""
     findings: list[dict] = []
     for svc in services:
         if svc.port == 53:
-            findings.append({
-                "name": "DNS service on port 53 (potential open resolver)",
-                "severity": "high",
-                "confidence": 0.60,
-                "evidence": {"port": 53, "product": svc.product},
-                "control_id": "DNS-003",
-                "finding_key": f"DNS-003:{asset.identifier}:53",
-                "remediation": (
-                    "Verify the DNS server does not respond to recursive queries "
-                    "from arbitrary sources. Open resolvers can be abused for "
-                    "DNS amplification attacks."
-                ),
-            })
+            findings.append(
+                {
+                    "name": "DNS service on port 53 (potential open resolver)",
+                    "severity": "high",
+                    "confidence": 0.60,
+                    "evidence": {"port": 53, "product": svc.product},
+                    "control_id": "DNS-003",
+                    "finding_key": f"DNS-003:{asset.identifier}:53",
+                    "remediation": (
+                        "Verify the DNS server does not respond to recursive queries "
+                        "from arbitrary sources. Open resolvers can be abused for "
+                        "DNS amplification attacks."
+                    ),
+                }
+            )
     return findings
 
 
@@ -2512,8 +2670,10 @@ def check_dns_003(
     asset_types=["domain"],
 )
 def check_dns_004(
-    asset: Asset, services: list[Service],
-    certificates: list[Certificate], db: Any,
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
 ) -> list[dict]:
     # TODO: Requires wildcard DNS detection during resolution phase
     return []
@@ -2528,8 +2688,10 @@ def check_dns_004(
     asset_types=["domain", "subdomain"],
 )
 def check_inf_006(
-    asset: Asset, services: list[Service],
-    certificates: list[Certificate], db: Any,
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
 ) -> list[dict]:
     # TODO: Requires crawl data for .js.map files
     return []
@@ -2544,8 +2706,10 @@ def check_inf_006(
     asset_types=["domain", "subdomain"],
 )
 def check_inf_007(
-    asset: Asset, services: list[Service],
-    certificates: list[Certificate], db: Any,
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
 ) -> list[dict]:
     # Covered by INF-004 as part of sensitive path detection
     return []
@@ -2560,8 +2724,10 @@ def check_inf_007(
     asset_types=["domain", "subdomain"],
 )
 def check_inf_008(
-    asset: Asset, services: list[Service],
-    certificates: list[Certificate], db: Any,
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
 ) -> list[dict]:
     # Covered by INF-004 as part of sensitive path detection
     return []
@@ -2576,8 +2742,10 @@ def check_inf_008(
     asset_types=["domain", "subdomain"],
 )
 def check_auth_003(
-    asset: Asset, services: list[Service],
-    certificates: list[Certificate], db: Any,
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
 ) -> list[dict]:
     # TODO: Requires active probing (out of scope for passive checks)
     return []
@@ -2592,8 +2760,10 @@ def check_auth_003(
     asset_types=["domain", "subdomain"],
 )
 def check_auth_004(
-    asset: Asset, services: list[Service],
-    certificates: list[Certificate], db: Any,
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
 ) -> list[dict]:
     # TODO: Requires active probing
     return []
@@ -2602,6 +2772,7 @@ def check_auth_004(
 # ---------------------------------------------------------------------------
 # Raw metadata helper
 # ---------------------------------------------------------------------------
+
 
 def _parse_raw_metadata(asset: Asset) -> dict:
     """Parse the raw_metadata JSON field from an asset record."""
@@ -2621,6 +2792,7 @@ def _parse_raw_metadata(asset: Asset) -> dict:
 # ---------------------------------------------------------------------------
 # Main Celery task
 # ---------------------------------------------------------------------------
+
 
 @celery.task(
     name="app.tasks.misconfig.run_misconfig_detection",
@@ -2685,12 +2857,12 @@ def run_misconfig_detection(
             return stats
 
         tenant_logger.info(
-            f"Starting misconfiguration detection: {len(assets)} assets, "
-            f"{len(_CONTROLS)} controls registered"
+            f"Starting misconfiguration detection: {len(assets)} assets, {len(_CONTROLS)} controls registered"
         )
 
         # Mark stale assets: domains/subdomains that no longer resolve DNS
         import socket
+
         stale_count = 0
         for asset in assets:
             if asset.type and asset.type.value in ("domain", "subdomain"):
@@ -2709,12 +2881,8 @@ def run_misconfig_detection(
         for asset in assets:
             asset_type_value = asset.type.value if asset.type else ""
 
-            services = (
-                db.query(Service).filter(Service.asset_id == asset.id).all()
-            )
-            certificates = (
-                db.query(Certificate).filter(Certificate.asset_id == asset.id).all()
-            )
+            services = db.query(Service).filter(Service.asset_id == asset.id).all()
+            certificates = db.query(Certificate).filter(Certificate.asset_id == asset.id).all()
 
             for control_id, control in _CONTROLS.items():
                 if asset_type_value not in control["asset_types"]:
@@ -2726,15 +2894,11 @@ def run_misconfig_detection(
 
                     category = control["category"]
                     if category not in stats["controls_by_category"]:
-                        stats["controls_by_category"][category] = {
-                            "executed": 0, "findings": 0
-                        }
+                        stats["controls_by_category"][category] = {"executed": 0, "findings": 0}
                     stats["controls_by_category"][category]["executed"] += 1
 
                     for finding_data in results:
-                        confidence = finding_data.get(
-                            "confidence", control["confidence"]
-                        )
+                        confidence = finding_data.get("confidence", control["confidence"])
 
                         if confidence < 0.3:
                             stats["findings_skipped_low_confidence"] += 1
@@ -2748,9 +2912,7 @@ def run_misconfig_detection(
                             "finding_key",
                             f"{control['id']}:{asset.identifier}",
                         )
-                        severity_str = finding_data.get(
-                            "severity", control["severity"]
-                        )
+                        severity_str = finding_data.get("severity", control["severity"])
                         severity_enum = _severity_enum(severity_str)
 
                         evidence = finding_data.get("evidence", {})
@@ -2771,11 +2933,7 @@ def run_misconfig_detection(
                             source="misconfig",
                         )
 
-                        existing = (
-                            db.query(Finding)
-                            .filter(Finding.fingerprint == fp)
-                            .first()
-                        )
+                        existing = db.query(Finding).filter(Finding.fingerprint == fp).first()
 
                         if existing:
                             existing.last_seen = datetime.now(timezone.utc)
@@ -2808,8 +2966,7 @@ def run_misconfig_detection(
                 except Exception as exc:
                     stats["errors"] += 1
                     tenant_logger.warning(
-                        f"Control {control_id} failed on asset "
-                        f"{asset.identifier}: {exc}",
+                        f"Control {control_id} failed on asset {asset.identifier}: {exc}",
                         exc_info=True,
                     )
 
@@ -2838,10 +2995,7 @@ def run_misconfig_detection(
             auto_closed += 1
         if auto_closed:
             db.commit()
-            tenant_logger.info(
-                f"Auto-closed {auto_closed} stale misconfig findings "
-                f"not seen in current scan"
-            )
+            tenant_logger.info(f"Auto-closed {auto_closed} stale misconfig findings not seen in current scan")
         stats["findings_auto_closed"] = auto_closed
 
         tenant_logger.info(
@@ -2857,9 +3011,7 @@ def run_misconfig_detection(
         )
 
     except Exception as exc:
-        tenant_logger.error(
-            "Misconfiguration detection failed: %s", exc, exc_info=True
-        )
+        tenant_logger.error("Misconfiguration detection failed: %s", exc, exc_info=True)
         try:
             db.rollback()
         except Exception:

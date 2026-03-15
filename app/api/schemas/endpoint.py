@@ -52,9 +52,9 @@ class EndpointResponse(BaseModel):
                 "source_url": "https://api.example.com/",
                 "depth": 1,
                 "first_seen": "2024-01-10T00:00:00Z",
-                "last_seen": "2024-01-15T12:00:00Z"
+                "last_seen": "2024-01-15T12:00:00Z",
             }
-        }
+        },
     )
 
 
@@ -80,7 +80,7 @@ class EndpointListRequest(BaseModel):
                 "is_api": True,
                 "method": "GET",
                 "sort_by": "last_seen",
-                "sort_order": "desc"
+                "sort_order": "desc",
             }
         }
     )
@@ -101,25 +101,12 @@ class EndpointStatsResponse(BaseModel):
         json_schema_extra={
             "example": {
                 "total_endpoints": 12000,
-                "by_type": {
-                    "api": 2500,
-                    "form": 450,
-                    "static": 8000,
-                    "file": 350,
-                    "redirect": 500,
-                    "external": 200
-                },
-                "by_method": {
-                    "GET": 10500,
-                    "POST": 1200,
-                    "PUT": 150,
-                    "DELETE": 100,
-                    "PATCH": 50
-                },
+                "by_type": {"api": 2500, "form": 450, "static": 8000, "file": 350, "redirect": 500, "external": 200},
+                "by_method": {"GET": 10500, "POST": 1200, "PUT": 150, "DELETE": 100, "PATCH": 50},
                 "api_endpoints": 2500,
                 "external_links": 200,
                 "sensitive_endpoints": 85,
-                "average_depth": 2.3
+                "average_depth": 2.3,
             }
         }
     )
@@ -141,7 +128,7 @@ class APIEndpointSummary(BaseModel):
                 "methods": ["GET", "POST", "PUT", "DELETE"],
                 "count": 8,
                 "example_url": "https://api.example.com/v1/users",
-                "requires_auth": True
+                "requires_auth": True,
             }
         }
     )

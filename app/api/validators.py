@@ -30,8 +30,10 @@ from app.utils.validators import DomainValidator, URLValidator
 # Enums
 # ===========================
 
+
 class AssetType(str, Enum):
     """Asset types in EASM platform"""
+
     DOMAIN = "domain"
     SUBDOMAIN = "subdomain"
     IP = "ip"
@@ -41,6 +43,7 @@ class AssetType(str, Enum):
 
 class SeverityLevel(str, Enum):
     """Finding severity levels"""
+
     INFO = "info"
     LOW = "low"
     MEDIUM = "medium"
@@ -50,6 +53,7 @@ class SeverityLevel(str, Enum):
 
 class ScanStatus(str, Enum):
     """Scan status"""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -58,6 +62,7 @@ class ScanStatus(str, Enum):
 
 class UserRole(str, Enum):
     """User roles"""
+
     ADMIN = "admin"
     USER = "user"
     READ_ONLY = "read-only"
@@ -66,6 +71,7 @@ class UserRole(str, Enum):
 # ===========================
 # Base Validators
 # ===========================
+
 
 def validate_identifier(identifier: str) -> str:
     """
@@ -95,7 +101,7 @@ def validate_identifier(identifier: str) -> str:
         raise ValueError("Identifier too long (max 2048 characters)")
 
     # Try to parse as URL first
-    if identifier.startswith(('http://', 'https://')):
+    if identifier.startswith(("http://", "https://")):
         is_valid, error = URLValidator.validate_url(identifier)
         if not is_valid:
             raise ValueError(f"Invalid URL: {error}")
@@ -147,7 +153,7 @@ def sanitize_string(s: str, max_length: int = 1000) -> str:
         return ""
 
     # Remove control characters
-    s = ''.join(char for char in s if ord(char) >= 32 or char in '\n\r\t')
+    s = "".join(char for char in s if ord(char) >= 32 or char in "\n\r\t")
 
     # Truncate if too long
     if len(s) > max_length:
@@ -185,28 +191,29 @@ def validate_integer_bounds(value: int, min_val: int = 0, max_val: int = 1000000
 # Request Models
 # ===========================
 
+
 class SeedCreate(BaseModel):
     """Create seed (root domain, ASN, IP range)"""
 
     identifier: str = Field(..., min_length=1, max_length=255)
-    type: str = Field(..., regex=r'^(domain|asn|ip_range|cidr)$')
+    type: str = Field(..., regex=r"^(domain|asn|ip_range|cidr)$")
     description: Optional[str] = Field(None, max_length=1000)
     tags: Optional[List[str]] = Field(default_factory=list, max_items=20)
 
-    @validator('identifier')
+    @validator("identifier")
     def validate_identifier_field(cls, v, values):
         """Validate identifier based on type"""
-        seed_type = values.get('type')
+        seed_type = values.get("type")
 
-        if seed_type == 'domain':
+        if seed_type == "domain":
             is_valid, error = DomainValidator.validate_domain(v)
             if not is_valid:
                 raise ValueError(f"Invalid domain: {error}")
-        elif seed_type == 'asn':
+        elif seed_type == "asn":
             # Validate ASN format (ASN12345 or AS12345)
-            if not re.match(r'^AS(N)?[0-9]+$', v, re.IGNORECASE):
+            if not re.match(r"^AS(N)?[0-9]+$", v, re.IGNORECASE):
                 raise ValueError("Invalid ASN format (use ASN12345 or AS12345)")
-        elif seed_type in ['ip_range', 'cidr']:
+        elif seed_type in ["ip_range", "cidr"]:
             # Validate CIDR notation
             try:
                 network = ipaddress.ip_network(v, strict=False)
@@ -218,14 +225,14 @@ class SeedCreate(BaseModel):
 
         return v.strip().lower()
 
-    @validator('description')
+    @validator("description")
     def sanitize_description(cls, v):
         """Sanitize description"""
         if v:
             return sanitize_string(v, max_length=1000)
         return v
 
-    @validator('tags')
+    @validator("tags")
     def validate_tags(cls, v):
         """Validate and sanitize tags"""
         if not v:
@@ -241,7 +248,7 @@ class SeedCreate(BaseModel):
             if not tag or not isinstance(tag, str):
                 continue
             # Remove special characters, keep alphanumeric and hyphens
-            tag = re.sub(r'[^a-zA-Z0-9-_]', '', tag.strip())
+            tag = re.sub(r"[^a-zA-Z0-9-_]", "", tag.strip())
             if len(tag) > 50:
                 tag = tag[:50]
             if tag:
@@ -258,12 +265,12 @@ class AssetCreate(BaseModel):
     confidence: Optional[float] = Field(default=1.0, ge=0.0, le=1.0)
     metadata: Optional[dict] = Field(default_factory=dict)
 
-    @validator('identifier')
+    @validator("identifier")
     def validate_identifier_field(cls, v):
         """Validate identifier"""
         return validate_identifier(v)
 
-    @validator('metadata')
+    @validator("metadata")
     def validate_metadata(cls, v):
         """Validate metadata doesn't contain sensitive keys"""
         if not v:
@@ -274,7 +281,7 @@ class AssetCreate(BaseModel):
             raise ValueError("Metadata can have maximum 100 keys")
 
         # Check for sensitive keys (shouldn't be in metadata)
-        sensitive_keys = {'password', 'secret', 'token', 'api_key', 'private_key'}
+        sensitive_keys = {"password", "secret", "token", "api_key", "private_key"}
         for key in v.keys():
             if any(sensitive in key.lower() for sensitive in sensitive_keys):
                 raise ValueError(f"Metadata cannot contain sensitive key: {key}")
@@ -289,7 +296,7 @@ class AssetUpdate(BaseModel):
     confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
     is_active: Optional[bool] = None
 
-    @validator('metadata')
+    @validator("metadata")
     def validate_metadata(cls, v):
         """Validate metadata"""
         if v is None:
@@ -312,19 +319,19 @@ class FindingCreate(BaseModel):
     cvss_score: Optional[float] = Field(None, ge=0.0, le=10.0)
     cve_ids: Optional[List[str]] = Field(default_factory=list, max_items=50)
 
-    @validator('template_id', 'name')
+    @validator("template_id", "name")
     def sanitize_text_fields(cls, v):
         """Sanitize text fields"""
         return sanitize_string(v, max_length=500)
 
-    @validator('description', 'evidence')
+    @validator("description", "evidence")
     def sanitize_long_text_fields(cls, v):
         """Sanitize long text fields"""
         if v:
             return sanitize_string(v, max_length=10000)
         return v
 
-    @validator('cve_ids')
+    @validator("cve_ids")
     def validate_cve_ids(cls, v):
         """Validate CVE IDs"""
         if not v:
@@ -333,7 +340,7 @@ class FindingCreate(BaseModel):
         validated = []
         for cve_id in v:
             # Validate CVE format (CVE-YYYY-NNNNN)
-            if re.match(r'^CVE-\d{4}-\d{4,7}$', cve_id, re.IGNORECASE):
+            if re.match(r"^CVE-\d{4}-\d{4,7}$", cve_id, re.IGNORECASE):
                 validated.append(cve_id.upper())
             else:
                 raise ValueError(f"Invalid CVE ID format: {cve_id}")
@@ -344,18 +351,18 @@ class FindingCreate(BaseModel):
 class ScanCreate(BaseModel):
     """Create scan"""
 
-    target_type: str = Field(..., regex=r'^(tenant|asset|domain)$')
+    target_type: str = Field(..., regex=r"^(tenant|asset|domain)$")
     target_id: Union[int, str] = Field(...)
-    scan_type: str = Field(..., regex=r'^(discovery|enrichment|vulnerability)$')
+    scan_type: str = Field(..., regex=r"^(discovery|enrichment|vulnerability)$")
     priority: Optional[int] = Field(default=5, ge=1, le=10)
     options: Optional[dict] = Field(default_factory=dict)
 
-    @validator('target_id')
+    @validator("target_id")
     def validate_target_id(cls, v, values):
         """Validate target ID"""
-        target_type = values.get('target_type')
+        target_type = values.get("target_type")
 
-        if target_type in ['tenant']:
+        if target_type in ["tenant"]:
             # Must be integer
             if not isinstance(v, int):
                 raise ValueError("Tenant ID must be an integer")
@@ -369,7 +376,7 @@ class ScanCreate(BaseModel):
 
         return v
 
-    @validator('options')
+    @validator("options")
     def validate_options(cls, v):
         """Validate scan options"""
         if not v:
@@ -380,10 +387,7 @@ class ScanCreate(BaseModel):
             raise ValueError("Maximum 50 scan options allowed")
 
         # Validate specific option values
-        allowed_options = {
-            'rate_limit', 'timeout', 'depth', 'threads',
-            'follow_redirects', 'verify_ssl', 'user_agent'
-        }
+        allowed_options = {"rate_limit", "timeout", "depth", "threads", "follow_redirects", "verify_ssl", "user_agent"}
 
         for key in v.keys():
             if key not in allowed_options:
@@ -395,13 +399,13 @@ class ScanCreate(BaseModel):
 class UserCreate(BaseModel):
     """Create user"""
 
-    email: str = Field(..., regex=r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
-    username: str = Field(..., min_length=3, max_length=100, regex=r'^[a-zA-Z0-9_-]+$')
+    email: str = Field(..., regex=r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+    username: str = Field(..., min_length=3, max_length=100, regex=r"^[a-zA-Z0-9_-]+$")
     password: str = Field(..., min_length=8, max_length=128)
     full_name: Optional[str] = Field(None, max_length=255)
     role: UserRole = Field(default=UserRole.USER)
 
-    @validator('email')
+    @validator("email")
     def validate_email(cls, v):
         """Validate email"""
         v = v.strip().lower()
@@ -411,14 +415,14 @@ class UserCreate(BaseModel):
             raise ValueError("Email too long")
 
         # Block disposable email domains (optional)
-        disposable_domains = {'tempmail.com', 'guerrillamail.com', '10minutemail.com'}
-        domain = v.split('@')[1]
+        disposable_domains = {"tempmail.com", "guerrillamail.com", "10minutemail.com"}
+        domain = v.split("@")[1]
         if domain in disposable_domains:
             raise ValueError("Disposable email addresses not allowed")
 
         return v
 
-    @validator('password')
+    @validator("password")
     def validate_password(cls, v):
         """
         Validate password strength
@@ -440,24 +444,19 @@ class UserCreate(BaseModel):
         has_upper = any(c.isupper() for c in v)
         has_lower = any(c.islower() for c in v)
         has_digit = any(c.isdigit() for c in v)
-        has_special = any(c in '!@#$%^&*()_+-=[]{}|;:,.<>?' for c in v)
+        has_special = any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in v)
 
         if not (has_upper and has_lower and has_digit and has_special):
-            raise ValueError(
-                "Password must contain uppercase, lowercase, digit, and special character"
-            )
+            raise ValueError("Password must contain uppercase, lowercase, digit, and special character")
 
         # Check for common passwords (basic check)
-        common_passwords = {
-            'password', 'Password1!', 'Admin123!', 'Welcome1!',
-            'Qwerty123!', 'Abc123!@#'
-        }
+        common_passwords = {"password", "Password1!", "Admin123!", "Welcome1!", "Qwerty123!", "Abc123!@#"}
         if v in common_passwords:
             raise ValueError("Password is too common")
 
         return v
 
-    @validator('full_name')
+    @validator("full_name")
     def sanitize_full_name(cls, v):
         """Sanitize full name"""
         if v:
@@ -477,7 +476,7 @@ class PasswordChange(BaseModel):
     old_password: str = Field(..., min_length=1, max_length=128)
     new_password: str = Field(..., min_length=8, max_length=128)
 
-    @validator('new_password')
+    @validator("new_password")
     def validate_new_password(cls, v):
         """Validate new password (same rules as UserCreate)"""
         if len(v) < 8:
@@ -486,12 +485,10 @@ class PasswordChange(BaseModel):
         has_upper = any(c.isupper() for c in v)
         has_lower = any(c.islower() for c in v)
         has_digit = any(c.isdigit() for c in v)
-        has_special = any(c in '!@#$%^&*()_+-=[]{}|;:,.<>?' for c in v)
+        has_special = any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in v)
 
         if not (has_upper and has_lower and has_digit and has_special):
-            raise ValueError(
-                "Password must contain uppercase, lowercase, digit, and special character"
-            )
+            raise ValueError("Password must contain uppercase, lowercase, digit, and special character")
 
         return v
 
@@ -504,29 +501,33 @@ class APIKeyCreate(BaseModel):
     scopes: Optional[List[str]] = Field(default_factory=list, max_items=20)
     expires_days: Optional[int] = Field(None, ge=1, le=365)
 
-    @validator('name')
+    @validator("name")
     def sanitize_name(cls, v):
         """Sanitize name"""
         return sanitize_string(v, max_length=255)
 
-    @validator('description')
+    @validator("description")
     def sanitize_description(cls, v):
         """Sanitize description"""
         if v:
             return sanitize_string(v, max_length=1000)
         return v
 
-    @validator('scopes')
+    @validator("scopes")
     def validate_scopes(cls, v):
         """Validate scopes"""
         if not v:
             return []
 
         allowed_scopes = {
-            'read:assets', 'write:assets', 'delete:assets',
-            'read:findings', 'write:findings',
-            'read:scans', 'write:scans',
-            'admin'
+            "read:assets",
+            "write:assets",
+            "delete:assets",
+            "read:findings",
+            "write:findings",
+            "read:scans",
+            "write:scans",
+            "admin",
         }
 
         for scope in v:
@@ -540,18 +541,19 @@ class APIKeyCreate(BaseModel):
 # Query Parameter Models
 # ===========================
 
+
 class PaginationParams(BaseModel):
     """Pagination parameters"""
 
     limit: int = Field(default=100, ge=1, le=1000)
     offset: int = Field(default=0, ge=0)
 
-    @validator('limit')
+    @validator("limit")
     def validate_limit(cls, v):
         """Validate limit"""
         return validate_integer_bounds(v, min_val=1, max_val=1000)
 
-    @validator('offset')
+    @validator("offset")
     def validate_offset(cls, v):
         """Validate offset"""
         return validate_integer_bounds(v, min_val=0, max_val=1000000)
@@ -566,18 +568,18 @@ class AssetFilters(BaseModel):
     tags: Optional[List[str]] = Field(None, max_items=20)
     search: Optional[str] = Field(None, max_length=255)
 
-    @validator('search')
+    @validator("search")
     def sanitize_search(cls, v):
         """Sanitize search query"""
         if v:
             return sanitize_string(v, max_length=255)
         return v
 
-    @validator('tags')
+    @validator("tags")
     def sanitize_tags(cls, v):
         """Sanitize tags"""
         if v:
-            return [re.sub(r'[^a-zA-Z0-9-_]', '', tag)[:50] for tag in v]
+            return [re.sub(r"[^a-zA-Z0-9-_]", "", tag)[:50] for tag in v]
         return v
 
 
@@ -585,12 +587,12 @@ class FindingFilters(BaseModel):
     """Finding filter parameters"""
 
     severity: Optional[List[SeverityLevel]] = Field(None, max_items=5)
-    status: Optional[str] = Field(None, regex=r'^(open|suppressed|fixed)$')
+    status: Optional[str] = Field(None, regex=r"^(open|suppressed|fixed)$")
     min_cvss: Optional[float] = Field(None, ge=0.0, le=10.0)
     has_cve: Optional[bool] = None
     search: Optional[str] = Field(None, max_length=255)
 
-    @validator('search')
+    @validator("search")
     def sanitize_search(cls, v):
         """Sanitize search query"""
         if v:

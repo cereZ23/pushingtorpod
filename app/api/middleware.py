@@ -44,12 +44,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     OWASP: A05:2021 - Security Misconfiguration
     """
 
-    def __init__(
-        self,
-        app,
-        include_hsts: bool = True,
-        csp_policy: str = None
-    ):
+    def __init__(self, app, include_hsts: bool = True, csp_policy: str = None):
         """
         Initialize middleware
 
@@ -196,11 +191,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """
 
     def __init__(
-        self,
-        app,
-        log_request_body: bool = False,
-        log_response_body: bool = False,
-        slow_request_threshold: float = 5.0
+        self, app, log_request_body: bool = False, log_response_body: bool = False, slow_request_threshold: float = 5.0
     ):
         """
         Initialize middleware
@@ -241,7 +232,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 "query": query,
                 "client_ip": client_ip,
                 "user_agent": request.headers.get("user-agent", ""),
-            }
+            },
         )
 
         # Process request
@@ -269,7 +260,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 "status_code": response.status_code,
                 "duration": duration,
                 "client_ip": client_ip,
-            }
+            },
         )
 
         # Log slow requests
@@ -281,7 +272,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     "method": method,
                     "path": path,
                     "duration": duration,
-                }
+                },
             )
 
         # Add duration header for monitoring
@@ -331,7 +322,7 @@ class TrustedHostMiddleware(BaseHTTPMiddleware):
                 extra={
                     "host": host,
                     "client_ip": request.client.host if request.client else "unknown",
-                }
+                },
             )
 
             # Audit log suspicious activity
@@ -342,16 +333,12 @@ class TrustedHostMiddleware(BaseHTTPMiddleware):
                     result="blocked",
                     ip_address=request.client.host if request.client else "unknown",
                     details={"host": host, "path": request.url.path},
-                    severity="warning"
+                    severity="warning",
                 )
             except Exception as e:
                 logger.error(f"Failed to log audit event: {e}")
 
-            return Response(
-                content='{"error": "Invalid Host header"}',
-                status_code=400,
-                media_type="application/json"
-            )
+            return Response(content='{"error": "Invalid Host header"}', status_code=400, media_type="application/json")
 
         return await call_next(request)
 
@@ -366,12 +353,7 @@ class IPWhitelistMiddleware(BaseHTTPMiddleware):
         - Staging environments
     """
 
-    def __init__(
-        self,
-        app,
-        whitelist: list[str] = None,
-        path_prefixes: list[str] = None
-    ):
+    def __init__(self, app, whitelist: list[str] = None, path_prefixes: list[str] = None):
         """
         Initialize middleware
 
@@ -419,10 +401,7 @@ class IPWhitelistMiddleware(BaseHTTPMiddleware):
 
         # Check if path matches prefixes
         if self.path_prefixes:
-            path_matches = any(
-                request.url.path.startswith(prefix)
-                for prefix in self.path_prefixes
-            )
+            path_matches = any(request.url.path.startswith(prefix) for prefix in self.path_prefixes)
             if not path_matches:
                 return await call_next(request)
 
@@ -436,14 +415,10 @@ class IPWhitelistMiddleware(BaseHTTPMiddleware):
                 extra={
                     "client_ip": client_ip,
                     "path": request.url.path,
-                }
+                },
             )
 
-            return Response(
-                content='{"error": "Access denied"}',
-                status_code=403,
-                media_type="application/json"
-            )
+            return Response(content='{"error": "Access denied"}', status_code=403, media_type="application/json")
 
         return await call_next(request)
 
@@ -472,8 +447,9 @@ def register_middleware(app):
     if settings.environment == "production":
         # Extract hostnames from CORS origins (strip scheme) and add localhost for healthchecks
         from urllib.parse import urlparse
+
         parsed_hosts = []
-        for origin in (settings.cors_origins or []):
+        for origin in settings.cors_origins or []:
             parsed = urlparse(origin)
             if parsed.hostname:
                 parsed_hosts.append(parsed.hostname)
@@ -485,15 +461,9 @@ def register_middleware(app):
     # app.add_middleware(HTTPSRedirectMiddleware, enabled=True)
 
     # 4. Security headers
-    app.add_middleware(
-        SecurityHeadersMiddleware,
-        include_hsts=(settings.environment == "production")
-    )
+    app.add_middleware(SecurityHeadersMiddleware, include_hsts=(settings.environment == "production"))
 
     # 5. Request logging
-    app.add_middleware(
-        RequestLoggingMiddleware,
-        slow_request_threshold=5.0
-    )
+    app.add_middleware(RequestLoggingMiddleware, slow_request_threshold=5.0)
 
     logger.info("Registered security middleware")

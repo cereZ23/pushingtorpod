@@ -171,12 +171,7 @@ def get_finding_threat_intel(
     from app.services.threat_intel import ThreatIntelService
 
     # Verify finding belongs to tenant
-    finding = (
-        db.query(Finding)
-        .join(Asset)
-        .filter(Finding.id == finding_id, Asset.tenant_id == tenant_id)
-        .first()
-    )
+    finding = db.query(Finding).join(Asset).filter(Finding.id == finding_id, Asset.tenant_id == tenant_id).first()
 
     if not finding:
         raise HTTPException(

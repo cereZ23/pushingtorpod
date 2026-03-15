@@ -27,7 +27,7 @@ from app.api.schemas.asset import (
     AssetTreeNode,
     SeedCreate,
     SeedResponse,
-    BulkAssetCreate
+    BulkAssetCreate,
 )
 from app.api.schemas.common import BulkOperationResult
 from app.api.schemas.envelope import PaginatedEnvelope, PaginationMeta
@@ -56,7 +56,7 @@ def list_assets(
     sort_order: str = Query("desc", description="Sort order"),
     pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
+    membership=Depends(verify_tenant_access),
 ):
     """
     List assets with filtering, search, and pagination
@@ -80,10 +80,7 @@ def list_assets(
         try:
             query = query.filter(Asset.type == AssetType(asset_type))
         except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid asset type: {asset_type}"
-            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid asset type: {asset_type}")
 
     if priority:
         query = query.filter(Asset.priority == priority)
@@ -105,12 +102,7 @@ def list_assets(
         query = query.filter(Asset.risk_score <= max_risk_score)
 
     if changed_since:
-        query = query.filter(
-            or_(
-                Asset.last_seen >= changed_since,
-                Asset.last_enriched_at >= changed_since
-            )
-        )
+        query = query.filter(or_(Asset.last_seen >= changed_since, Asset.last_enriched_at >= changed_since))
 
     # Get total count before pagination
     total = query.count()
@@ -138,28 +130,28 @@ def list_assets(
         .where(Service.asset_id == Asset.id)
         .correlate(Asset)
         .scalar_subquery()
-        .label('service_count')
+        .label("service_count")
     )
     certificate_count_sq = (
         select(func.count(Certificate.id))
         .where(Certificate.asset_id == Asset.id)
         .correlate(Asset)
         .scalar_subquery()
-        .label('certificate_count')
+        .label("certificate_count")
     )
     endpoint_count_sq = (
         select(func.count(Endpoint.id))
         .where(Endpoint.asset_id == Asset.id)
         .correlate(Asset)
         .scalar_subquery()
-        .label('endpoint_count')
+        .label("endpoint_count")
     )
     finding_count_sq = (
         select(func.count(Finding.id))
         .where(Finding.asset_id == Asset.id)
         .correlate(Asset)
         .scalar_subquery()
-        .label('finding_count')
+        .label("finding_count")
     )
 
     # Execute query with counts in a single DB round-trip
@@ -173,12 +165,12 @@ def list_assets(
 
     items = []
     for row in results:
-        asset = row[0] if isinstance(row, tuple) else row.Asset if hasattr(row, 'Asset') else row
+        asset = row[0] if isinstance(row, tuple) else row.Asset if hasattr(row, "Asset") else row
         asset_dict = AssetResponse.model_validate(asset).model_dump()
-        asset_dict['service_count'] = row.service_count if hasattr(row, 'service_count') else 0
-        asset_dict['certificate_count'] = row.certificate_count if hasattr(row, 'certificate_count') else 0
-        asset_dict['endpoint_count'] = row.endpoint_count if hasattr(row, 'endpoint_count') else 0
-        asset_dict['finding_count'] = row.finding_count if hasattr(row, 'finding_count') else 0
+        asset_dict["service_count"] = row.service_count if hasattr(row, "service_count") else 0
+        asset_dict["certificate_count"] = row.certificate_count if hasattr(row, "certificate_count") else 0
+        asset_dict["endpoint_count"] = row.endpoint_count if hasattr(row, "endpoint_count") else 0
+        asset_dict["finding_count"] = row.finding_count if hasattr(row, "finding_count") else 0
         items.append(asset_dict)
 
     return PaginatedEnvelope(
@@ -193,12 +185,7 @@ def list_assets(
 
 
 @router.get("/{asset_id}", response_model=AssetDetailResponse)
-def get_asset(
-    tenant_id: int,
-    asset_id: int,
-    db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
-):
+def get_asset(tenant_id: int, asset_id: int, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)):
     """
     Get asset by ID with comprehensive EASM detail
 
@@ -218,25 +205,17 @@ def get_asset(
         - 404: Asset not found
         - 403: No access to tenant
     """
-    asset = db.query(Asset).filter(
-        Asset.id == asset_id,
-        Asset.tenant_id == tenant_id
-    ).first()
+    asset = db.query(Asset).filter(Asset.id == asset_id, Asset.tenant_id == tenant_id).first()
 
     if not asset:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Asset not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
 
     # Query certificates and endpoints directly (bypassing broken relationships)
-    certificates = db.query(Certificate).filter(
-        Certificate.asset_id == asset_id
-    ).all()
+    certificates = db.query(Certificate).filter(Certificate.asset_id == asset_id).all()
 
-    endpoints = db.query(Endpoint).filter(
-        Endpoint.asset_id == asset_id
-    ).order_by(Endpoint.last_seen.desc()).limit(100).all()
+    endpoints = (
+        db.query(Endpoint).filter(Endpoint.asset_id == asset_id).order_by(Endpoint.last_seen.desc()).limit(100).all()
+    )
 
     # Build base response
     response_data = AssetResponse.model_validate(asset).model_dump()
@@ -244,29 +223,29 @@ def get_asset(
     # ------------------------------------------------------------------ #
     # Services serialization
     # ------------------------------------------------------------------ #
-    response_data['services'] = [
+    response_data["services"] = [
         {
-            'id': s.id,
-            'asset_id': s.asset_id,
-            'port': s.port,
-            'protocol': s.protocol,
-            'product': s.product,
-            'version': s.version,
-            'tls_fingerprint': s.tls_fingerprint,
-            'http_title': s.http_title,
-            'http_status': s.http_status,
-            'technologies': s.technologies,
-            'web_server': s.web_server,
-            'has_tls': s.has_tls,
-            'tls_version': s.tls_version,
-            'http_technologies': s.http_technologies,
-            'response_time_ms': s.response_time_ms,
-            'content_length': s.content_length,
-            'redirect_url': s.redirect_url,
-            'enrichment_source': s.enrichment_source,
-            'enriched_at': s.enriched_at.isoformat() if s.enriched_at else None,
-            'first_seen': s.first_seen.isoformat() if s.first_seen else None,
-            'last_seen': s.last_seen.isoformat() if s.last_seen else None,
+            "id": s.id,
+            "asset_id": s.asset_id,
+            "port": s.port,
+            "protocol": s.protocol,
+            "product": s.product,
+            "version": s.version,
+            "tls_fingerprint": s.tls_fingerprint,
+            "http_title": s.http_title,
+            "http_status": s.http_status,
+            "technologies": s.technologies,
+            "web_server": s.web_server,
+            "has_tls": s.has_tls,
+            "tls_version": s.tls_version,
+            "http_technologies": s.http_technologies,
+            "response_time_ms": s.response_time_ms,
+            "content_length": s.content_length,
+            "redirect_url": s.redirect_url,
+            "enrichment_source": s.enrichment_source,
+            "enriched_at": s.enriched_at.isoformat() if s.enriched_at else None,
+            "first_seen": s.first_seen.isoformat() if s.first_seen else None,
+            "last_seen": s.last_seen.isoformat() if s.last_seen else None,
         }
         for s in asset.services
     ]
@@ -274,25 +253,25 @@ def get_asset(
     # ------------------------------------------------------------------ #
     # Certificates serialization (queried directly)
     # ------------------------------------------------------------------ #
-    response_data['certificates'] = [
+    response_data["certificates"] = [
         {
-            'id': c.id,
-            'subject_cn': c.subject_cn,
-            'issuer': c.issuer,
-            'serial_number': c.serial_number,
-            'not_before': c.not_before.isoformat() if c.not_before else None,
-            'not_after': c.not_after.isoformat() if c.not_after else None,
-            'is_expired': c.is_expired,
-            'days_until_expiry': c.days_until_expiry,
-            'san_domains': c.san_domains,
-            'signature_algorithm': c.signature_algorithm,
-            'public_key_algorithm': c.public_key_algorithm,
-            'public_key_bits': c.public_key_bits,
-            'is_self_signed': c.is_self_signed,
-            'is_wildcard': c.is_wildcard,
-            'has_weak_signature': c.has_weak_signature,
-            'first_seen': c.first_seen.isoformat() if c.first_seen else None,
-            'last_seen': c.last_seen.isoformat() if c.last_seen else None,
+            "id": c.id,
+            "subject_cn": c.subject_cn,
+            "issuer": c.issuer,
+            "serial_number": c.serial_number,
+            "not_before": c.not_before.isoformat() if c.not_before else None,
+            "not_after": c.not_after.isoformat() if c.not_after else None,
+            "is_expired": c.is_expired,
+            "days_until_expiry": c.days_until_expiry,
+            "san_domains": c.san_domains,
+            "signature_algorithm": c.signature_algorithm,
+            "public_key_algorithm": c.public_key_algorithm,
+            "public_key_bits": c.public_key_bits,
+            "is_self_signed": c.is_self_signed,
+            "is_wildcard": c.is_wildcard,
+            "has_weak_signature": c.has_weak_signature,
+            "first_seen": c.first_seen.isoformat() if c.first_seen else None,
+            "last_seen": c.last_seen.isoformat() if c.last_seen else None,
         }
         for c in certificates
     ]
@@ -300,18 +279,18 @@ def get_asset(
     # ------------------------------------------------------------------ #
     # Endpoints serialization (queried directly, max 100)
     # ------------------------------------------------------------------ #
-    response_data['endpoints'] = [
+    response_data["endpoints"] = [
         {
-            'id': e.id,
-            'url': e.url,
-            'path': e.path,
-            'method': e.method,
-            'status_code': e.status_code,
-            'content_type': e.content_type,
-            'endpoint_type': e.endpoint_type,
-            'is_api': e.is_api,
-            'is_external': e.is_external,
-            'depth': e.depth,
+            "id": e.id,
+            "url": e.url,
+            "path": e.path,
+            "method": e.method,
+            "status_code": e.status_code,
+            "content_type": e.content_type,
+            "endpoint_type": e.endpoint_type,
+            "is_api": e.is_api,
+            "is_external": e.is_external,
+            "depth": e.depth,
         }
         for e in endpoints
     ]
@@ -319,24 +298,24 @@ def get_asset(
     # ------------------------------------------------------------------ #
     # Findings serialization (with fingerprint + occurrence_count)
     # ------------------------------------------------------------------ #
-    response_data['findings'] = [
+    response_data["findings"] = [
         {
-            'id': f.id,
-            'asset_id': f.asset_id,
-            'source': f.source,
-            'template_id': f.template_id,
-            'name': f.name,
-            'severity': f.severity.value if hasattr(f.severity, 'value') else str(f.severity),
-            'cvss_score': f.cvss_score,
-            'cve_id': f.cve_id,
-            'status': f.status.value if hasattr(f.status, 'value') else str(f.status),
-            'matched_at': f.matched_at,
-            'host': f.host,
-            'matcher_name': f.matcher_name,
-            'fingerprint': f.fingerprint,
-            'occurrence_count': f.occurrence_count,
-            'first_seen': f.first_seen.isoformat() if f.first_seen else None,
-            'last_seen': f.last_seen.isoformat() if f.last_seen else None,
+            "id": f.id,
+            "asset_id": f.asset_id,
+            "source": f.source,
+            "template_id": f.template_id,
+            "name": f.name,
+            "severity": f.severity.value if hasattr(f.severity, "value") else str(f.severity),
+            "cvss_score": f.cvss_score,
+            "cve_id": f.cve_id,
+            "status": f.status.value if hasattr(f.status, "value") else str(f.status),
+            "matched_at": f.matched_at,
+            "host": f.host,
+            "matcher_name": f.matcher_name,
+            "fingerprint": f.fingerprint,
+            "occurrence_count": f.occurrence_count,
+            "first_seen": f.first_seen.isoformat() if f.first_seen else None,
+            "last_seen": f.last_seen.isoformat() if f.last_seen else None,
         }
         for f in asset.findings
     ]
@@ -344,13 +323,13 @@ def get_asset(
     # ------------------------------------------------------------------ #
     # Events serialization (last 50 by created_at desc)
     # ------------------------------------------------------------------ #
-    response_data['events'] = [
+    response_data["events"] = [
         {
-            'id': e.id,
-            'asset_id': e.asset_id,
-            'kind': e.kind.value if hasattr(e.kind, 'value') else str(e.kind),
-            'payload': e.payload,
-            'created_at': e.created_at.isoformat() if e.created_at else None,
+            "id": e.id,
+            "asset_id": e.asset_id,
+            "kind": e.kind.value if hasattr(e.kind, "value") else str(e.kind),
+            "payload": e.payload,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
         }
         for e in sorted(asset.events, key=lambda e: e.created_at, reverse=True)[:50]
     ]
@@ -374,7 +353,7 @@ def get_asset(
         if s.web_server:
             tech_stack.add(s.web_server)
 
-    response_data['tech_stack'] = sorted(tech_stack)
+    response_data["tech_stack"] = sorted(tech_stack)
 
     # ------------------------------------------------------------------ #
     # HTTP response info (only services with HTTP data)
@@ -394,61 +373,57 @@ def get_asset(
             if s.http_technologies and isinstance(s.http_technologies, list):
                 svc_techs.extend(str(t) for t in s.http_technologies)
 
-            http_info_list.append({
-                'port': s.port,
-                'title': s.http_title,
-                'status_code': s.http_status,
-                'web_server': s.web_server,
-                'technologies': svc_techs,
-                'response_time_ms': s.response_time_ms,
-                'redirect_url': s.redirect_url,
-                'has_tls': s.has_tls,
-                'tls_version': s.tls_version,
-            })
-    response_data['http_info'] = http_info_list
+            http_info_list.append(
+                {
+                    "port": s.port,
+                    "title": s.http_title,
+                    "status_code": s.http_status,
+                    "web_server": s.web_server,
+                    "technologies": svc_techs,
+                    "response_time_ms": s.response_time_ms,
+                    "redirect_url": s.redirect_url,
+                    "has_tls": s.has_tls,
+                    "tls_version": s.tls_version,
+                }
+            )
+    response_data["http_info"] = http_info_list
 
     # ------------------------------------------------------------------ #
     # DNS / Network intelligence
     # ------------------------------------------------------------------ #
     dns_info = _build_dns_info(asset)
-    response_data['dns_info'] = dns_info
+    response_data["dns_info"] = dns_info
 
     # ------------------------------------------------------------------ #
     # Summary statistics
     # ------------------------------------------------------------------ #
     severity_counts: dict[str, int] = {}
     for f in asset.findings:
-        sev = f.severity.value if hasattr(f.severity, 'value') else str(f.severity)
+        sev = f.severity.value if hasattr(f.severity, "value") else str(f.severity)
         severity_counts[sev] = severity_counts.get(sev, 0) + 1
 
     open_findings = sum(
-        1 for f in asset.findings
-        if (f.status.value if hasattr(f.status, 'value') else str(f.status)) == 'open'
+        1 for f in asset.findings if (f.status.value if hasattr(f.status, "value") else str(f.status)) == "open"
     )
 
-    open_ports = sorted(set(
-        s.port for s in asset.services if s.port is not None
-    ))
+    open_ports = sorted(set(s.port for s in asset.services if s.port is not None))
 
-    response_data['summary'] = {
-        'total_services': len(asset.services),
-        'total_findings': len(asset.findings),
-        'total_certificates': len(certificates),
-        'total_endpoints': len(endpoints),
-        'open_ports': open_ports,
-        'has_tls': any(s.has_tls for s in asset.services),
-        'has_http': any(
-            s.port in (80, 443, 8080, 8443)
-            for s in asset.services if s.port is not None
-        ),
-        'severity_breakdown': severity_counts,
-        'open_findings': open_findings,
+    response_data["summary"] = {
+        "total_services": len(asset.services),
+        "total_findings": len(asset.findings),
+        "total_certificates": len(certificates),
+        "total_endpoints": len(endpoints),
+        "open_ports": open_ports,
+        "has_tls": any(s.has_tls for s in asset.services),
+        "has_http": any(s.port in (80, 443, 8080, 8443) for s in asset.services if s.port is not None),
+        "severity_breakdown": severity_counts,
+        "open_findings": open_findings,
     }
 
     # ------------------------------------------------------------------ #
     # SERVICE-type asset: resolve parent and inherit data
     # ------------------------------------------------------------------ #
-    if asset.type and asset.type.value == 'service' and not response_data['services']:
+    if asset.type and asset.type.value == "service" and not response_data["services"]:
         _enrich_service_asset(asset, db, response_data)
 
     return response_data
@@ -461,13 +436,13 @@ def _enrich_service_asset(asset: Asset, db: Session, response_data: dict) -> Non
 
     Modifies response_data in place.
     """
-    identifier = asset.identifier or ''
+    identifier = asset.identifier or ""
 
     # Parse hostname and port from identifier (e.g. "host.example.com:5269")
-    if ':' in identifier:
-        hostname = identifier.rsplit(':', 1)[0]
+    if ":" in identifier:
+        hostname = identifier.rsplit(":", 1)[0]
         try:
-            target_port = int(identifier.rsplit(':', 1)[1])
+            target_port = int(identifier.rsplit(":", 1)[1])
         except ValueError:
             target_port = None
     else:
@@ -475,22 +450,26 @@ def _enrich_service_asset(asset: Asset, db: Session, response_data: dict) -> Non
         target_port = None
 
     # Find parent asset (subdomain, domain, or IP matching hostname)
-    parent = db.query(Asset).filter(
-        Asset.tenant_id == asset.tenant_id,
-        Asset.identifier == hostname,
-        Asset.type.in_([AssetType.SUBDOMAIN, AssetType.DOMAIN, AssetType.IP]),
-    ).first()
+    parent = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == asset.tenant_id,
+            Asset.identifier == hostname,
+            Asset.type.in_([AssetType.SUBDOMAIN, AssetType.DOMAIN, AssetType.IP]),
+        )
+        .first()
+    )
 
     if not parent:
         return
 
     # Add parent_asset reference
-    response_data['parent_asset'] = {
-        'id': parent.id,
-        'identifier': parent.identifier,
-        'type': parent.type.value if hasattr(parent.type, 'value') else str(parent.type),
-        'risk_score': parent.risk_score,
-        'is_active': parent.is_active,
+    response_data["parent_asset"] = {
+        "id": parent.id,
+        "identifier": parent.identifier,
+        "type": parent.type.value if hasattr(parent.type, "value") else str(parent.type),
+        "risk_score": parent.risk_score,
+        "is_active": parent.is_active,
     }
 
     # Pull the matching service from the parent
@@ -501,49 +480,49 @@ def _enrich_service_asset(asset: Asset, db: Session, response_data: dict) -> Non
             break
 
     if matching_service:
-        response_data['services'] = [{
-            'id': matching_service.id,
-            'asset_id': matching_service.asset_id,
-            'port': matching_service.port,
-            'protocol': matching_service.protocol,
-            'product': matching_service.product,
-            'version': matching_service.version,
-            'tls_fingerprint': matching_service.tls_fingerprint,
-            'http_title': matching_service.http_title,
-            'http_status': matching_service.http_status,
-            'technologies': matching_service.technologies,
-            'web_server': matching_service.web_server,
-            'has_tls': matching_service.has_tls,
-            'tls_version': matching_service.tls_version,
-            'http_technologies': matching_service.http_technologies,
-            'response_time_ms': matching_service.response_time_ms,
-            'content_length': matching_service.content_length,
-            'redirect_url': matching_service.redirect_url,
-            'enrichment_source': matching_service.enrichment_source,
-            'enriched_at': matching_service.enriched_at.isoformat() if matching_service.enriched_at else None,
-            'first_seen': matching_service.first_seen.isoformat() if matching_service.first_seen else None,
-            'last_seen': matching_service.last_seen.isoformat() if matching_service.last_seen else None,
-        }]
+        response_data["services"] = [
+            {
+                "id": matching_service.id,
+                "asset_id": matching_service.asset_id,
+                "port": matching_service.port,
+                "protocol": matching_service.protocol,
+                "product": matching_service.product,
+                "version": matching_service.version,
+                "tls_fingerprint": matching_service.tls_fingerprint,
+                "http_title": matching_service.http_title,
+                "http_status": matching_service.http_status,
+                "technologies": matching_service.technologies,
+                "web_server": matching_service.web_server,
+                "has_tls": matching_service.has_tls,
+                "tls_version": matching_service.tls_version,
+                "http_technologies": matching_service.http_technologies,
+                "response_time_ms": matching_service.response_time_ms,
+                "content_length": matching_service.content_length,
+                "redirect_url": matching_service.redirect_url,
+                "enrichment_source": matching_service.enrichment_source,
+                "enriched_at": matching_service.enriched_at.isoformat() if matching_service.enriched_at else None,
+                "first_seen": matching_service.first_seen.isoformat() if matching_service.first_seen else None,
+                "last_seen": matching_service.last_seen.isoformat() if matching_service.last_seen else None,
+            }
+        ]
 
     # Pull parent's certificates
-    parent_certs = db.query(Certificate).filter(
-        Certificate.asset_id == parent.id
-    ).all()
+    parent_certs = db.query(Certificate).filter(Certificate.asset_id == parent.id).all()
     if parent_certs:
-        response_data['certificates'] = [
+        response_data["certificates"] = [
             {
-                'id': c.id,
-                'subject_cn': c.subject_cn,
-                'issuer': c.issuer,
-                'serial_number': c.serial_number,
-                'not_before': c.not_before.isoformat() if c.not_before else None,
-                'not_after': c.not_after.isoformat() if c.not_after else None,
-                'is_expired': c.is_expired,
-                'days_until_expiry': c.days_until_expiry,
-                'san_domains': c.san_domains,
-                'is_self_signed': c.is_self_signed,
-                'is_wildcard': c.is_wildcard,
-                'has_weak_signature': c.has_weak_signature,
+                "id": c.id,
+                "subject_cn": c.subject_cn,
+                "issuer": c.issuer,
+                "serial_number": c.serial_number,
+                "not_before": c.not_before.isoformat() if c.not_before else None,
+                "not_after": c.not_after.isoformat() if c.not_after else None,
+                "is_expired": c.is_expired,
+                "days_until_expiry": c.days_until_expiry,
+                "san_domains": c.san_domains,
+                "is_self_signed": c.is_self_signed,
+                "is_wildcard": c.is_wildcard,
+                "has_weak_signature": c.has_weak_signature,
             }
             for c in parent_certs
         ]
@@ -551,30 +530,30 @@ def _enrich_service_asset(asset: Asset, db: Session, response_data: dict) -> Non
     # Pull parent's findings
     parent_findings = list(parent.findings)
     if parent_findings:
-        response_data['findings'] = [
+        response_data["findings"] = [
             {
-                'id': f.id,
-                'asset_id': f.asset_id,
-                'source': f.source,
-                'template_id': f.template_id,
-                'name': f.name,
-                'severity': f.severity.value if hasattr(f.severity, 'value') else str(f.severity),
-                'cvss_score': f.cvss_score,
-                'cve_id': f.cve_id,
-                'status': f.status.value if hasattr(f.status, 'value') else str(f.status),
-                'matched_at': f.matched_at,
-                'host': f.host,
-                'matcher_name': f.matcher_name,
-                'fingerprint': f.fingerprint,
-                'occurrence_count': f.occurrence_count,
-                'first_seen': f.first_seen.isoformat() if f.first_seen else None,
-                'last_seen': f.last_seen.isoformat() if f.last_seen else None,
+                "id": f.id,
+                "asset_id": f.asset_id,
+                "source": f.source,
+                "template_id": f.template_id,
+                "name": f.name,
+                "severity": f.severity.value if hasattr(f.severity, "value") else str(f.severity),
+                "cvss_score": f.cvss_score,
+                "cve_id": f.cve_id,
+                "status": f.status.value if hasattr(f.status, "value") else str(f.status),
+                "matched_at": f.matched_at,
+                "host": f.host,
+                "matcher_name": f.matcher_name,
+                "fingerprint": f.fingerprint,
+                "occurrence_count": f.occurrence_count,
+                "first_seen": f.first_seen.isoformat() if f.first_seen else None,
+                "last_seen": f.last_seen.isoformat() if f.last_seen else None,
             }
             for f in parent_findings
         ]
 
     # Pull DNS info from parent
-    response_data['dns_info'] = _build_dns_info(parent)
+    response_data["dns_info"] = _build_dns_info(parent)
 
     # Pull tech stack from parent services
     parent_tech: set[str] = set()
@@ -590,39 +569,34 @@ def _enrich_service_asset(asset: Asset, db: Session, response_data: dict) -> Non
             parent_tech.update(str(t) for t in s.http_technologies)
         if s.web_server:
             parent_tech.add(s.web_server)
-    response_data['tech_stack'] = sorted(parent_tech)
+    response_data["tech_stack"] = sorted(parent_tech)
 
     # Recalculate summary with parent data
-    svc_list = response_data.get('services', [])
-    find_list = response_data.get('findings', [])
-    cert_list = response_data.get('certificates', [])
+    svc_list = response_data.get("services", [])
+    find_list = response_data.get("findings", [])
+    cert_list = response_data.get("certificates", [])
 
-    parent_open_ports = sorted(set(
-        s.port for s in parent.services if s.port is not None
-    ))
+    parent_open_ports = sorted(set(s.port for s in parent.services if s.port is not None))
 
     parent_severity_counts: dict[str, int] = {}
     parent_open_findings = 0
     for f in parent_findings:
-        sev = f.severity.value if hasattr(f.severity, 'value') else str(f.severity)
+        sev = f.severity.value if hasattr(f.severity, "value") else str(f.severity)
         parent_severity_counts[sev] = parent_severity_counts.get(sev, 0) + 1
-        st = f.status.value if hasattr(f.status, 'value') else str(f.status)
-        if st == 'open':
+        st = f.status.value if hasattr(f.status, "value") else str(f.status)
+        if st == "open":
             parent_open_findings += 1
 
-    response_data['summary'] = {
-        'total_services': len(parent.services),
-        'total_findings': len(parent_findings),
-        'total_certificates': len(cert_list),
-        'total_endpoints': 0,
-        'open_ports': parent_open_ports,
-        'has_tls': any(s.has_tls for s in parent.services),
-        'has_http': any(
-            s.port in (80, 443, 8080, 8443)
-            for s in parent.services if s.port is not None
-        ),
-        'severity_breakdown': parent_severity_counts,
-        'open_findings': parent_open_findings,
+    response_data["summary"] = {
+        "total_services": len(parent.services),
+        "total_findings": len(parent_findings),
+        "total_certificates": len(cert_list),
+        "total_endpoints": 0,
+        "open_ports": parent_open_ports,
+        "has_tls": any(s.has_tls for s in parent.services),
+        "has_http": any(s.port in (80, 443, 8080, 8443) for s in parent.services if s.port is not None),
+        "severity_breakdown": parent_severity_counts,
+        "open_findings": parent_open_findings,
     }
 
 
@@ -635,12 +609,12 @@ def _build_dns_info(asset: Asset) -> dict:
     heuristics like cloud provider detection by IP range patterns.
     """
     dns_info: dict = {
-        'resolved_ips': [],
-        'reverse_dns': None,
-        'whois_summary': None,
-        'asn_info': None,
-        'geo_info': None,
-        'cloud_provider': None,
+        "resolved_ips": [],
+        "reverse_dns": None,
+        "whois_summary": None,
+        "asn_info": None,
+        "geo_info": None,
+        "cloud_provider": None,
     }
 
     # Parse raw_metadata safely
@@ -652,64 +626,61 @@ def _build_dns_info(asset: Asset) -> dict:
             raw_meta = {}
 
     # Resolved IPs: from raw_metadata or from asset identifier if type is IP
-    resolved_ips = raw_meta.get('resolved_ips') or raw_meta.get('a_records') or []
-    if not resolved_ips and asset.type and asset.type.value == 'ip':
+    resolved_ips = raw_meta.get("resolved_ips") or raw_meta.get("a_records") or []
+    if not resolved_ips and asset.type and asset.type.value == "ip":
         resolved_ips = [asset.identifier]
     # Also gather IPs from services with numeric identifiers or metadata
     if not resolved_ips:
         for s in asset.services:
-            if s.product and s.product.startswith(('ip:', 'IP:')):
-                resolved_ips.append(s.product.split(':', 1)[1].strip())
-    dns_info['resolved_ips'] = list(set(resolved_ips))
+            if s.product and s.product.startswith(("ip:", "IP:")):
+                resolved_ips.append(s.product.split(":", 1)[1].strip())
+    dns_info["resolved_ips"] = list(set(resolved_ips))
 
     # Network enrichment data (GeoIP, rDNS, ASN — from Phase 1c)
-    network = raw_meta.get('network') or {}
+    network = raw_meta.get("network") or {}
 
     # Reverse DNS from network enrichment or legacy keys
-    dns_info['reverse_dns'] = (
-        network.get('reverse_dns')
-        or raw_meta.get('rdns')
-        or raw_meta.get('reverse_dns')
-        or raw_meta.get('ptr')
+    dns_info["reverse_dns"] = (
+        network.get("reverse_dns") or raw_meta.get("rdns") or raw_meta.get("reverse_dns") or raw_meta.get("ptr")
     )
 
     # Resolved IPs: also use network.ip if available
-    if not dns_info['resolved_ips'] and network.get('ip'):
-        dns_info['resolved_ips'] = [network['ip']]
+    if not dns_info["resolved_ips"] and network.get("ip"):
+        dns_info["resolved_ips"] = [network["ip"]]
 
     # WHOIS summary
-    whois = raw_meta.get('whois') or raw_meta.get('whois_summary')
+    whois = raw_meta.get("whois") or raw_meta.get("whois_summary")
     if whois:
-        dns_info['whois_summary'] = whois
+        dns_info["whois_summary"] = whois
 
     # ASN info (from network enrichment or legacy keys)
-    asn = raw_meta.get('asn') or raw_meta.get('asn_info')
-    if not asn and network.get('asn'):
+    asn = raw_meta.get("asn") or raw_meta.get("asn_info")
+    if not asn and network.get("asn"):
         asn = {
-            'asn': network.get('asn'),
-            'org': network.get('asn_org'),
-            'country': network.get('country'),
+            "asn": network.get("asn"),
+            "org": network.get("asn_org"),
+            "country": network.get("country"),
         }
     if asn:
-        dns_info['asn_info'] = asn
+        dns_info["asn_info"] = asn
 
     # GeoIP info (country, city, lat/lon, ISP — from MaxMind GeoLite2)
-    if network.get('country') or network.get('lat'):
-        dns_info['geo_info'] = {
-            'country': network.get('country'),
-            'country_code': network.get('country_code'),
-            'region': network.get('region'),
-            'city': network.get('city'),
-            'lat': network.get('lat'),
-            'lon': network.get('lon'),
-            'isp': network.get('isp'),
+    if network.get("country") or network.get("lat"):
+        dns_info["geo_info"] = {
+            "country": network.get("country"),
+            "country_code": network.get("country_code"),
+            "region": network.get("region"),
+            "city": network.get("city"),
+            "lat": network.get("lat"),
+            "lon": network.get("lon"),
+            "isp": network.get("isp"),
         }
 
     # Cloud provider detection from raw_metadata or heuristic on IPs
-    cloud = raw_meta.get('cloud_provider') or raw_meta.get('cdn')
+    cloud = raw_meta.get("cloud_provider") or raw_meta.get("cdn")
     if not cloud:
-        cloud = _detect_cloud_provider(dns_info['resolved_ips'], asset)
-    dns_info['cloud_provider'] = cloud
+        cloud = _detect_cloud_provider(dns_info["resolved_ips"], asset)
+    dns_info["cloud_provider"] = cloud
 
     return dns_info
 
@@ -718,11 +689,28 @@ def _build_dns_info(asset: Asset) -> dict:
 # This is intentionally simplified; production systems would use MaxMind or
 # cloud provider IP range JSON feeds.
 _CLOUD_HINTS: dict[str, list[str]] = {
-    'AWS': ['3.', '13.', '15.', '18.', '34.', '35.', '44.', '46.', '50.', '52.', '54.', '99.', '100.'],
-    'GCP': ['34.', '35.', '104.', '108.', '142.'],
-    'Azure': ['13.', '20.', '23.', '40.', '51.', '52.', '65.', '104.'],
-    'Cloudflare': ['104.16.', '104.17.', '104.18.', '104.19.', '104.20.', '104.21.', '104.22.', '104.23.', '104.24.', '104.25.', '172.64.', '172.65.', '172.66.', '172.67.', '162.158.', '141.101.'],
-    'Akamai': ['23.', '104.', '184.'],
+    "AWS": ["3.", "13.", "15.", "18.", "34.", "35.", "44.", "46.", "50.", "52.", "54.", "99.", "100."],
+    "GCP": ["34.", "35.", "104.", "108.", "142."],
+    "Azure": ["13.", "20.", "23.", "40.", "51.", "52.", "65.", "104."],
+    "Cloudflare": [
+        "104.16.",
+        "104.17.",
+        "104.18.",
+        "104.19.",
+        "104.20.",
+        "104.21.",
+        "104.22.",
+        "104.23.",
+        "104.24.",
+        "104.25.",
+        "172.64.",
+        "172.65.",
+        "172.66.",
+        "172.67.",
+        "162.158.",
+        "141.101.",
+    ],
+    "Akamai": ["23.", "104.", "184."],
 }
 
 
@@ -735,27 +723,27 @@ def _detect_cloud_provider(ips: list[str], asset: Asset) -> Optional[str]:
     """
     # Check service headers first (most reliable signal)
     for s in asset.services:
-        headers = s.http_headers if hasattr(s, 'http_headers') and s.http_headers else {}
+        headers = s.http_headers if hasattr(s, "http_headers") and s.http_headers else {}
         if isinstance(headers, dict):
-            header_str = ' '.join(str(v) for v in headers.values()).lower()
-            if 'cloudflare' in header_str:
-                return 'Cloudflare'
-            if 'akamai' in header_str or 'akamaighost' in header_str:
-                return 'Akamai'
-            if 'amazons3' in header_str or 'cloudfront' in header_str or 'awselb' in header_str:
-                return 'AWS'
-            if 'gws' in header_str or 'google' in header_str:
-                return 'GCP'
-            if 'microsoft' in header_str or 'azure' in header_str:
-                return 'Azure'
+            header_str = " ".join(str(v) for v in headers.values()).lower()
+            if "cloudflare" in header_str:
+                return "Cloudflare"
+            if "akamai" in header_str or "akamaighost" in header_str:
+                return "Akamai"
+            if "amazons3" in header_str or "cloudfront" in header_str or "awselb" in header_str:
+                return "AWS"
+            if "gws" in header_str or "google" in header_str:
+                return "GCP"
+            if "microsoft" in header_str or "azure" in header_str:
+                return "Azure"
 
         # Also check web_server field
         if s.web_server:
             ws = s.web_server.lower()
-            if 'cloudflare' in ws:
-                return 'Cloudflare'
-            if 'akamai' in ws:
-                return 'Akamai'
+            if "cloudflare" in ws:
+                return "Cloudflare"
+            if "akamai" in ws:
+                return "Akamai"
 
     # Fallback: match on IP prefixes (Cloudflare first because its prefixes
     # are more specific and overlap with generic cloud ranges)
@@ -763,14 +751,14 @@ def _detect_cloud_provider(ips: list[str], asset: Asset) -> Optional[str]:
         if not ip:
             continue
         # Check Cloudflare first (more specific prefixes)
-        for prefix in _CLOUD_HINTS.get('Cloudflare', []):
+        for prefix in _CLOUD_HINTS.get("Cloudflare", []):
             if ip.startswith(prefix):
-                return 'Cloudflare'
-        for prefix in _CLOUD_HINTS.get('Akamai', []):
+                return "Cloudflare"
+        for prefix in _CLOUD_HINTS.get("Akamai", []):
             if ip.startswith(prefix):
                 # Akamai prefixes are broad; only match if not already matched
                 pass
-        for provider in ('AWS', 'GCP', 'Azure'):
+        for provider in ("AWS", "GCP", "Azure"):
             for prefix in _CLOUD_HINTS.get(provider, []):
                 if ip.startswith(prefix):
                     return provider
@@ -780,10 +768,7 @@ def _detect_cloud_provider(ips: list[str], asset: Asset) -> Optional[str]:
 
 @router.post("", response_model=AssetResponse, status_code=status.HTTP_201_CREATED)
 def create_asset(
-    tenant_id: int,
-    asset_data: AssetCreate,
-    db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
+    tenant_id: int, asset_data: AssetCreate, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)
 ):
     """
     Create new asset
@@ -796,30 +781,28 @@ def create_asset(
     """
     # Verify write permission
     if not membership.has_permission("write"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Write permission required"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Write permission required")
 
     # Check if asset already exists
-    existing = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.identifier == asset_data.identifier,
-        Asset.type == AssetType(asset_data.type)
-    ).first()
+    existing = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.identifier == asset_data.identifier,
+            Asset.type == AssetType(asset_data.type),
+        )
+        .first()
+    )
 
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Asset already exists"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Asset already exists")
 
     # Create asset
     asset = Asset(
         tenant_id=tenant_id,
         type=AssetType(asset_data.type),
         identifier=asset_data.identifier,
-        priority=asset_data.priority or "normal"
+        priority=asset_data.priority or "normal",
     )
 
     db.add(asset)
@@ -827,9 +810,15 @@ def create_asset(
     db.refresh(asset)
 
     log_data_modification(
-        action="create", resource="asset", resource_id=str(asset.id),
-        user_id=membership.user_id, tenant_id=tenant_id,
-        details={"identifier": asset.identifier, "type": asset.type.value if hasattr(asset.type, 'value') else str(asset.type)},
+        action="create",
+        resource="asset",
+        resource_id=str(asset.id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        details={
+            "identifier": asset.identifier,
+            "type": asset.type.value if hasattr(asset.type, "value") else str(asset.type),
+        },
     )
 
     logger.info(f"Created asset {asset.identifier} for tenant {tenant_id}")
@@ -843,7 +832,7 @@ def update_asset(
     asset_id: int,
     updates: AssetUpdate,
     db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
+    membership=Depends(verify_tenant_access),
 ):
     """
     Update asset
@@ -856,21 +845,12 @@ def update_asset(
     """
     # Verify write permission
     if not membership.has_permission("write"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Write permission required"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Write permission required")
 
-    asset = db.query(Asset).filter(
-        Asset.id == asset_id,
-        Asset.tenant_id == tenant_id
-    ).first()
+    asset = db.query(Asset).filter(Asset.id == asset_id, Asset.tenant_id == tenant_id).first()
 
     if not asset:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Asset not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
 
     # Apply updates
     if updates.priority is not None:
@@ -885,8 +865,11 @@ def update_asset(
     db.refresh(asset)
 
     log_data_modification(
-        action="update", resource="asset", resource_id=str(asset_id),
-        user_id=membership.user_id, tenant_id=tenant_id,
+        action="update",
+        resource="asset",
+        resource_id=str(asset_id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
     )
 
     logger.info(f"Updated asset {asset.identifier}")
@@ -896,10 +879,7 @@ def update_asset(
 
 @router.delete("/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_asset(
-    tenant_id: int,
-    asset_id: int,
-    db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
+    tenant_id: int, asset_id: int, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)
 ):
     """
     Delete asset (soft delete - mark as inactive)
@@ -910,40 +890,30 @@ def delete_asset(
     """
     # Verify write permission
     if not membership.has_permission("write"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Write permission required"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Write permission required")
 
-    asset = db.query(Asset).filter(
-        Asset.id == asset_id,
-        Asset.tenant_id == tenant_id
-    ).first()
+    asset = db.query(Asset).filter(Asset.id == asset_id, Asset.tenant_id == tenant_id).first()
 
     if not asset:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Asset not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
 
     # Soft delete
     asset.is_active = False
     db.commit()
 
     log_data_modification(
-        action="delete", resource="asset", resource_id=str(asset_id),
-        user_id=membership.user_id, tenant_id=tenant_id,
+        action="delete",
+        resource="asset",
+        resource_id=str(asset_id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
     )
 
     logger.info(f"Deleted asset {asset.identifier}")
 
 
 @router.get("/tree", response_model=List[AssetTreeNode])
-def get_asset_tree(
-    tenant_id: int,
-    db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
-):
+def get_asset_tree(tenant_id: int, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)):
     """
     Get hierarchical asset tree
 
@@ -953,11 +923,11 @@ def get_asset_tree(
     Useful for visualization and navigation
     """
     # Get all domains
-    domains = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.type == AssetType.DOMAIN,
-        Asset.is_active == True
-    ).all()
+    domains = (
+        db.query(Asset)
+        .filter(Asset.tenant_id == tenant_id, Asset.type == AssetType.DOMAIN, Asset.is_active == True)
+        .all()
+    )
 
     tree = []
 
@@ -965,17 +935,18 @@ def get_asset_tree(
         domain_node = _build_asset_node(domain, db)
 
         # Get subdomains
-        subdomains = db.query(Asset).filter(
-            Asset.tenant_id == tenant_id,
-            Asset.type == AssetType.SUBDOMAIN,
-            Asset.identifier.like(f"%.{domain.identifier}"),
-            Asset.is_active == True
-        ).all()
+        subdomains = (
+            db.query(Asset)
+            .filter(
+                Asset.tenant_id == tenant_id,
+                Asset.type == AssetType.SUBDOMAIN,
+                Asset.identifier.like(f"%.{domain.identifier}"),
+                Asset.is_active == True,
+            )
+            .all()
+        )
 
-        domain_node['children'] = [
-            _build_asset_node(subdomain, db)
-            for subdomain in subdomains
-        ]
+        domain_node["children"] = [_build_asset_node(subdomain, db) for subdomain in subdomains]
 
         tree.append(domain_node)
 
@@ -984,10 +955,7 @@ def get_asset_tree(
 
 @router.post("/bulk", response_model=BulkOperationResult)
 def bulk_create_assets(
-    tenant_id: int,
-    bulk_data: BulkAssetCreate,
-    db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
+    tenant_id: int, bulk_data: BulkAssetCreate, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)
 ):
     """
     Bulk create assets
@@ -1000,10 +968,7 @@ def bulk_create_assets(
     """
     # Verify write permission
     if not membership.has_permission("write"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Write permission required"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Write permission required")
 
     success_count = 0
     failure_count = 0
@@ -1012,11 +977,15 @@ def bulk_create_assets(
     for asset_data in bulk_data.assets:
         try:
             # Check if exists
-            existing = db.query(Asset).filter(
-                Asset.tenant_id == tenant_id,
-                Asset.identifier == asset_data.identifier,
-                Asset.type == AssetType(asset_data.type)
-            ).first()
+            existing = (
+                db.query(Asset)
+                .filter(
+                    Asset.tenant_id == tenant_id,
+                    Asset.identifier == asset_data.identifier,
+                    Asset.type == AssetType(asset_data.type),
+                )
+                .first()
+            )
 
             if existing:
                 errors.append(f"Asset '{asset_data.identifier}' already exists")
@@ -1028,7 +997,7 @@ def bulk_create_assets(
                 tenant_id=tenant_id,
                 type=AssetType(asset_data.type),
                 identifier=asset_data.identifier,
-                priority=asset_data.priority or "normal"
+                priority=asset_data.priority or "normal",
             )
 
             db.add(asset)
@@ -1042,20 +1011,12 @@ def bulk_create_assets(
 
     logger.info(f"Bulk created {success_count} assets for tenant {tenant_id}")
 
-    return BulkOperationResult(
-        success_count=success_count,
-        failure_count=failure_count,
-        errors=errors
-    )
+    return BulkOperationResult(success_count=success_count, failure_count=failure_count, errors=errors)
 
 
 # Seeds endpoints
 @router.get("/seeds", response_model=List[SeedResponse])
-def list_seeds(
-    tenant_id: int,
-    db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
-):
+def list_seeds(tenant_id: int, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)):
     """
     List all seeds for tenant
 
@@ -1064,19 +1025,14 @@ def list_seeds(
     Returns:
         List of seed objects
     """
-    seeds = db.query(Seed).filter(
-        Seed.tenant_id == tenant_id
-    ).order_by(Seed.created_at.desc()).all()
+    seeds = db.query(Seed).filter(Seed.tenant_id == tenant_id).order_by(Seed.created_at.desc()).all()
 
     return [SeedResponse.model_validate(s) for s in seeds]
 
 
 @router.post("/seeds", response_model=SeedResponse, status_code=status.HTTP_201_CREATED)
 def create_seed(
-    tenant_id: int,
-    seed_data: SeedCreate,
-    db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
+    tenant_id: int, seed_data: SeedCreate, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)
 ):
     """
     Create new seed
@@ -1089,26 +1045,21 @@ def create_seed(
     """
     # Verify write permission
     if not membership.has_permission("write"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Write permission required"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Write permission required")
 
     # Create seed
-    seed = Seed(
-        tenant_id=tenant_id,
-        type=seed_data.type,
-        value=seed_data.value,
-        enabled=seed_data.enabled
-    )
+    seed = Seed(tenant_id=tenant_id, type=seed_data.type, value=seed_data.value, enabled=seed_data.enabled)
 
     db.add(seed)
     db.commit()
     db.refresh(seed)
 
     log_data_modification(
-        action="create", resource="seed", resource_id=str(seed.id),
-        user_id=membership.user_id, tenant_id=tenant_id,
+        action="create",
+        resource="seed",
+        resource_id=str(seed.id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
         details={"value": seed_data.value, "type": seed_data.type},
     )
 
@@ -1135,10 +1086,14 @@ def rescan_asset(
             detail="Write permission required",
         )
 
-    asset = db.query(Asset).filter(
-        Asset.id == asset_id,
-        Asset.tenant_id == tenant_id,
-    ).first()
+    asset = (
+        db.query(Asset)
+        .filter(
+            Asset.id == asset_id,
+            Asset.tenant_id == tenant_id,
+        )
+        .first()
+    )
 
     if not asset:
         raise HTTPException(
@@ -1152,14 +1107,10 @@ def rescan_asset(
         from app.tasks.enrichment import run_httpx, run_naabu, run_tlsx
         from app.tasks.cert_harvest import harvest_certificates
 
-        httpx_task = run_httpx.apply_async(
-            kwargs={'tenant_id': tenant_id, 'asset_ids': [asset_id]}
-        )
+        httpx_task = run_httpx.apply_async(kwargs={"tenant_id": tenant_id, "asset_ids": [asset_id]})
         task_ids.append(httpx_task.id)
 
-        naabu_task = run_naabu.apply_async(
-            kwargs={'tenant_id': tenant_id, 'asset_ids': [asset_id]}
-        )
+        naabu_task = run_naabu.apply_async(kwargs={"tenant_id": tenant_id, "asset_ids": [asset_id]})
         task_ids.append(naabu_task.id)
 
     except Exception as e:
@@ -1172,9 +1123,9 @@ def rescan_asset(
     logger.info(f"Triggered rescan for asset {asset_id} (tenant {tenant_id})")
 
     return {
-        'status': 'queued',
-        'asset_id': asset_id,
-        'task_ids': task_ids,
+        "status": "queued",
+        "asset_id": asset_id,
+        "task_ids": task_ids,
     }
 
 
@@ -1191,10 +1142,14 @@ def get_asset_screenshots(
 
     Returns the list of screenshots captured during Visual Recon (Phase 7).
     """
-    asset = db.query(Asset).filter(
-        Asset.id == asset_id,
-        Asset.tenant_id == tenant_id,
-    ).first()
+    asset = (
+        db.query(Asset)
+        .filter(
+            Asset.id == asset_id,
+            Asset.tenant_id == tenant_id,
+        )
+        .first()
+    )
 
     if not asset:
         raise HTTPException(
@@ -1207,21 +1162,21 @@ def get_asset_screenshots(
     except (json.JSONDecodeError, TypeError):
         meta = {}
 
-    screenshots = meta.get('screenshots', [])
+    screenshots = meta.get("screenshots", [])
 
     if include_urls and screenshots:
         from app.tasks.visual_recon import get_screenshot_url
 
         for entry in screenshots:
-            if entry.get('full'):
-                entry['full_url'] = get_screenshot_url(tenant_id, entry['full'])
-            if entry.get('thumb'):
-                entry['thumb_url'] = get_screenshot_url(tenant_id, entry['thumb'])
+            if entry.get("full"):
+                entry["full_url"] = get_screenshot_url(tenant_id, entry["full"])
+            if entry.get("thumb"):
+                entry["thumb_url"] = get_screenshot_url(tenant_id, entry["thumb"])
 
     return {
-        'asset_id': asset_id,
-        'total': len(screenshots),
-        'screenshots': screenshots,
+        "asset_id": asset_id,
+        "total": len(screenshots),
+        "screenshots": screenshots,
     }
 
 
@@ -1241,10 +1196,14 @@ def trigger_asset_screenshot(
             detail="Write permission required",
         )
 
-    asset = db.query(Asset).filter(
-        Asset.id == asset_id,
-        Asset.tenant_id == tenant_id,
-    ).first()
+    asset = (
+        db.query(Asset)
+        .filter(
+            Asset.id == asset_id,
+            Asset.tenant_id == tenant_id,
+        )
+        .first()
+    )
 
     if not asset:
         raise HTTPException(
@@ -1256,20 +1215,17 @@ def trigger_asset_screenshot(
 
     task = run_visual_recon.apply_async(
         kwargs={
-            'tenant_id': tenant_id,
-            'asset_ids': [asset_id],
+            "tenant_id": tenant_id,
+            "asset_ids": [asset_id],
         }
     )
 
-    logger.info(
-        f"Triggered visual recon for asset {asset_id} (tenant {tenant_id}), "
-        f"task_id={task.id}"
-    )
+    logger.info(f"Triggered visual recon for asset {asset_id} (tenant {tenant_id}), task_id={task.id}")
 
     return {
-        'task_id': task.id,
-        'status': 'queued',
-        'asset_id': asset_id,
+        "task_id": task.id,
+        "status": "queued",
+        "asset_id": asset_id,
     }
 
 
@@ -1294,10 +1250,14 @@ def proxy_screenshot(
         raise HTTPException(status_code=400, detail="Invalid screenshot type")
 
     # Verify asset belongs to tenant
-    asset = db.query(Asset.id).filter(
-        Asset.id == asset_id,
-        Asset.tenant_id == tenant_id,
-    ).first()
+    asset = (
+        db.query(Asset.id)
+        .filter(
+            Asset.id == asset_id,
+            Asset.tenant_id == tenant_id,
+        )
+        .first()
+    )
 
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -1337,5 +1297,5 @@ def _build_asset_node(asset: Asset, db: Session) -> dict:
         "is_active": asset.is_active,
         "service_count": len(asset.services),
         "finding_count": len(asset.findings),
-        "children": []
+        "children": [],
     }

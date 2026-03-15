@@ -4,6 +4,7 @@ Service Endpoint Tests
 Tests for service listing, filtering, and multi-tenant isolation.
 Total: 5 tests
 """
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -13,13 +14,9 @@ from app.models import Asset, Service, AssetType
 class TestServiceEndpoints:
     """Test suite for service endpoints"""
 
-    def test_list_services_for_tenant(
-        self, authenticated_client, test_tenant, tenant_with_services
-    ):
+    def test_list_services_for_tenant(self, authenticated_client, test_tenant, tenant_with_services):
         """Test listing all services for a tenant"""
-        response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/services"
-        )
+        response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/services")
 
         assert response.status_code == 200
         data = response.json()
@@ -47,15 +44,11 @@ class TestServiceEndpoints:
         if "version" in service:
             assert isinstance(service["version"], (str, type(None)))
 
-    def test_list_services_for_asset(
-        self, authenticated_client, test_tenant, asset_with_multiple_services
-    ):
+    def test_list_services_for_asset(self, authenticated_client, test_tenant, asset_with_multiple_services):
         """Test listing services for a specific asset"""
         asset_id = asset_with_multiple_services.id
 
-        response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/assets/{asset_id}/services"
-        )
+        response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/assets/{asset_id}/services")
 
         assert response.status_code == 200
         data = response.json()
@@ -72,15 +65,10 @@ class TestServiceEndpoints:
         for service in services:
             assert service["asset_id"] == asset_id
 
-    def test_service_filtering_by_port(
-        self, authenticated_client, test_tenant, tenant_with_services
-    ):
+    def test_service_filtering_by_port(self, authenticated_client, test_tenant, tenant_with_services):
         """Test filtering services by port number"""
         # Filter for HTTPS services (port 443)
-        response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/services",
-            params={"port": 443}
-        )
+        response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/services", params={"port": 443})
 
         assert response.status_code == 200
         data = response.json()
@@ -94,15 +82,10 @@ class TestServiceEndpoints:
         for service in services:
             assert service["port"] == 443
 
-    def test_service_filtering_by_protocol(
-        self, authenticated_client, test_tenant, tenant_with_services
-    ):
+    def test_service_filtering_by_protocol(self, authenticated_client, test_tenant, tenant_with_services):
         """Test filtering services by protocol"""
         # Filter for HTTPS protocol
-        response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/services",
-            params={"protocol": "https"}
-        )
+        response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/services", params={"protocol": "https"})
 
         assert response.status_code == 200
         data = response.json()
@@ -122,9 +105,7 @@ class TestServiceEndpoints:
     ):
         """Test tenant isolation for service endpoints"""
         # User authenticated for test_tenant should not see other_tenant's services
-        response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/services"
-        )
+        response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/services")
 
         assert response.status_code == 200
         data = response.json()
@@ -151,7 +132,7 @@ def tenant_with_services(db_session, test_tenant):
             identifier=f"web{i}.example.com",
             type=AssetType.SUBDOMAIN,
             risk_score=40.0,
-            is_active=True
+            is_active=True,
         )
         for i in range(3)
     ]
@@ -163,24 +144,21 @@ def tenant_with_services(db_session, test_tenant):
     for asset in assets:
         db_session.refresh(asset)
         # HTTP service
-        services.append(Service(
-            asset_id=asset.id,
-            port=80,
-            protocol="http",
-            product="nginx",
-            version="1.18.0",
-            http_status=301
-        ))
+        services.append(
+            Service(asset_id=asset.id, port=80, protocol="http", product="nginx", version="1.18.0", http_status=301)
+        )
         # HTTPS service
-        services.append(Service(
-            asset_id=asset.id,
-            port=443,
-            protocol="https",
-            product="nginx",
-            version="1.18.0",
-            http_status=200,
-            http_title=f"Service for {asset.identifier}"
-        ))
+        services.append(
+            Service(
+                asset_id=asset.id,
+                port=443,
+                protocol="https",
+                product="nginx",
+                version="1.18.0",
+                http_status=200,
+                http_title=f"Service for {asset.identifier}",
+            )
+        )
 
     db_session.add_all(services)
     db_session.commit()
@@ -195,7 +173,7 @@ def asset_with_multiple_services(db_session, test_tenant):
         identifier="multi-service.example.com",
         type=AssetType.SUBDOMAIN,
         risk_score=50.0,
-        is_active=True
+        is_active=True,
     )
     db_session.add(asset)
     db_session.commit()
@@ -223,7 +201,7 @@ def other_tenant_services(db_session, other_tenant):
         identifier="other-service.example.com",
         type=AssetType.SUBDOMAIN,
         risk_score=30.0,
-        is_active=True
+        is_active=True,
     )
     db_session.add(asset)
     db_session.commit()

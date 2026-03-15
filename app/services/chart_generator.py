@@ -11,6 +11,7 @@ import logging
 from typing import Dict, List, Optional, Tuple
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -21,15 +22,17 @@ logger = logging.getLogger(__name__)
 
 # -- Global font configuration (Inter with fallbacks) -------------------------
 
-plt.rcParams.update({
-    "font.family": "sans-serif",
-    "font.sans-serif": ["Inter", "Liberation Sans", "DejaVu Sans", "Helvetica Neue"],
-    "font.size": 10,
-    "axes.labelsize": 9,
-    "axes.titlesize": 10,
-    "xtick.labelsize": 8,
-    "ytick.labelsize": 8,
-})
+plt.rcParams.update(
+    {
+        "font.family": "sans-serif",
+        "font.sans-serif": ["Inter", "Liberation Sans", "DejaVu Sans", "Helvetica Neue"],
+        "font.size": 10,
+        "axes.labelsize": 9,
+        "axes.titlesize": 10,
+        "xtick.labelsize": 8,
+        "ytick.labelsize": 8,
+    }
+)
 
 # -- Colour palette matching the PushingTorPod brand --------------------------
 
@@ -101,8 +104,10 @@ def generate_risk_gauge(score: float, grade: str, fmt: str = "svg") -> bytes:
     theta_full = np.linspace(np.pi, 0, 200)
     for i in range(len(theta_full) - 1):
         ax.barh(
-            1, theta_full[i] - theta_full[i + 1],
-            left=theta_full[i + 1], height=0.45,
+            1,
+            theta_full[i] - theta_full[i + 1],
+            left=theta_full[i + 1],
+            height=0.45,
             color="#1E293B",
             edgecolor="none",
         )
@@ -116,8 +121,10 @@ def generate_risk_gauge(score: float, grade: str, fmt: str = "svg") -> bytes:
     for i in range(len(theta_score) - 1):
         progress = i / max(len(theta_score) - 1, 1)
         ax.barh(
-            1, theta_score[i] - theta_score[i + 1],
-            left=theta_score[i + 1], height=0.45,
+            1,
+            theta_score[i] - theta_score[i + 1],
+            left=theta_score[i + 1],
+            height=0.45,
             color=cmap(clamped / 100.0 * progress),
             edgecolor="none",
         )
@@ -129,19 +136,33 @@ def generate_risk_gauge(score: float, grade: str, fmt: str = "svg") -> bytes:
             grade_color = color
             break
     ax.text(
-        np.pi / 2, 0.45, f"{score:.0f}",
-        ha="center", va="center",
-        fontsize=40, fontweight="bold", color="#0F172A",
+        np.pi / 2,
+        0.45,
+        f"{score:.0f}",
+        ha="center",
+        va="center",
+        fontsize=40,
+        fontweight="bold",
+        color="#0F172A",
     )
     ax.text(
-        np.pi / 2, 0.0, grade,
-        ha="center", va="center",
-        fontsize=16, fontweight="bold", color=grade_color,
+        np.pi / 2,
+        0.0,
+        grade,
+        ha="center",
+        va="center",
+        fontsize=16,
+        fontweight="bold",
+        color=grade_color,
     )
     ax.text(
-        np.pi / 2, -0.25, "out of 100",
-        ha="center", va="center",
-        fontsize=8, color="#94A3B8",
+        np.pi / 2,
+        -0.25,
+        "out of 100",
+        ha="center",
+        va="center",
+        fontsize=8,
+        color="#94A3B8",
     )
 
     ax.set_ylim(0, 1.5)
@@ -174,8 +195,12 @@ def generate_severity_chart(counts: Dict[str, int], fmt: str = "svg") -> bytes:
 
     bar_height = 0.48
     bars = ax.barh(
-        labels, values, color=colors, height=bar_height,
-        edgecolor="none", linewidth=0,
+        labels,
+        values,
+        color=colors,
+        height=bar_height,
+        edgecolor="none",
+        linewidth=0,
     )
     # Round the bar caps
     for bar_item in bars:
@@ -189,16 +214,24 @@ def generate_severity_chart(counts: Dict[str, int], fmt: str = "svg") -> bytes:
                 ax.text(
                     bar_item.get_width() - max_val * 0.03,
                     bar_item.get_y() + bar_item.get_height() / 2,
-                    str(val), va="center", ha="right",
-                    fontsize=9, fontweight="bold", color="#FFFFFF",
+                    str(val),
+                    va="center",
+                    ha="right",
+                    fontsize=9,
+                    fontweight="bold",
+                    color="#FFFFFF",
                 )
             else:
                 # Outside
                 ax.text(
                     bar_item.get_width() + max_val * 0.03,
                     bar_item.get_y() + bar_item.get_height() / 2,
-                    str(val), va="center", ha="left",
-                    fontsize=9, fontweight="bold", color="#374151",
+                    str(val),
+                    va="center",
+                    ha="left",
+                    fontsize=9,
+                    fontweight="bold",
+                    color="#374151",
                 )
 
     ax.invert_yaxis()
@@ -251,13 +284,14 @@ def generate_asset_chart(counts: Dict[str, int], fmt: str = "svg") -> bytes:
     ax.text(0, -0.16, "Assets", ha="center", va="center", fontsize=9, color="#94A3B8")
 
     # Legend below the chart
-    legend_patches = [
-        mpatches.Patch(color=c, label=f"{lbl} ({v})")
-        for c, lbl, v in zip(colors, labels, values)
-    ]
+    legend_patches = [mpatches.Patch(color=c, label=f"{lbl} ({v})") for c, lbl, v in zip(colors, labels, values)]
     ax.legend(
-        handles=legend_patches, loc="upper center", bbox_to_anchor=(0.5, -0.05),
-        frameon=False, fontsize=8, ncol=min(len(legend_patches), 3),
+        handles=legend_patches,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.05),
+        frameon=False,
+        fontsize=8,
+        ncol=min(len(legend_patches), 3),
     )
 
     fig.tight_layout()
@@ -290,10 +324,15 @@ def generate_trend_chart(
     # Single gradient fill
     ax.fill_between(dates, scores, alpha=0.08, color="#6366F1")
     ax.plot(
-        dates, scores,
-        color="#6366F1", linewidth=2.5,
-        marker="o", markersize=5,
-        markerfacecolor="#6366F1", markeredgecolor="#FFFFFF", markeredgewidth=1.5,
+        dates,
+        scores,
+        color="#6366F1",
+        linewidth=2.5,
+        marker="o",
+        markersize=5,
+        markerfacecolor="#6366F1",
+        markeredgecolor="#FFFFFF",
+        markeredgewidth=1.5,
         zorder=5,
     )
 

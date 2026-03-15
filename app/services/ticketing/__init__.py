@@ -26,6 +26,7 @@ from typing import Optional
 @dataclass
 class TicketData:
     """Data structure for creating/updating tickets."""
+
     title: str
     description: str
     severity: str  # critical, high, medium, low, info
@@ -39,6 +40,7 @@ class TicketData:
 @dataclass
 class TicketResult:
     """Result from ticket operations."""
+
     external_id: str  # e.g., "EASM-123" or "INC0012345"
     external_url: str
     external_status: str
@@ -95,14 +97,13 @@ def get_provider(provider_type: str, config: dict) -> TicketingProvider:
     """
     if provider_type == "jira":
         from .jira_provider import JiraProvider
+
         return JiraProvider(config)
     elif provider_type == "servicenow":
         from .servicenow_provider import ServiceNowProvider
+
         return ServiceNowProvider(config)
-    raise ValueError(
-        f"Unknown ticketing provider: '{provider_type}'. "
-        f"Supported providers: jira, servicenow"
-    )
+    raise ValueError(f"Unknown ticketing provider: '{provider_type}'. Supported providers: jira, servicenow")
 
 
 __all__ = [

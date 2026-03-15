@@ -30,6 +30,7 @@ router = APIRouter(
 # Pydantic schemas
 # ---------------------------------------------------------------------------
 
+
 class ChannelConfig(BaseModel):
     """Configuration for a single notification channel."""
 
@@ -143,7 +144,7 @@ class AlertPolicyResponse(BaseModel):
                 "created_at": "2026-01-15T10:00:00Z",
                 "updated_at": "2026-01-15T10:00:00Z",
             }
-        }
+        },
     )
 
 
@@ -187,19 +188,22 @@ class SeedDefaultsResponse(BaseModel):
 # Allowed event types (for validation)
 # ---------------------------------------------------------------------------
 
-VALID_EVENT_TYPES = frozenset({
-    "finding_new",
-    "asset_new",
-    "cert_expiring",
-    "score_changed",
-    "port_opened",
-    "tech_change",
-})
+VALID_EVENT_TYPES = frozenset(
+    {
+        "finding_new",
+        "asset_new",
+        "cert_expiring",
+        "score_changed",
+        "port_opened",
+        "tech_change",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _verify_tenant_exists(db: Session, tenant_id: int) -> None:
     """Raise 404 if the tenant does not exist."""
@@ -211,14 +215,16 @@ def _verify_tenant_exists(db: Session, tenant_id: int) -> None:
         )
 
 
-def _get_policy_or_404(
-    db: Session, tenant_id: int, policy_id: int
-) -> AlertPolicy:
+def _get_policy_or_404(db: Session, tenant_id: int, policy_id: int) -> AlertPolicy:
     """Return the alert policy or raise 404."""
-    policy = db.query(AlertPolicy).filter(
-        AlertPolicy.id == policy_id,
-        AlertPolicy.tenant_id == tenant_id,
-    ).first()
+    policy = (
+        db.query(AlertPolicy)
+        .filter(
+            AlertPolicy.id == policy_id,
+            AlertPolicy.tenant_id == tenant_id,
+        )
+        .first()
+    )
     if not policy:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -233,8 +239,7 @@ def _validate_event_types(event_types: List[str]) -> None:
     if invalid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid event types: {', '.join(invalid)}. "
-                   f"Valid types: {', '.join(sorted(VALID_EVENT_TYPES))}",
+            detail=f"Invalid event types: {', '.join(invalid)}. Valid types: {', '.join(sorted(VALID_EVENT_TYPES))}",
         )
 
 
@@ -258,6 +263,7 @@ def _policy_to_response(policy: AlertPolicy) -> AlertPolicyResponse:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.get("", response_model=List[AlertPolicyResponse])
 def list_alert_policies(
@@ -633,10 +639,7 @@ def seed_default_policies(
 
     # Fetch existing policy names for dedup
     existing_names: set[str] = {
-        row[0]
-        for row in db.query(AlertPolicy.name).filter(
-            AlertPolicy.tenant_id == tenant_id
-        ).all()
+        row[0] for row in db.query(AlertPolicy.name).filter(AlertPolicy.tenant_id == tenant_id).all()
     }
 
     created_policies: list[AlertPolicyResponse] = []

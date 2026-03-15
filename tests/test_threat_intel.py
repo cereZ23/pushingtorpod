@@ -170,9 +170,7 @@ class TestEPSSService:
         assert score == 0.97
         mock_redis.get.assert_called()
 
-    def test_get_epss_score_cache_miss_api_success(
-        self, threat_intel_service, sample_epss_response
-    ):
+    def test_get_epss_score_cache_miss_api_success(self, threat_intel_service, sample_epss_response):
         """EPSS score fetched from API on cache miss and cached."""
         mock_response = MagicMock()
         mock_response.json.return_value = sample_epss_response
@@ -215,31 +213,23 @@ class TestEPSSService:
 
         assert score == 0.5
 
-    def test_get_epss_scores_bulk_all_cached(
-        self, threat_intel_service, mock_redis
-    ):
+    def test_get_epss_scores_bulk_all_cached(self, threat_intel_service, mock_redis):
         """Bulk lookup returns cached scores without API calls."""
         mock_redis._storage["epss:CVE-2024-1234"] = "0.97"
         mock_redis._storage["epss:CVE-2024-5678"] = "0.03"
 
-        scores = threat_intel_service.get_epss_scores_bulk(
-            ["CVE-2024-1234", "CVE-2024-5678"]
-        )
+        scores = threat_intel_service.get_epss_scores_bulk(["CVE-2024-1234", "CVE-2024-5678"])
 
         assert scores["CVE-2024-1234"] == pytest.approx(0.97)
         assert scores["CVE-2024-5678"] == pytest.approx(0.03)
 
-    def test_get_epss_scores_bulk_partial_cache(
-        self, threat_intel_service, mock_redis, sample_epss_response
-    ):
+    def test_get_epss_scores_bulk_partial_cache(self, threat_intel_service, mock_redis, sample_epss_response):
         """Bulk lookup fetches only cache misses from API."""
         mock_redis._storage["epss:CVE-2024-1234"] = "0.97"
 
         # Only CVE-2024-5678 is a miss
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "data": [{"cve": "CVE-2024-5678", "epss": "0.03456"}]
-        }
+        mock_response.json.return_value = {"data": [{"cve": "CVE-2024-5678", "epss": "0.03456"}]}
         mock_response.raise_for_status = MagicMock()
 
         with patch("app.services.threat_intel.httpx.Client") as mock_client_cls:
@@ -249,9 +239,7 @@ class TestEPSSService:
             mock_client.__exit__ = MagicMock(return_value=False)
             mock_client_cls.return_value = mock_client
 
-            scores = threat_intel_service.get_epss_scores_bulk(
-                ["CVE-2024-1234", "CVE-2024-5678"]
-            )
+            scores = threat_intel_service.get_epss_scores_bulk(["CVE-2024-1234", "CVE-2024-5678"])
 
         assert scores["CVE-2024-1234"] == pytest.approx(0.97)
         assert scores["CVE-2024-5678"] == pytest.approx(0.03456)
@@ -260,15 +248,11 @@ class TestEPSSService:
         """Bulk lookup with empty list returns empty dict."""
         assert threat_intel_service.get_epss_scores_bulk([]) == {}
 
-    def test_get_epss_scores_bulk_deduplicates(
-        self, threat_intel_service, mock_redis
-    ):
+    def test_get_epss_scores_bulk_deduplicates(self, threat_intel_service, mock_redis):
         """Bulk lookup deduplicates CVE IDs."""
         mock_redis._storage["epss:CVE-2024-1234"] = "0.97"
 
-        scores = threat_intel_service.get_epss_scores_bulk(
-            ["CVE-2024-1234", "cve-2024-1234", "CVE-2024-1234"]
-        )
+        scores = threat_intel_service.get_epss_scores_bulk(["CVE-2024-1234", "cve-2024-1234", "CVE-2024-1234"])
 
         assert len(scores) == 1
         assert scores["CVE-2024-1234"] == pytest.approx(0.97)
@@ -294,9 +278,7 @@ class TestKEVService:
         assert threat_intel_service.is_in_kev("") is False
         assert threat_intel_service.is_in_kev(None) is False
 
-    def test_is_in_kev_triggers_refresh_if_not_cached(
-        self, threat_intel_service, sample_kev_response
-    ):
+    def test_is_in_kev_triggers_refresh_if_not_cached(self, threat_intel_service, sample_kev_response):
         """KEV check triggers catalog refresh when Redis set is empty."""
         mock_response = MagicMock()
         mock_response.json.return_value = sample_kev_response
@@ -313,9 +295,7 @@ class TestKEVService:
 
         assert result is True
 
-    def test_refresh_kev_catalog(
-        self, threat_intel_service, mock_redis, sample_kev_response
-    ):
+    def test_refresh_kev_catalog(self, threat_intel_service, mock_redis, sample_kev_response):
         """Full KEV catalog refresh populates Redis set and details."""
         mock_response = MagicMock()
         mock_response.json.return_value = sample_kev_response
@@ -527,9 +507,7 @@ class TestRiskScoringIntegration:
 
     def test_score_findings_with_kev_boost(self, db_session):
         """Finding with KEV CVE gets 15-point boost."""
-        from app.models.database import (
-            Asset, AssetType, Finding, FindingSeverity, FindingStatus, Tenant
-        )
+        from app.models.database import Asset, AssetType, Finding, FindingSeverity, FindingStatus, Tenant
         from app.services.risk_scoring import RiskScoringEngine
 
         # Create test data
@@ -575,9 +553,7 @@ class TestRiskScoringIntegration:
 
     def test_score_findings_no_threat_intel(self, db_session):
         """Finding without threat intel data scores normally."""
-        from app.models.database import (
-            Asset, AssetType, Finding, FindingSeverity, FindingStatus, Tenant
-        )
+        from app.models.database import Asset, AssetType, Finding, FindingSeverity, FindingStatus, Tenant
         from app.services.risk_scoring import RiskScoringEngine
 
         tenant = Tenant(name="Test", slug="test-risk-no-ti")
@@ -615,9 +591,7 @@ class TestRiskScoringIntegration:
 
     def test_score_findings_epss_medium_boost(self, db_session):
         """Finding with medium EPSS (0.4-0.7) gets 5-point boost."""
-        from app.models.database import (
-            Asset, AssetType, Finding, FindingSeverity, FindingStatus, Tenant
-        )
+        from app.models.database import Asset, AssetType, Finding, FindingSeverity, FindingStatus, Tenant
         from app.services.risk_scoring import RiskScoringEngine
 
         tenant = Tenant(name="Test", slug="test-risk-epss-med")
@@ -661,9 +635,7 @@ class TestRiskScoringIntegration:
 
     def test_score_findings_capped_at_50(self, db_session):
         """Findings score is capped at 50.0 even with many boosted findings."""
-        from app.models.database import (
-            Asset, AssetType, Finding, FindingSeverity, FindingStatus, Tenant
-        )
+        from app.models.database import Asset, AssetType, Finding, FindingSeverity, FindingStatus, Tenant
         from app.services.risk_scoring import RiskScoringEngine
 
         tenant = Tenant(name="Test", slug="test-risk-cap")
@@ -707,9 +679,7 @@ class TestRiskScoringIntegration:
 
     def test_calculate_asset_risk_includes_threat_intel_metadata(self, db_session):
         """Full asset risk calculation includes threat_intel in components."""
-        from app.models.database import (
-            Asset, AssetType, Finding, FindingSeverity, FindingStatus, Tenant
-        )
+        from app.models.database import Asset, AssetType, Finding, FindingSeverity, FindingStatus, Tenant
         from app.services.risk_scoring import RiskScoringEngine
 
         tenant = Tenant(name="Test", slug="test-risk-full")
@@ -790,9 +760,7 @@ class TestCeleryTasks:
 
     @patch("app.database.SessionLocal")
     @patch("app.services.threat_intel.ThreatIntelService")
-    def test_enrich_findings_threat_intel_success(
-        self, mock_service_cls, mock_session_cls
-    ):
+    def test_enrich_findings_threat_intel_success(self, mock_service_cls, mock_session_cls):
         """Per-tenant enrichment task processes findings."""
         from app.tasks.threat_intel_sync import enrich_findings_threat_intel
 
@@ -804,9 +772,7 @@ class TestCeleryTasks:
         mock_finding.evidence = {}
 
         mock_session = MagicMock()
-        mock_session.query.return_value.join.return_value.filter.return_value.all.return_value = [
-            mock_finding
-        ]
+        mock_session.query.return_value.join.return_value.filter.return_value.all.return_value = [mock_finding]
         mock_session_cls.return_value = mock_session
 
         mock_service = MagicMock()
@@ -822,9 +788,7 @@ class TestCeleryTasks:
         mock_service_cls.return_value = mock_service
 
         # Patch the risk recalculation trigger
-        with patch(
-            "app.tasks.scanning.calculate_comprehensive_risk_scores"
-        ):
+        with patch("app.tasks.scanning.calculate_comprehensive_risk_scores"):
             result = enrich_findings_threat_intel.apply(args=[1]).get()
 
         assert result["status"] == "completed"
@@ -914,10 +878,7 @@ class TestCeleryBeatIntegration:
 
         assert "refresh-threat-intel" in schedule
         entry = schedule["refresh-threat-intel"]
-        assert (
-            entry["task"]
-            == "app.tasks.threat_intel_sync.refresh_threat_intel"
-        )
+        assert entry["task"] == "app.tasks.threat_intel_sync.refresh_threat_intel"
 
     def test_task_module_in_celery_includes(self):
         """Threat intel task module is in Celery include list."""
@@ -1003,9 +964,7 @@ class TestResilience:
 
     def test_risk_scoring_degrades_without_threat_intel(self, db_session):
         """Risk scoring works normally when ThreatIntelService is unavailable."""
-        from app.models.database import (
-            Asset, AssetType, Finding, FindingSeverity, FindingStatus, Tenant
-        )
+        from app.models.database import Asset, AssetType, Finding, FindingSeverity, FindingStatus, Tenant
         from app.services.risk_scoring import RiskScoringEngine
 
         tenant = Tenant(name="Test", slug="test-degrade")

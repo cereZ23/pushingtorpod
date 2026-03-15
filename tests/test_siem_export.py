@@ -26,6 +26,7 @@ from app.services.siem_export import (
 # Helpers — lightweight stand-ins for SQLAlchemy model instances
 # ------------------------------------------------------------------
 
+
 def _make_asset(
     id: int = 1,
     identifier: str = "vuln.example.com",
@@ -73,6 +74,7 @@ def _make_finding(
 # ==================================================================
 # Splunk HEC formatting
 # ==================================================================
+
 
 class TestFormatFindingSplunkHEC:
     """Tests for format_finding_splunk_hec."""
@@ -157,6 +159,7 @@ class TestFormatFindingSplunkHEC:
 # CEF formatting
 # ==================================================================
 
+
 class TestFormatFindingCEF:
     """Tests for format_finding_cef."""
 
@@ -235,6 +238,7 @@ class TestFormatFindingCEF:
 # export_findings_for_tenant
 # ==================================================================
 
+
 class TestExportFindingsForTenant:
     """Tests for the main export orchestration function."""
 
@@ -303,9 +307,7 @@ class TestExportFindingsForTenant:
         """Verify severity_min is accepted without errors."""
         db = self._mock_db([])
 
-        export_findings_for_tenant(
-            db, tenant_id=1, fmt="splunk_hec", severity_min="high"
-        )
+        export_findings_for_tenant(db, tenant_id=1, fmt="splunk_hec", severity_min="high")
 
         db.query.assert_called_once()
 
@@ -313,6 +315,7 @@ class TestExportFindingsForTenant:
 # ==================================================================
 # Schema validation
 # ==================================================================
+
 
 class TestSIEMSchemas:
     """Quick validation of Pydantic schemas."""
@@ -351,9 +354,7 @@ class TestSIEMSchemas:
     def test_export_response(self):
         from app.api.schemas.siem import SIEMExportResponse
 
-        resp = SIEMExportResponse(
-            format="splunk_hec", event_count=3, events=[{"a": 1}]
-        )
+        resp = SIEMExportResponse(format="splunk_hec", event_count=3, events=[{"a": 1}])
         assert resp.event_count == 3
 
     def test_push_request_requires_endpoint(self):
@@ -378,7 +379,5 @@ class TestSIEMSchemas:
     def test_push_response(self):
         from app.api.schemas.siem import SIEMPushResponse
 
-        resp = SIEMPushResponse(
-            format="cef", event_count=10, success=True, detail=None
-        )
+        resp = SIEMPushResponse(format="cef", event_count=10, success=True, detail=None)
         assert resp.success is True

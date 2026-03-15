@@ -10,8 +10,17 @@ import enum
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Column, Integer, String, DateTime, ForeignKey, Text, Enum, Float,
-    Boolean, Index, JSON,
+    Column,
+    Integer,
+    String,
+    DateTime,
+    ForeignKey,
+    Text,
+    Enum,
+    Float,
+    Boolean,
+    Index,
+    JSON,
 )
 from sqlalchemy.orm import relationship
 
@@ -27,13 +36,13 @@ class RiskScore(Base):
     factors and the delta from the previous score.
     """
 
-    __tablename__ = 'risk_scores'
+    __tablename__ = "risk_scores"
 
     id = Column(Integer, primary_key=True)
-    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
     scope_type = Column(String(20), nullable=False)  # 'issue', 'asset', 'organization'
     scope_id = Column(Integer)  # issue_id, asset_id, or null for org
-    scan_run_id = Column(Integer, ForeignKey('scan_runs.id', ondelete='SET NULL'))
+    scan_run_id = Column(Integer, ForeignKey("scan_runs.id", ondelete="SET NULL"))
     score = Column(Float, nullable=False)  # 0-100
     grade = Column(String(2))  # A, B, C, D, F
     components = Column(JSON)  # Score breakdown {base_severity, confidence, exposure_factor, ...}
@@ -43,10 +52,10 @@ class RiskScore(Base):
     scored_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
-        Index('idx_rs_tenant', 'tenant_id'),
-        Index('idx_rs_scope', 'scope_type', 'scope_id'),
-        Index('idx_rs_scan_run', 'scan_run_id'),
-        Index('idx_rs_scored_at', 'scored_at'),
+        Index("idx_rs_tenant", "tenant_id"),
+        Index("idx_rs_scope", "scope_type", "scope_id"),
+        Index("idx_rs_scan_run", "scan_run_id"),
+        Index("idx_rs_scored_at", "scored_at"),
     )
 
     def __repr__(self):
@@ -68,17 +77,17 @@ class Alert(Base):
     related asset/finding that triggered them.
     """
 
-    __tablename__ = 'alerts'
+    __tablename__ = "alerts"
 
     id = Column(Integer, primary_key=True)
-    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
-    policy_id = Column(Integer, ForeignKey('alert_policies.id'))
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    policy_id = Column(Integer, ForeignKey("alert_policies.id"))
     event_type = Column(String(50), nullable=False)  # 'finding_new', 'asset_new', 'cert_expiring', 'score_changed'
     severity = Column(String(20), nullable=False)
     title = Column(String(500), nullable=False)
     body = Column(Text)
-    related_asset_id = Column(Integer, ForeignKey('assets.id', ondelete='SET NULL'))
-    related_finding_id = Column(Integer, ForeignKey('findings.id', ondelete='SET NULL'))
+    related_asset_id = Column(Integer, ForeignKey("assets.id", ondelete="SET NULL"))
+    related_finding_id = Column(Integer, ForeignKey("findings.id", ondelete="SET NULL"))
     status = Column(Enum(AlertStatus), default=AlertStatus.PENDING)
     channels_sent = Column(JSON)  # ["slack", "email"]
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -86,11 +95,11 @@ class Alert(Base):
     acknowledged_at = Column(DateTime)
 
     __table_args__ = (
-        Index('idx_alert_tenant', 'tenant_id'),
-        Index('idx_alert_status', 'status'),
-        Index('idx_alert_severity', 'severity'),
-        Index('idx_alert_created', 'created_at'),
-        Index('idx_alert_policy', 'policy_id'),
+        Index("idx_alert_tenant", "tenant_id"),
+        Index("idx_alert_status", "status"),
+        Index("idx_alert_severity", "severity"),
+        Index("idx_alert_created", "created_at"),
+        Index("idx_alert_policy", "policy_id"),
     )
 
     def __repr__(self):
@@ -105,10 +114,10 @@ class AlertPolicy(Base):
     delivery, cooldown windows, and digest mode for batching.
     """
 
-    __tablename__ = 'alert_policies'
+    __tablename__ = "alert_policies"
 
     id = Column(Integer, primary_key=True)
-    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
     name = Column(String(255), nullable=False)
     event_types = Column(JSON, nullable=False)  # ["finding_new", "asset_new"]
     conditions = Column(JSON)  # {"severity": "critical", "control_id": "TKO-*"}
@@ -117,11 +126,13 @@ class AlertPolicy(Base):
     digest_mode = Column(Boolean, default=False)
     enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
 
     __table_args__ = (
-        Index('idx_ap_tenant', 'tenant_id'),
-        Index('idx_ap_enabled', 'tenant_id', 'enabled'),
+        Index("idx_ap_tenant", "tenant_id"),
+        Index("idx_ap_enabled", "tenant_id", "enabled"),
     )
 
     def __repr__(self):
@@ -137,23 +148,25 @@ class Relationship(Base):
     and parent-domain hierarchies.
     """
 
-    __tablename__ = 'relationships'
+    __tablename__ = "relationships"
 
     id = Column(Integer, primary_key=True)
-    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
-    source_asset_id = Column(Integer, ForeignKey('assets.id', ondelete='CASCADE'), nullable=False)
-    target_asset_id = Column(Integer, ForeignKey('assets.id', ondelete='CASCADE'), nullable=False)
-    rel_type = Column(String(50), nullable=False)  # 'resolves_to', 'cname_to', 'ns_for', 'mx_for', 'redirects_to', 'cert_covers', 'hosts', 'parent_domain'
-    rel_metadata = Column('metadata', JSON)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    source_asset_id = Column(Integer, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    target_asset_id = Column(Integer, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    rel_type = Column(
+        String(50), nullable=False
+    )  # 'resolves_to', 'cname_to', 'ns_for', 'mx_for', 'redirects_to', 'cert_covers', 'hosts', 'parent_domain'
+    rel_metadata = Column("metadata", JSON)
     first_seen_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_seen_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
-        Index('idx_rel_tenant', 'tenant_id'),
-        Index('idx_rel_source', 'source_asset_id'),
-        Index('idx_rel_target', 'target_asset_id'),
-        Index('idx_rel_type', 'rel_type'),
-        Index('idx_rel_unique', 'source_asset_id', 'target_asset_id', 'rel_type', unique=True),
+        Index("idx_rel_tenant", "tenant_id"),
+        Index("idx_rel_source", "source_asset_id"),
+        Index("idx_rel_target", "target_asset_id"),
+        Index("idx_rel_type", "rel_type"),
+        Index("idx_rel_unique", "source_asset_id", "target_asset_id", "rel_type", unique=True),
     )
 
     def __repr__(self):
@@ -168,11 +181,11 @@ class AuditLog(Base):
     compliance, forensic investigation, and operational monitoring.
     """
 
-    __tablename__ = 'audit_log'
+    __tablename__ = "audit_log"
 
     id = Column(Integer, primary_key=True)
-    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
-    user_id = Column(Integer, ForeignKey('users.id'))
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"))
     action = Column(String(100), nullable=False)  # 'create', 'update', 'delete', 'login', 'status_change'
     entity_type = Column(String(50))  # 'issue', 'finding', 'asset', 'alert_policy', etc.
     entity_id = Column(Integer)
@@ -182,11 +195,11 @@ class AuditLog(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
-        Index('idx_audit_tenant', 'tenant_id'),
-        Index('idx_audit_user', 'user_id'),
-        Index('idx_audit_entity', 'entity_type', 'entity_id'),
-        Index('idx_audit_created', 'created_at'),
-        Index('idx_audit_action', 'action'),
+        Index("idx_audit_tenant", "tenant_id"),
+        Index("idx_audit_user", "user_id"),
+        Index("idx_audit_entity", "entity_type", "entity_id"),
+        Index("idx_audit_created", "created_at"),
+        Index("idx_audit_action", "action"),
     )
 
     def __repr__(self):

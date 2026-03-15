@@ -26,12 +26,12 @@ class TestDomainValidation:
     def test_valid_domains(self):
         """Test that valid domains pass validation"""
         valid_domains = [
-            'example.com',
-            'sub.example.com',
-            'deep.sub.example.com',
-            'example-dash.com',
-            'example.co.uk',
-            'a.b.c.d.e.example.com',
+            "example.com",
+            "sub.example.com",
+            "deep.sub.example.com",
+            "example-dash.com",
+            "example.co.uk",
+            "a.b.c.d.e.example.com",
         ]
 
         for domain in valid_domains:
@@ -41,14 +41,14 @@ class TestDomainValidation:
     def test_command_injection_prevention(self):
         """Test that command injection attempts are blocked"""
         malicious_domains = [
-            'example.com; rm -rf /',
-            'example.com | cat /etc/passwd',
-            'example.com & whoami',
-            '$(whoami).example.com',
-            '`whoami`.example.com',
-            'example.com\nwhoami',
-            'example.com && ls',
-            'example.com;ls',
+            "example.com; rm -rf /",
+            "example.com | cat /etc/passwd",
+            "example.com & whoami",
+            "$(whoami).example.com",
+            "`whoami`.example.com",
+            "example.com\nwhoami",
+            "example.com && ls",
+            "example.com;ls",
         ]
 
         for domain in malicious_domains:
@@ -59,15 +59,15 @@ class TestDomainValidation:
     def test_ssrf_prevention(self):
         """Test that SSRF attempts are blocked"""
         ssrf_targets = [
-            '127.0.0.1',
-            'localhost',
-            '192.168.1.1',
-            '10.0.0.1',
-            '172.16.0.1',
-            '169.254.169.254',  # AWS metadata
-            'metadata.google.internal',
-            '::1',
-            'fe80::1',
+            "127.0.0.1",
+            "localhost",
+            "192.168.1.1",
+            "10.0.0.1",
+            "172.16.0.1",
+            "169.254.169.254",  # AWS metadata
+            "metadata.google.internal",
+            "::1",
+            "fe80::1",
         ]
 
         for target in ssrf_targets:
@@ -77,10 +77,10 @@ class TestDomainValidation:
     def test_path_traversal_prevention(self):
         """Test that path traversal attempts are blocked"""
         traversal_attempts = [
-            '../../../etc/passwd',
-            '..\\..\\..\\windows\\system32',
-            'example.com/../../etc/passwd',
-            '../../../../etc/passwd',
+            "../../../etc/passwd",
+            "..\\..\\..\\windows\\system32",
+            "example.com/../../etc/passwd",
+            "../../../../etc/passwd",
         ]
 
         for attempt in traversal_attempts:
@@ -91,9 +91,9 @@ class TestDomainValidation:
         """Test that homograph attacks are blocked"""
         # Cyrillic 'е' instead of Latin 'e'
         homograph_domains = [
-            'еxample.com',  # Cyrillic e
-            'ехample.com',  # Cyrillic x and e
-            'gооgle.com',  # Cyrillic o
+            "еxample.com",  # Cyrillic e
+            "ехample.com",  # Cyrillic x and e
+            "gооgle.com",  # Cyrillic o
         ]
 
         for domain in homograph_domains:
@@ -103,10 +103,10 @@ class TestDomainValidation:
     def test_blocked_tlds(self):
         """Test that blocked TLDs are rejected"""
         blocked_domains = [
-            'example.local',
-            'test.localhost',
-            'internal.internal',
-            'corporate.corp',
+            "example.local",
+            "test.localhost",
+            "internal.internal",
+            "corporate.corp",
         ]
 
         for domain in blocked_domains:
@@ -116,49 +116,49 @@ class TestDomainValidation:
     def test_wildcard_domain_validation(self):
         """Test wildcard domain handling"""
         # Should fail without wildcard flag
-        is_valid, _ = DomainValidator.validate_domain('*.example.com', allow_wildcards=False)
+        is_valid, _ = DomainValidator.validate_domain("*.example.com", allow_wildcards=False)
         assert not is_valid
 
         # Should pass with wildcard flag
-        is_valid, _ = DomainValidator.validate_domain('*.example.com', allow_wildcards=True)
+        is_valid, _ = DomainValidator.validate_domain("*.example.com", allow_wildcards=True)
         assert is_valid
 
         # Invalid wildcard should still fail
-        is_valid, _ = DomainValidator.validate_domain('*example.com', allow_wildcards=True)
+        is_valid, _ = DomainValidator.validate_domain("*example.com", allow_wildcards=True)
         assert not is_valid
 
     def test_batch_validation(self):
         """Test batch domain validation"""
         domains = [
-            'valid1.com',
-            'valid2.com',
-            '127.0.0.1',  # Invalid
-            'example.com; whoami',  # Invalid
-            'valid3.com',
+            "valid1.com",
+            "valid2.com",
+            "127.0.0.1",  # Invalid
+            "example.com; whoami",  # Invalid
+            "valid3.com",
         ]
 
         results = DomainValidator.validate_domain_batch(domains)
 
-        assert results['stats']['total'] == 5
-        assert results['stats']['valid_count'] == 3
-        assert results['stats']['invalid_count'] == 2
-        assert len(results['valid']) == 3
-        assert len(results['invalid']) == 2
+        assert results["stats"]["total"] == 5
+        assert results["stats"]["valid_count"] == 3
+        assert results["stats"]["invalid_count"] == 2
+        assert len(results["valid"]) == 3
+        assert len(results["invalid"]) == 2
 
     def test_length_limits(self):
         """Test domain length validation"""
         # Too long
-        too_long = 'a' * 254
+        too_long = "a" * 254
         is_valid, error = DomainValidator.validate_domain(too_long)
         assert not is_valid
 
         # Too short
-        too_short = 'ab'
+        too_short = "ab"
         is_valid, error = DomainValidator.validate_domain(too_short)
         assert not is_valid
 
         # Label too long
-        long_label = 'a' * 64 + '.example.com'
+        long_label = "a" * 64 + ".example.com"
         is_valid, error = DomainValidator.validate_domain(long_label)
         assert not is_valid
 
@@ -169,10 +169,10 @@ class TestURLValidation:
     def test_valid_urls(self):
         """Test valid URL validation"""
         valid_urls = [
-            'https://example.com',
-            'http://example.com',
-            'https://sub.example.com/path',
-            'https://example.com:8080/path?query=value',
+            "https://example.com",
+            "http://example.com",
+            "https://sub.example.com/path",
+            "https://example.com:8080/path?query=value",
         ]
 
         for url in valid_urls:
@@ -182,13 +182,13 @@ class TestURLValidation:
     def test_blocked_schemes(self):
         """Test that dangerous schemes are blocked"""
         dangerous_urls = [
-            'file:///etc/passwd',
-            'gopher://example.com',
-            'dict://example.com',
-            'ftp://example.com',
-            'jar:http://example.com',
-            'data:text/html,<script>alert(1)</script>',
-            'ldap://example.com',
+            "file:///etc/passwd",
+            "gopher://example.com",
+            "dict://example.com",
+            "ftp://example.com",
+            "jar:http://example.com",
+            "data:text/html,<script>alert(1)</script>",
+            "ldap://example.com",
         ]
 
         for url in dangerous_urls:
@@ -198,10 +198,10 @@ class TestURLValidation:
     def test_ssrf_in_urls(self):
         """Test SSRF prevention in URLs"""
         ssrf_urls = [
-            'http://127.0.0.1/admin',
-            'http://169.254.169.254/latest/meta-data/',
-            'http://192.168.1.1/router',
-            'http://metadata.google.internal/computeMetadata/v1/',
+            "http://127.0.0.1/admin",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://192.168.1.1/router",
+            "http://metadata.google.internal/computeMetadata/v1/",
         ]
 
         for url in ssrf_urls:
@@ -219,43 +219,31 @@ class TestJWTAuthentication:
 
     def test_token_creation_and_validation(self, jwt_manager):
         """Test basic token creation and validation"""
-        token = jwt_manager.create_access_token(
-            subject="user123",
-            tenant_id=1,
-            roles=["user"]
-        )
+        token = jwt_manager.create_access_token(subject="user123", tenant_id=1, roles=["user"])
 
         assert token is not None
         assert isinstance(token, str)
 
         # Create mock credentials
         from fastapi.security import HTTPAuthorizationCredentials
-        credentials = HTTPAuthorizationCredentials(
-            scheme="Bearer",
-            credentials=token
-        )
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
         payload = jwt_manager.verify_token(credentials)
-        assert payload['sub'] == "user123"
-        assert payload['tenant_id'] == 1
-        assert 'user' in payload['roles']
+        assert payload["sub"] == "user123"
+        assert payload["tenant_id"] == 1
+        assert "user" in payload["roles"]
 
     def test_token_expiration(self, jwt_manager):
         """Test that expired tokens are rejected"""
-        token = jwt_manager.create_access_token(
-            subject="user123",
-            tenant_id=1,
-            expires_delta=timedelta(seconds=1)
-        )
+        token = jwt_manager.create_access_token(subject="user123", tenant_id=1, expires_delta=timedelta(seconds=1))
 
         # Wait for token to expire
         time.sleep(2)
 
         from fastapi.security import HTTPAuthorizationCredentials
-        credentials = HTTPAuthorizationCredentials(
-            scheme="Bearer",
-            credentials=token
-        )
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
         with pytest.raises(HTTPException) as exc:
             jwt_manager.verify_token(credentials)
@@ -274,10 +262,8 @@ class TestJWTAuthentication:
 
         for token in invalid_tokens:
             from fastapi.security import HTTPAuthorizationCredentials
-            credentials = HTTPAuthorizationCredentials(
-                scheme="Bearer",
-                credentials=token
-            )
+
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
             with pytest.raises(HTTPException) as exc:
                 jwt_manager.verify_token(credentials)
@@ -286,23 +272,18 @@ class TestJWTAuthentication:
 
     def test_token_revocation(self, jwt_manager):
         """Test token revocation"""
-        token = jwt_manager.create_access_token(
-            subject="user123",
-            tenant_id=1
-        )
+        token = jwt_manager.create_access_token(subject="user123", tenant_id=1)
 
         from fastapi.security import HTTPAuthorizationCredentials
-        credentials = HTTPAuthorizationCredentials(
-            scheme="Bearer",
-            credentials=token
-        )
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
         # Token should be valid
         payload = jwt_manager.verify_token(credentials)
-        jti = payload['jti']
+        jti = payload["jti"]
 
         # Revoke token
-        jwt_manager.revoke_token(jti, 'access')
+        jwt_manager.revoke_token(jti, "access")
 
         # Token should now be invalid
         with pytest.raises(HTTPException) as exc:
@@ -314,27 +295,22 @@ class TestJWTAuthentication:
     def test_refresh_token_flow(self, jwt_manager):
         """Test refresh token flow"""
         # Create refresh token
-        refresh_token = jwt_manager.create_refresh_token(
-            subject="user123",
-            tenant_id=1
-        )
+        refresh_token = jwt_manager.create_refresh_token(subject="user123", tenant_id=1)
 
         # Use refresh token to get new access token
         tokens = jwt_manager.refresh_access_token(refresh_token)
 
-        assert 'access_token' in tokens
-        assert 'refresh_token' in tokens
-        assert tokens['token_type'] == 'bearer'
+        assert "access_token" in tokens
+        assert "refresh_token" in tokens
+        assert tokens["token_type"] == "bearer"
 
         # Verify new access token
         from fastapi.security import HTTPAuthorizationCredentials
-        credentials = HTTPAuthorizationCredentials(
-            scheme="Bearer",
-            credentials=tokens['access_token']
-        )
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=tokens["access_token"])
 
         payload = jwt_manager.verify_token(credentials)
-        assert payload['sub'] == "user123"
+        assert payload["sub"] == "user123"
 
     def test_password_hashing(self, jwt_manager):
         """Test password hashing"""
@@ -356,7 +332,7 @@ class TestSecretManagement:
 
     def test_secret_generation(self):
         """Test secure secret generation"""
-        manager = SecretManager(backend='env')
+        manager = SecretManager(backend="env")
 
         secret1 = manager.generate_secure_secret()
         secret2 = manager.generate_secure_secret()
@@ -368,21 +344,22 @@ class TestSecretManagement:
         assert len(secret1) >= 64
 
         # Secrets should be URL-safe
-        assert all(c.isalnum() or c in '-_' for c in secret1)
+        assert all(c.isalnum() or c in "-_" for c in secret1)
 
     def test_weak_secret_detection(self):
         """Test weak secret detection"""
-        manager = SecretManager(backend='env')
+        manager = SecretManager(backend="env")
 
         # Set weak secrets
         import os
-        os.environ['WEAK_SECRET_1'] = 'password123'
-        os.environ['WEAK_SECRET_2'] = 'CHANGE_THIS'
 
-        validation = manager.validate_secrets(['WEAK_SECRET_1', 'WEAK_SECRET_2'])
+        os.environ["WEAK_SECRET_1"] = "password123"
+        os.environ["WEAK_SECRET_2"] = "CHANGE_THIS"
 
-        assert not validation['valid']
-        assert len(validation['weak']) == 2
+        validation = manager.validate_secrets(["WEAK_SECRET_1", "WEAK_SECRET_2"])
+
+        assert not validation["valid"]
+        assert len(validation["weak"]) == 2
 
 
 class TestInputSanitization:
@@ -391,21 +368,21 @@ class TestInputSanitization:
     def test_filename_sanitization(self):
         """Test filename sanitization"""
         dangerous_filenames = [
-            '../../../etc/passwd',
-            '..\\..\\..\\windows\\system32',
-            'file; rm -rf /',
-            'file | whoami',
-            'file\x00.txt',
+            "../../../etc/passwd",
+            "..\\..\\..\\windows\\system32",
+            "file; rm -rf /",
+            "file | whoami",
+            "file\x00.txt",
         ]
 
         for filename in dangerous_filenames:
             safe = InputSanitizer.sanitize_filename(filename)
 
             # Should not contain dangerous characters
-            assert '../' not in safe
-            assert '|' not in safe
-            assert ';' not in safe
-            assert '\x00' not in safe
+            assert "../" not in safe
+            assert "|" not in safe
+            assert ";" not in safe
+            assert "\x00" not in safe
 
     def test_logging_sanitization(self):
         """Test log sanitization"""
@@ -414,10 +391,10 @@ class TestInputSanitization:
         safe = InputSanitizer.sanitize_for_logging(dangerous_input)
 
         # Should escape newlines
-        assert '\n' not in safe or '\\n' in safe
+        assert "\n" not in safe or "\\n" in safe
 
         # Should remove null bytes
-        assert '\x00' not in safe
+        assert "\x00" not in safe
 
 
 class TestPenetrationScenarios:
@@ -447,7 +424,7 @@ class TestPenetrationScenarios:
         for pattern in xss_patterns:
             safe = InputSanitizer.sanitize_for_logging(pattern)
             # Should escape or remove dangerous content
-            assert '<script>' not in safe.lower()
+            assert "<script>" not in safe.lower()
 
     def test_xxe_patterns(self):
         """Test that XXE patterns are detected"""
@@ -468,11 +445,11 @@ class TestThreatDetection:
     def test_multiple_attack_vectors(self):
         """Test detection of various attack vectors"""
         attack_vectors = {
-            'command_injection': 'example.com; cat /etc/passwd',
-            'ssrf': '169.254.169.254',
-            'path_traversal': '../../../etc/passwd',
-            'homograph': 'еxample.com',
-            'metadata': 'metadata.google.internal',
+            "command_injection": "example.com; cat /etc/passwd",
+            "ssrf": "169.254.169.254",
+            "path_traversal": "../../../etc/passwd",
+            "homograph": "еxample.com",
+            "metadata": "metadata.google.internal",
         }
 
         for attack_type, payload in attack_vectors.items():

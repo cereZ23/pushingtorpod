@@ -30,9 +30,9 @@ class TenantResponse(BaseModel):
                 "slug": "acme-corp",
                 "contact_policy": "Contact security@acme.com for vulnerabilities",
                 "created_at": "2024-01-01T00:00:00Z",
-                "updated_at": "2024-01-01T00:00:00Z"
+                "updated_at": "2024-01-01T00:00:00Z",
             }
-        }
+        },
     )
 
 
@@ -48,7 +48,7 @@ class TenantCreate(BaseModel):
             "example": {
                 "name": "Acme Corporation",
                 "slug": "acme-corp",
-                "contact_policy": "Contact security@acme.com for vulnerabilities"
+                "contact_policy": "Contact security@acme.com for vulnerabilities",
             }
         }
     )
@@ -61,12 +61,7 @@ class TenantUpdate(BaseModel):
     contact_policy: Optional[str] = Field(None, description="Contact policy")
 
     model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "name": "Acme Corporation Updated",
-                "contact_policy": "New contact policy"
-            }
-        }
+        json_schema_extra={"example": {"name": "Acme Corporation Updated", "contact_policy": "New contact policy"}}
     )
 
 
@@ -90,28 +85,17 @@ class TenantStats(BaseModel):
         json_schema_extra={
             "example": {
                 "total_assets": 1250,
-                "assets_by_type": {
-                    "domain": 50,
-                    "subdomain": 800,
-                    "ip": 300,
-                    "url": 100
-                },
+                "assets_by_type": {"domain": 50, "subdomain": 800, "ip": 300, "url": 100},
                 "total_services": 3500,
                 "total_certificates": 450,
                 "total_endpoints": 12000,
                 "total_findings": 235,
-                "findings_by_severity": {
-                    "critical": 5,
-                    "high": 25,
-                    "medium": 80,
-                    "low": 100,
-                    "info": 25
-                },
+                "findings_by_severity": {"critical": 5, "high": 25, "medium": 80, "low": 100, "info": 25},
                 "open_findings": 180,
                 "critical_findings": 5,
                 "high_findings": 25,
                 "expiring_certificates": 12,
-                "average_risk_score": 42.5
+                "average_risk_score": 42.5,
             }
         }
     )
@@ -133,7 +117,7 @@ class RecentActivity(BaseModel):
                 "type": "new_asset",
                 "description": "New subdomain discovered: api.example.com",
                 "timestamp": "2024-01-15T10:30:00Z",
-                "metadata": {"asset_id": 123, "asset_type": "subdomain"}
+                "metadata": {"asset_id": 123, "asset_type": "subdomain"},
             }
         }
     )
@@ -151,23 +135,11 @@ class TenantDashboard(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "tenant": {
-                    "id": 1,
-                    "name": "Acme Corporation",
-                    "slug": "acme-corp"
-                },
-                "stats": {
-                    "total_assets": 1250,
-                    "total_findings": 235
-                },
+                "tenant": {"id": 1, "name": "Acme Corporation", "slug": "acme-corp"},
+                "stats": {"total_assets": 1250, "total_findings": 235},
                 "recent_activity": [],
                 "trending_assets": [],
-                "risk_distribution": {
-                    "critical": 15,
-                    "high": 125,
-                    "medium": 650,
-                    "low": 460
-                }
+                "risk_distribution": {"critical": 15, "high": 125, "medium": 650, "low": 460},
             }
         }
     )

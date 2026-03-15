@@ -12,7 +12,13 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
 
-from app.api.dependencies import get_db, get_current_user, get_current_user_async, get_current_user_payload, require_admin
+from app.api.dependencies import (
+    get_db,
+    get_current_user,
+    get_current_user_async,
+    get_current_user_payload,
+    require_admin,
+)
 from app.api.schemas.auth import (
     LoginRequest,
     LoginResponse,
@@ -57,6 +63,7 @@ MFA_LOCKOUT_DURATION_SECONDS = 15 * 60  # 15 minutes
 def _get_redis():
     """Get a Redis connection using the application settings."""
     import redis
+
     return redis.from_url(settings.redis_url, socket_connect_timeout=2)
 
 
@@ -223,11 +230,7 @@ def _build_tokens_and_response(user: "User", db: Session) -> dict:
 
 @router.post("/login", response_model=LoginResponse)
 @limiter.limit("5/minute")
-def login(
-    request: Request,
-    credentials: LoginRequest,
-    db: Session = Depends(get_db)
-):
+def login(request: Request, credentials: LoginRequest, db: Session = Depends(get_db)):
     """
     Authenticate user and return JWT tokens
 
@@ -252,55 +255,54 @@ def login(
     if not user:
         _record_login_failure(credentials.email)
         log_authentication_attempt(
-            success=False, username=credentials.email,
-            ip_address=client_ip, user_agent=user_agent,
+            success=False,
+            username=credentials.email,
+            ip_address=client_ip,
+            user_agent=user_agent,
             error_message="Non-existent email",
         )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password"
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
     # SSO-only users cannot use password login
     if not user.hashed_password and user.sso_provider:
         _record_login_failure(credentials.email)
         log_authentication_attempt(
-            success=False, username=credentials.email,
-            ip_address=client_ip, user_agent=user_agent,
+            success=False,
+            username=credentials.email,
+            ip_address=client_ip,
+            user_agent=user_agent,
             error_message="SSO-only account attempted password login",
             user_id=user.id,
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="This account uses SSO. Please sign in with your identity provider."
+            detail="This account uses SSO. Please sign in with your identity provider.",
         )
 
     # Verify password
     if not user.hashed_password or not user.verify_password(credentials.password):
         _record_login_failure(credentials.email)
         log_authentication_attempt(
-            success=False, username=credentials.email,
-            ip_address=client_ip, user_agent=user_agent,
+            success=False,
+            username=credentials.email,
+            ip_address=client_ip,
+            user_agent=user_agent,
             error_message="Invalid password",
             user_id=user.id,
         )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password"
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
     # Check if user is active
     if not user.is_active:
         log_authentication_attempt(
-            success=False, username=credentials.email,
-            ip_address=client_ip, user_agent=user_agent,
+            success=False,
+            username=credentials.email,
+            ip_address=client_ip,
+            user_agent=user_agent,
             error_message="Inactive account",
             user_id=user.id,
         )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is inactive"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is inactive")
 
     # Password verified successfully — clear any prior failure counter
     _clear_login_failures(credentials.email)
@@ -313,15 +315,13 @@ def login(
         # Store MFA token in Redis with 5 min expiry
         try:
             import redis
+
             r = redis.from_url(settings.redis_url, socket_connect_timeout=2)
             r.setex(f"mfa_token:{mfa_token}", 300, str(user.id))
             r.close()
         except Exception:
             logger.exception("Failed to store MFA token in Redis")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="MFA service unavailable"
-            )
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="MFA service unavailable")
 
         logger.info(f"MFA challenge issued for user {user.email}")
         return {"mfa_required": True, "mfa_token": mfa_token}
@@ -331,8 +331,10 @@ def login(
 
     first_tenant = next(iter(response.user.tenant_roles), None) if response.user.tenant_roles else None
     log_authentication_attempt(
-        success=True, username=user.email,
-        ip_address=client_ip, user_agent=user_agent,
+        success=True,
+        username=user.email,
+        ip_address=client_ip,
+        user_agent=user_agent,
         user_id=user.id,
         tenant_id=first_tenant,
     )
@@ -360,20 +362,17 @@ def refresh_token(
         logger.info("Token refreshed successfully")
 
         return RefreshTokenResponse(
-            access_token=result['access_token'],
-            refresh_token=result['refresh_token'],
-            token_type=result['token_type'],
-            expires_in=settings.jwt_access_token_expire_minutes * 60
+            access_token=result["access_token"],
+            refresh_token=result["refresh_token"],
+            token_type=result["token_type"],
+            expires_in=settings.jwt_access_token_expire_minutes * 60,
         )
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Token refresh error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Failed to refresh token"
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Failed to refresh token")
 
 
 @router.post("/logout")
@@ -446,9 +445,7 @@ async def get_current_user_info(
 
 @router.patch("/me", response_model=UserResponse)
 def update_current_user(
-    updates: UserUpdate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    updates: UserUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     """
     Update current user profile
@@ -462,16 +459,10 @@ def update_current_user(
     # Apply updates
     if updates.email is not None:
         # Check if email is already in use
-        existing = db.query(User).filter(
-            User.email == updates.email,
-            User.id != current_user.id
-        ).first()
+        existing = db.query(User).filter(User.email == updates.email, User.id != current_user.id).first()
 
         if existing:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already in use"
-            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already in use")
 
         current_user.email = updates.email
 
@@ -481,10 +472,7 @@ def update_current_user(
     if updates.is_active is not None:
         # Users can't deactivate themselves
         if not updates.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot deactivate your own account"
-            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot deactivate your own account")
 
     db.commit()
     db.refresh(current_user)
@@ -499,7 +487,7 @@ def change_password(
     http_request: Request,
     request: ChangePasswordRequest,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Change user password
@@ -522,10 +510,7 @@ def change_password(
             ip_address=client_ip,
             severity="warning",
         )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Current password is incorrect"
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Current password is incorrect")
 
     # Update password
     current_user.hashed_password = User.hash_password(request.new_password)
@@ -541,10 +526,7 @@ def change_password(
         resource_id=str(current_user.id),
     )
 
-    return {
-        "success": True,
-        "message": "Password changed successfully"
-    }
+    return {"success": True, "message": "Password changed successfully"}
 
 
 @router.post("/forgot-password")
@@ -573,6 +555,7 @@ def forgot_password(
 
         try:
             from app.services.email_service import send_password_reset_email
+
             send_password_reset_email(user.email, token)  # send plaintext to user
         except Exception:
             logger.exception("Failed to send password reset email to %s", payload.email)
@@ -608,9 +591,13 @@ def reset_password(
     """
     # Hash the incoming token to compare against stored hash
     token_hash = hashlib.sha256(payload.token.encode()).hexdigest()
-    user = db.query(User).filter(
-        User.password_reset_token == token_hash,
-    ).first()
+    user = (
+        db.query(User)
+        .filter(
+            User.password_reset_token == token_hash,
+        )
+        .first()
+    )
 
     if not user:
         raise HTTPException(
@@ -618,9 +605,9 @@ def reset_password(
             detail="Invalid or expired reset token",
         )
 
-    if not user.password_reset_expires or user.password_reset_expires.replace(
-        tzinfo=timezone.utc
-    ) < datetime.now(timezone.utc):
+    if not user.password_reset_expires or user.password_reset_expires.replace(tzinfo=timezone.utc) < datetime.now(
+        timezone.utc
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token",
@@ -658,9 +645,13 @@ def accept_invite(
         - 400: Invalid, expired, or already-accepted invitation
     """
     token_hash = hashlib.sha256(payload.token.encode()).hexdigest()
-    invitation = db.query(UserInvitation).filter(
-        UserInvitation.token_hash == token_hash,
-    ).first()
+    invitation = (
+        db.query(UserInvitation)
+        .filter(
+            UserInvitation.token_hash == token_hash,
+        )
+        .first()
+    )
 
     if not invitation:
         raise HTTPException(
@@ -701,10 +692,14 @@ def accept_invite(
         db.flush()
 
     # Create or reactivate membership
-    existing_membership = db.query(TenantMembership).filter(
-        TenantMembership.user_id == user.id,
-        TenantMembership.tenant_id == invitation.tenant_id,
-    ).first()
+    existing_membership = (
+        db.query(TenantMembership)
+        .filter(
+            TenantMembership.user_id == user.id,
+            TenantMembership.tenant_id == invitation.tenant_id,
+        )
+        .first()
+    )
 
     if existing_membership:
         existing_membership.is_active = True
@@ -919,7 +914,8 @@ def mfa_verify(
     if not totp.verify(payload.code):
         _record_mfa_failure(user.id)
         log_authentication_attempt(
-            success=False, username=user.email,
+            success=False,
+            username=user.email,
             ip_address=_get_client_ip(request),
             error_message="Invalid MFA code",
             user_id=user.id,
@@ -936,7 +932,8 @@ def mfa_verify(
     response = _build_tokens_and_response(user, db)
 
     log_authentication_attempt(
-        success=True, username=user.email,
+        success=True,
+        username=user.email,
         ip_address=_get_client_ip(request),
         user_id=user.id,
     )
@@ -946,11 +943,7 @@ def mfa_verify(
 
 # Admin endpoints
 @router.post("/users", response_model=UserResponse)
-def create_user(
-    user_data: UserCreate,
-    db: Session = Depends(get_db),
-    admin: User = Depends(require_admin)
-):
+def create_user(user_data: UserCreate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     """
     Create new user (admin only)
 
@@ -960,17 +953,11 @@ def create_user(
     """
     # Check if email exists
     if db.query(User).filter(User.email == user_data.email).first():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
 
     # Check if username exists
     if db.query(User).filter(User.username == user_data.username).first():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already taken"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already taken")
 
     # Create user
     user = User(
@@ -978,7 +965,7 @@ def create_user(
         username=user_data.username,
         hashed_password=User.hash_password(user_data.password),
         full_name=user_data.full_name,
-        is_superuser=user_data.is_superuser
+        is_superuser=user_data.is_superuser,
     )
 
     db.add(user)
@@ -999,12 +986,7 @@ def create_user(
 
 
 @router.get("/users", response_model=list[UserResponse])
-def list_users(
-    skip: int = 0,
-    limit: int = 100,
-    db: Session = Depends(get_db),
-    admin: User = Depends(require_admin)
-):
+def list_users(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     """
     List all users (admin only)
 
@@ -1017,11 +999,7 @@ def list_users(
 
 
 @router.get("/users/{user_id}", response_model=UserResponse)
-def get_user(
-    user_id: int,
-    db: Session = Depends(get_db),
-    admin: User = Depends(require_admin)
-):
+def get_user(user_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     """
     Get user by ID (admin only)
 
@@ -1032,9 +1010,6 @@ def get_user(
     user = db.query(User).filter(User.id == user_id).first()
 
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     return UserResponse.model_validate(user)

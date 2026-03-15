@@ -46,11 +46,7 @@ def list_tenant_users(
     db: Session = Depends(get_db),
 ):
     """List all users in a tenant with their roles"""
-    memberships = (
-        db.query(TenantMembership)
-        .filter(TenantMembership.tenant_id == tenant_id)
-        .all()
-    )
+    memberships = db.query(TenantMembership).filter(TenantMembership.tenant_id == tenant_id).all()
 
     results = []
     for m in memberships:
@@ -181,6 +177,7 @@ def update_tenant_user(
     # forces re-authentication with fresh roles
     if role_changed or deactivated:
         from app.security.jwt_auth import jwt_manager
+
         jwt_manager.revoke_all_user_tokens(user_id)
 
     user = tm.user

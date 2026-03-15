@@ -20,12 +20,7 @@ class LoginRequest(BaseModel):
     password: str = Field(..., min_length=8, description="User password")
 
     model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "email": "user@example.com",
-                "password": "SecurePassword123"
-            }
-        }
+        json_schema_extra={"example": {"email": "user@example.com", "password": "SecurePassword123"}}
     )
 
 
@@ -45,12 +40,7 @@ class LoginResponse(BaseModel):
                 "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
                 "token_type": "bearer",
                 "expires_in": 1800,
-                "user": {
-                    "id": 1,
-                    "email": "user@example.com",
-                    "username": "user",
-                    "full_name": "John Doe"
-                }
+                "user": {"id": 1, "email": "user@example.com", "username": "user", "full_name": "John Doe"},
             }
         }
     )
@@ -62,11 +52,7 @@ class RefreshTokenRequest(BaseModel):
     refresh_token: str = Field(..., description="JWT refresh token")
 
     model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-            }
-        }
+        json_schema_extra={"example": {"refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."}}
     )
 
 
@@ -84,7 +70,7 @@ class RefreshTokenResponse(BaseModel):
                 "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
                 "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
                 "token_type": "bearer",
-                "expires_in": 1800
+                "expires_in": 1800,
             }
         }
     )
@@ -142,7 +128,7 @@ class UserCreate(BaseModel):
                 "username": "newuser",
                 "password": "SecurePassword123",
                 "full_name": "John Doe",
-                "is_superuser": False
+                "is_superuser": False,
             }
         }
     )
@@ -157,11 +143,7 @@ class UserUpdate(BaseModel):
 
     model_config = ConfigDict(
         json_schema_extra={
-            "example": {
-                "email": "updated@example.com",
-                "full_name": "John Updated Doe",
-                "is_active": True
-            }
+            "example": {"email": "updated@example.com", "full_name": "John Updated Doe", "is_active": True}
         }
     )
 
@@ -181,12 +163,7 @@ class ChangePasswordRequest(BaseModel):
         return v
 
     model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "current_password": "OldPassword123",
-                "new_password": "NewSecurePassword456"
-            }
-        }
+        json_schema_extra={"example": {"current_password": "OldPassword123", "new_password": "NewSecurePassword456"}}
     )
 
 

@@ -81,10 +81,7 @@ def get_exposure_summary(
 
     # Total assets (active only)
     total_assets = (
-        db.query(func.count(Asset.id))
-        .filter(Asset.tenant_id == tenant_id, Asset.is_active.is_(True))
-        .scalar()
-        or 0
+        db.query(func.count(Asset.id)).filter(Asset.tenant_id == tenant_id, Asset.is_active.is_(True)).scalar() or 0
     )
 
     # Assets with at least one open finding (exposed assets)
@@ -99,9 +96,7 @@ def get_exposure_summary(
         .subquery()
     )
 
-    total_exposed = (
-        db.query(func.count(exposed_asset_ids_sq.c.asset_id)).scalar() or 0
-    )
+    total_exposed = db.query(func.count(exposed_asset_ids_sq.c.asset_id)).scalar() or 0
 
     # For each exposed asset, determine highest severity
     # Build a subquery that finds the max severity per asset
@@ -153,10 +148,7 @@ def get_exposure_summary(
 
     # Calculate exposure score (0-100)
     # Weighted formula: sum of (severity_weight * count) normalized to 0-100
-    raw_score = sum(
-        _SEVERITY_WEIGHTS.get(sev, 0) * count
-        for sev, count in severity_breakdown.items()
-    )
+    raw_score = sum(_SEVERITY_WEIGHTS.get(sev, 0) * count for sev, count in severity_breakdown.items())
     # Normalize: cap at 100. Use a log-like scale for better distribution.
     if total_assets > 0 and raw_score > 0:
         # Max possible score if all assets had critical findings
@@ -236,9 +228,7 @@ def get_exposure_summary(
 @router.get("/assets", response_model=ExposedAssetListResponse)
 def list_exposed_assets(
     tenant_id: int,
-    asset_type: Optional[str] = Query(
-        None, description="Filter by asset type (domain, subdomain, ip, url, service)"
-    ),
+    asset_type: Optional[str] = Query(None, description="Filter by asset type (domain, subdomain, ip, url, service)"),
     min_severity: Optional[str] = Query(
         None, description="Minimum highest severity (info, low, medium, high, critical)"
     ),
@@ -388,9 +378,7 @@ def list_exposed_assets(
     if asset_type is not None:
         query = query.filter(Asset.type == AssetType(asset_type))
     if min_severity is not None:
-        sev_threshold_val = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}.get(
-            min_severity.lower(), 0
-        )
+        sev_threshold_val = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}.get(min_severity.lower(), 0)
         query = query.filter(highest_severity_sq.c.max_sev >= sev_threshold_val)
     if search:
         query = query.filter(Asset.identifier.ilike(f"%{escape_like(search)}%", escape="\\"))
@@ -565,6 +553,7 @@ def get_exposure_changes(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _verify_tenant_exists(db: Session, tenant_id: int) -> None:
     """

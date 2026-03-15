@@ -83,7 +83,7 @@ class AuditLog(Base):
     Stores all security-relevant events for compliance and forensics.
     """
 
-    __tablename__ = 'audit_logs'
+    __tablename__ = "audit_logs"
 
     id = Column(Integer, primary_key=True)
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
@@ -114,11 +114,11 @@ class AuditLog(Base):
     method = Column(String(10))
 
     __table_args__ = (
-        Index('idx_audit_user_timestamp', 'user_id', 'timestamp'),
-        Index('idx_audit_tenant_timestamp', 'tenant_id', 'timestamp'),
-        Index('idx_audit_event_timestamp', 'event_type', 'timestamp'),
-        Index('idx_audit_severity_timestamp', 'severity', 'timestamp'),
-        Index('idx_audit_result', 'result'),
+        Index("idx_audit_user_timestamp", "user_id", "timestamp"),
+        Index("idx_audit_tenant_timestamp", "tenant_id", "timestamp"),
+        Index("idx_audit_event_timestamp", "event_type", "timestamp"),
+        Index("idx_audit_severity_timestamp", "severity", "timestamp"),
+        Index("idx_audit_result", "result"),
     )
 
     def __repr__(self):
@@ -143,7 +143,7 @@ def log_audit_event(
     severity: str = "info",
     request_id: Optional[str] = None,
     endpoint: Optional[str] = None,
-    method: Optional[str] = None
+    method: Optional[str] = None,
 ):
     """
     Log a security audit event
@@ -197,7 +197,7 @@ def log_audit_event(
         severity=severity,
         request_id=request_id,
         endpoint=endpoint,
-        method=method
+        method=method,
     )
 
     db = None
@@ -207,11 +207,9 @@ def log_audit_event(
         db.commit()
 
         # Also log to application logger for real-time monitoring
-        log_level = {
-            "info": logging.INFO,
-            "warning": logging.WARNING,
-            "critical": logging.CRITICAL
-        }.get(severity, logging.INFO)
+        log_level = {"info": logging.INFO, "warning": logging.WARNING, "critical": logging.CRITICAL}.get(
+            severity, logging.INFO
+        )
 
         logger.log(
             log_level,
@@ -224,8 +222,8 @@ def log_audit_event(
                 "resource": resource,
                 "resource_id": resource_id,
                 "result": result,
-                "severity": severity
-            }
+                "severity": severity,
+            },
         )
 
     except Exception as e:
@@ -258,14 +256,14 @@ def sanitize_log_string(s: str, max_length: int = 1000) -> str:
         return ""
 
     # Remove control characters except newline/tab
-    s = ''.join(char for char in s if ord(char) >= 32 or char in '\n\t')
+    s = "".join(char for char in s if ord(char) >= 32 or char in "\n\t")
 
     # Truncate if too long
     if len(s) > max_length:
         s = s[:max_length] + "...[truncated]"
 
     # Escape newlines to prevent log injection
-    s = s.replace('\n', '\\n').replace('\r', '\\r')
+    s = s.replace("\n", "\\n").replace("\r", "\\r")
 
     return s
 
@@ -290,9 +288,18 @@ def sanitize_log_data(data: Dict[str, Any]) -> Dict[str, Any]:
 
     # Fields to redact
     sensitive_fields = {
-        'password', 'secret', 'token', 'api_key', 'private_key',
-        'access_token', 'refresh_token', 'authorization', 'cookie',
-        'session', 'csrf_token', 'jwt'
+        "password",
+        "secret",
+        "token",
+        "api_key",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "authorization",
+        "cookie",
+        "session",
+        "csrf_token",
+        "jwt",
     }
 
     sanitized = {}
@@ -328,7 +335,7 @@ def log_authentication_attempt(
     user_agent: Optional[str] = None,
     error_message: Optional[str] = None,
     user_id: Optional[int] = None,
-    tenant_id: Optional[int] = None
+    tenant_id: Optional[int] = None,
 ):
     """
     Log authentication attempt
@@ -353,7 +360,7 @@ def log_authentication_attempt(
         resource="user",
         resource_id=username,
         error_message=error_message,
-        severity="info" if success else "warning"
+        severity="info" if success else "warning",
     )
 
 
@@ -364,7 +371,7 @@ def log_authorization_failure(
     resource: str,
     resource_id: Optional[str] = None,
     ip_address: Optional[str] = None,
-    reason: Optional[str] = None
+    reason: Optional[str] = None,
 ):
     """
     Log authorization failure
@@ -388,7 +395,7 @@ def log_authorization_failure(
         resource=resource,
         resource_id=resource_id,
         error_message=reason,
-        severity="warning"
+        severity="warning",
     )
 
 
@@ -398,7 +405,7 @@ def log_suspicious_activity(
     ip_address: str,
     details: Optional[Dict[str, Any]] = None,
     user_id: Optional[int] = None,
-    tenant_id: Optional[int] = None
+    tenant_id: Optional[int] = None,
 ):
     """
     Log suspicious activity
@@ -419,7 +426,7 @@ def log_suspicious_activity(
         tenant_id=tenant_id,
         ip_address=ip_address,
         details=details,
-        severity="critical"
+        severity="critical",
     )
 
 
@@ -430,7 +437,7 @@ def log_data_modification(
     user_id: int,
     tenant_id: int,
     ip_address: Optional[str] = None,
-    details: Optional[Dict[str, Any]] = None
+    details: Optional[Dict[str, Any]] = None,
 ):
     """
     Log data modification
@@ -460,7 +467,7 @@ def log_data_modification(
         resource=resource,
         resource_id=resource_id,
         details=details,
-        severity="info"
+        severity="info",
     )
 
 
@@ -472,7 +479,7 @@ def get_audit_logs(
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
     limit: int = 100,
-    offset: int = 0
+    offset: int = 0,
 ):
     """
     Query audit logs

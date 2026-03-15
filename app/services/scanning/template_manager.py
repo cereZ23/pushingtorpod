@@ -35,56 +35,20 @@ class TemplateManager:
 
     # Template categories (aligned with Nuclei's directory structure)
     CATEGORIES = {
-        'cves': {
-            'path': 'cves/',
-            'description': 'CVE-based vulnerabilities',
-            'risk': 'high'
+        "cves": {"path": "cves/", "description": "CVE-based vulnerabilities", "risk": "high"},
+        "exposed-panels": {"path": "exposed-panels/", "description": "Exposed admin/login panels", "risk": "medium"},
+        "misconfigurations": {
+            "path": "misconfigurations/",
+            "description": "Common misconfigurations",
+            "risk": "medium",
         },
-        'exposed-panels': {
-            'path': 'exposed-panels/',
-            'description': 'Exposed admin/login panels',
-            'risk': 'medium'
-        },
-        'misconfigurations': {
-            'path': 'misconfigurations/',
-            'description': 'Common misconfigurations',
-            'risk': 'medium'
-        },
-        'default-logins': {
-            'path': 'default-logins/',
-            'description': 'Default credentials',
-            'risk': 'high'
-        },
-        'takeovers': {
-            'path': 'takeovers/',
-            'description': 'Subdomain takeovers',
-            'risk': 'high'
-        },
-        'exposures': {
-            'path': 'exposures/',
-            'description': 'Information disclosure',
-            'risk': 'medium'
-        },
-        'technologies': {
-            'path': 'technologies/',
-            'description': 'Technology detection',
-            'risk': 'low'
-        },
-        'vulnerabilities': {
-            'path': 'vulnerabilities/',
-            'description': 'Generic vulnerabilities',
-            'risk': 'high'
-        },
-        'fuzzing': {
-            'path': 'fuzzing/',
-            'description': 'Fuzzing templates',
-            'risk': 'low'
-        },
-        'workflows': {
-            'path': 'workflows/',
-            'description': 'Workflow-based scans',
-            'risk': 'medium'
-        }
+        "default-logins": {"path": "default-logins/", "description": "Default credentials", "risk": "high"},
+        "takeovers": {"path": "takeovers/", "description": "Subdomain takeovers", "risk": "high"},
+        "exposures": {"path": "exposures/", "description": "Information disclosure", "risk": "medium"},
+        "technologies": {"path": "technologies/", "description": "Technology detection", "risk": "low"},
+        "vulnerabilities": {"path": "vulnerabilities/", "description": "Generic vulnerabilities", "risk": "high"},
+        "fuzzing": {"path": "fuzzing/", "description": "Fuzzing templates", "risk": "low"},
+        "workflows": {"path": "workflows/", "description": "Workflow-based scans", "risk": "medium"},
     }
 
     def __init__(self, tenant_id: Optional[int] = None):
@@ -97,9 +61,7 @@ class TemplateManager:
         self.tenant_id = tenant_id
 
     def list_templates(
-        self,
-        categories: Optional[List[str]] = None,
-        severity: Optional[List[str]] = None
+        self, categories: Optional[List[str]] = None, severity: Optional[List[str]] = None
     ) -> List[Dict]:
         """
         List available Nuclei templates
@@ -114,34 +76,30 @@ class TemplateManager:
         templates = []
 
         # Build filter arguments
-        args = ['-tl']  # Template list
+        args = ["-tl"]  # Template list
 
         if categories:
             for category in categories:
                 if category in self.CATEGORIES:
-                    args.extend(['-t', self.CATEGORIES[category]['path']])
+                    args.extend(["-t", self.CATEGORIES[category]["path"]])
 
         if severity:
-            severity_str = ','.join(severity)
-            args.extend(['-severity', severity_str])
+            severity_str = ",".join(severity)
+            args.extend(["-severity", severity_str])
 
         # Execute nuclei to list templates
         try:
             # Use system tenant (0) for template operations
             with SecureToolExecutor(0) as executor:
-                returncode, stdout, stderr = executor.execute(
-                    'nuclei',
-                    args,
-                    timeout=60
-                )
+                returncode, stdout, stderr = executor.execute("nuclei", args, timeout=60)
 
                 if returncode != 0:
                     logger.warning(f"Nuclei template list returned code {returncode}")
 
                 # Parse output
-                for line in stdout.strip().split('\n'):
-                    if line and not line.startswith('['):  # Skip log lines
-                        templates.append({'path': line.strip()})
+                for line in stdout.strip().split("\n"):
+                    if line and not line.startswith("["):  # Skip log lines
+                        templates.append({"path": line.strip()})
 
         except ToolExecutionError as e:
             logger.error(f"Failed to list templates: {e}")
@@ -167,37 +125,25 @@ class TemplateManager:
             # Use system tenant (0) for template operations
             with SecureToolExecutor(0) as executor:
                 returncode, stdout, stderr = executor.execute(
-                    'nuclei',
-                    ['-update-templates'],
-                    timeout=300  # 5 minutes for download
+                    "nuclei",
+                    ["-update-templates"],
+                    timeout=300,  # 5 minutes for download
                 )
 
                 if returncode != 0:
                     logger.error(f"Template update failed: {stderr}")
-                    return {
-                        'success': False,
-                        'error': stderr,
-                        'timestamp': datetime.now(timezone.utc).isoformat()
-                    }
+                    return {"success": False, "error": stderr, "timestamp": datetime.now(timezone.utc).isoformat()}
 
                 # Parse output for success indicators
-                success = 'successfully updated' in stdout.lower() or returncode == 0
+                success = "successfully updated" in stdout.lower() or returncode == 0
 
                 logger.info(f"Template update {'succeeded' if success else 'failed'}")
 
-                return {
-                    'success': success,
-                    'output': stdout,
-                    'timestamp': datetime.now(timezone.utc).isoformat()
-                }
+                return {"success": success, "output": stdout, "timestamp": datetime.now(timezone.utc).isoformat()}
 
         except ToolExecutionError as e:
             logger.error(f"Failed to update templates: {e}")
-            return {
-                'success': False,
-                'error': str(e),
-                'timestamp': datetime.now(timezone.utc).isoformat()
-            }
+            return {"success": False, "error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
 
     def get_template_info(self, template_id: str) -> Optional[Dict]:
         """
@@ -212,9 +158,7 @@ class TemplateManager:
         try:
             with SecureToolExecutor(0) as executor:
                 returncode, stdout, stderr = executor.execute(
-                    'nuclei',
-                    ['-t', template_id, '-json', '-validate'],
-                    timeout=30
+                    "nuclei", ["-t", template_id, "-json", "-validate"], timeout=30
                 )
 
                 if returncode == 0 and stdout:
@@ -241,17 +185,10 @@ class TemplateManager:
         try:
             with SecureToolExecutor(0) as executor:
                 # Write template to temp file
-                template_file = executor.create_input_file(
-                    'custom-template.yaml',
-                    template_content
-                )
+                template_file = executor.create_input_file("custom-template.yaml", template_content)
 
                 # Validate template
-                returncode, stdout, stderr = executor.execute(
-                    'nuclei',
-                    ['-t', template_file, '-validate'],
-                    timeout=30
-                )
+                returncode, stdout, stderr = executor.execute("nuclei", ["-t", template_file, "-validate"], timeout=30)
 
                 if returncode == 0:
                     return True, None
@@ -281,31 +218,13 @@ class TemplateManager:
             List of recommended template paths
         """
         recommendations = {
-            'web': [
-                'cves/',
-                'exposed-panels/',
-                'misconfigurations/',
-                'default-logins/',
-                'exposures/'
-            ],
-            'api': [
-                'cves/',
-                'misconfigurations/',
-                'exposures/'
-            ],
-            'subdomain': [
-                'takeovers/',
-                'dns/',
-                'cves/'
-            ],
-            'ip': [
-                'cves/',
-                'exposed-panels/',
-                'default-logins/'
-            ]
+            "web": ["cves/", "exposed-panels/", "misconfigurations/", "default-logins/", "exposures/"],
+            "api": ["cves/", "misconfigurations/", "exposures/"],
+            "subdomain": ["takeovers/", "dns/", "cves/"],
+            "ip": ["cves/", "exposed-panels/", "default-logins/"],
         }
 
-        return recommendations.get(asset_type, ['cves/', 'vulnerabilities/'])
+        return recommendations.get(asset_type, ["cves/", "vulnerabilities/"])
 
     def get_template_stats(self) -> Dict:
         """
@@ -315,26 +234,20 @@ class TemplateManager:
             Dict with template statistics
         """
         stats = {
-            'total_templates': 0,
-            'by_category': {},
-            'by_severity': {
-                'critical': 0,
-                'high': 0,
-                'medium': 0,
-                'low': 0,
-                'info': 0
-            },
-            'last_updated': None
+            "total_templates": 0,
+            "by_category": {},
+            "by_severity": {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0},
+            "last_updated": None,
         }
 
         # Get template list
         templates = self.list_templates()
-        stats['total_templates'] = len(templates)
+        stats["total_templates"] = len(templates)
 
         # Count by category
         for category_name, category_info in self.CATEGORIES.items():
             category_templates = self.list_templates(categories=[category_name])
-            stats['by_category'][category_name] = len(category_templates)
+            stats["by_category"][category_name] = len(category_templates)
 
         return stats
 

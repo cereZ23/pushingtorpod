@@ -32,6 +32,7 @@ from app.services.report_generator import (
 
 # ── Compliance framework mapping ─────────────────────────────────────
 
+
 class TestMapFindingToFramework:
     """Test _map_finding_to_framework for SOC2 and ISO27001."""
 
@@ -86,6 +87,7 @@ class TestMapFindingToFramework:
 
 # ── Remediation guidance ─────────────────────────────────────────────
 
+
 class TestGetRemediation:
     def test_known_template_returns_guidance(self):
         result = _get_remediation("http-missing-security-headers")
@@ -105,6 +107,7 @@ class TestGetRemediation:
 
 
 # ── Evidence formatting ──────────────────────────────────────────────
+
 
 class TestFormatEvidence:
     def test_none_returns_empty(self):
@@ -135,6 +138,7 @@ class TestFormatEvidence:
 
 
 # ── Static structure validation ──────────────────────────────────────
+
 
 class TestComplianceStructure:
     def test_tsc_categories_count(self):
@@ -168,4 +172,3 @@ class TestComplianceStructure:
     def test_template_compliance_map_has_entries(self):
         """Template compliance map should have reasonable coverage."""
         assert len(_TEMPLATE_COMPLIANCE_MAP) >= 20
-

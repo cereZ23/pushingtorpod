@@ -24,13 +24,11 @@ from app.models.enrichment import Certificate, Endpoint
 # FIXTURES
 # =============================================================================
 
+
 @pytest.fixture
 def mock_tenant(db_session):
     """Create a test tenant"""
-    tenant = Tenant(
-        name="Test Tenant",
-        slug="test-tenant"
-    )
+    tenant = Tenant(name="Test Tenant", slug="test-tenant")
     db_session.add(tenant)
     db_session.commit()
     return tenant
@@ -39,12 +37,7 @@ def mock_tenant(db_session):
 @pytest.fixture
 def mock_asset(db_session, mock_tenant):
     """Create a test asset"""
-    asset = Asset(
-        tenant_id=mock_tenant.id,
-        type=AssetType.DOMAIN,
-        identifier="example.com",
-        is_active=True
-    )
+    asset = Asset(tenant_id=mock_tenant.id, type=AssetType.DOMAIN, identifier="example.com", is_active=True)
     db_session.add(asset)
     db_session.commit()
     return asset
@@ -53,6 +46,7 @@ def mock_asset(db_session, mock_tenant):
 # =============================================================================
 # SERVICE REPOSITORY TESTS
 # =============================================================================
+
 
 class TestServiceRepository:
     """Test ServiceRepository bulk operations and queries"""
@@ -63,33 +57,29 @@ class TestServiceRepository:
 
         services_data = [
             {
-                'port': 80,
-                'protocol': 'http',
-                'http_status': 200,
-                'http_title': 'Welcome',
-                'web_server': 'nginx',
-                'enrichment_source': 'httpx'
+                "port": 80,
+                "protocol": "http",
+                "http_status": 200,
+                "http_title": "Welcome",
+                "web_server": "nginx",
+                "enrichment_source": "httpx",
             },
             {
-                'port': 443,
-                'protocol': 'https',
-                'http_status': 200,
-                'has_tls': True,
-                'tls_version': 'TLSv1.3',
-                'enrichment_source': 'tlsx'
+                "port": 443,
+                "protocol": "https",
+                "http_status": 200,
+                "has_tls": True,
+                "tls_version": "TLSv1.3",
+                "enrichment_source": "tlsx",
             },
-            {
-                'port': 8080,
-                'protocol': 'http',
-                'enrichment_source': 'naabu'
-            }
+            {"port": 8080, "protocol": "http", "enrichment_source": "naabu"},
         ]
 
         result = repo.bulk_upsert(mock_asset.id, services_data)
 
-        assert result['created'] == 3
-        assert result['updated'] == 0
-        assert result['total_processed'] == 3
+        assert result["created"] == 3
+        assert result["updated"] == 0
+        assert result["total_processed"] == 3
 
         # Verify services were created
         services = db_session.query(Service).filter_by(asset_id=mock_asset.id).all()
@@ -103,9 +93,9 @@ class TestServiceRepository:
         initial_service = Service(
             asset_id=mock_asset.id,
             port=80,
-            protocol='http',
+            protocol="http",
             http_status=None,
-            first_seen=datetime.now(timezone.utc) - timedelta(days=1)
+            first_seen=datetime.now(timezone.utc) - timedelta(days=1),
         )
         db_session.add(initial_service)
         db_session.commit()
@@ -115,32 +105,29 @@ class TestServiceRepository:
         # Update with enrichment data
         services_data = [
             {
-                'port': 80,
-                'protocol': 'http',
-                'http_status': 200,
-                'http_title': 'Updated Title',
-                'web_server': 'nginx/1.21.0',
-                'http_technologies': ['nginx', 'PHP'],
-                'enrichment_source': 'httpx'
+                "port": 80,
+                "protocol": "http",
+                "http_status": 200,
+                "http_title": "Updated Title",
+                "web_server": "nginx/1.21.0",
+                "http_technologies": ["nginx", "PHP"],
+                "enrichment_source": "httpx",
             }
         ]
 
         result = repo.bulk_upsert(mock_asset.id, services_data)
 
-        assert result['created'] == 0
-        assert result['updated'] == 1
+        assert result["created"] == 0
+        assert result["updated"] == 1
 
         # Verify service was updated
-        updated_service = db_session.query(Service).filter_by(
-            asset_id=mock_asset.id,
-            port=80
-        ).first()
+        updated_service = db_session.query(Service).filter_by(asset_id=mock_asset.id, port=80).first()
 
         assert updated_service.http_status == 200
-        assert updated_service.http_title == 'Updated Title'
-        assert updated_service.web_server == 'nginx/1.21.0'
-        assert updated_service.http_technologies == ['nginx', 'PHP']
-        assert updated_service.enrichment_source == 'httpx'
+        assert updated_service.http_title == "Updated Title"
+        assert updated_service.web_server == "nginx/1.21.0"
+        assert updated_service.http_technologies == ["nginx", "PHP"]
+        assert updated_service.enrichment_source == "httpx"
 
         # first_seen should be preserved
         assert updated_service.first_seen == initial_first_seen
@@ -155,11 +142,7 @@ class TestServiceRepository:
         # Create 100 services
         services_data = []
         for port in range(1000, 1100):
-            services_data.append({
-                'port': port,
-                'protocol': 'tcp',
-                'enrichment_source': 'naabu'
-            })
+            services_data.append({"port": port, "protocol": "tcp", "enrichment_source": "naabu"})
 
         # Time the bulk upsert
         start_time = time.time()
@@ -170,8 +153,8 @@ class TestServiceRepository:
         assert elapsed_time < 0.1
 
         # All records should be created
-        assert result['created'] == 100
-        assert result['total_processed'] == 100
+        assert result["created"] == 100
+        assert result["total_processed"] == 100
 
     def test_get_web_services(self, db_session, mock_asset):
         """Test getting only web services (HTTP/HTTPS)"""
@@ -179,11 +162,11 @@ class TestServiceRepository:
 
         # Create mix of services
         services = [
-            Service(asset_id=mock_asset.id, port=80, protocol='http', http_status=200),
-            Service(asset_id=mock_asset.id, port=443, protocol='https', http_status=200),
-            Service(asset_id=mock_asset.id, port=8080, protocol='http', http_status=200),
-            Service(asset_id=mock_asset.id, port=22, protocol='ssh'),  # Not web
-            Service(asset_id=mock_asset.id, port=3306, protocol='mysql'),  # Not web
+            Service(asset_id=mock_asset.id, port=80, protocol="http", http_status=200),
+            Service(asset_id=mock_asset.id, port=443, protocol="https", http_status=200),
+            Service(asset_id=mock_asset.id, port=8080, protocol="http", http_status=200),
+            Service(asset_id=mock_asset.id, port=22, protocol="ssh"),  # Not web
+            Service(asset_id=mock_asset.id, port=3306, protocol="mysql"),  # Not web
         ]
 
         for service in services:
@@ -202,8 +185,8 @@ class TestServiceRepository:
 
         # Create services
         services = [
-            Service(asset_id=mock_asset.id, port=443, has_tls=True, tls_version='TLSv1.3'),
-            Service(asset_id=mock_asset.id, port=8443, has_tls=True, tls_version='TLSv1.2'),
+            Service(asset_id=mock_asset.id, port=443, has_tls=True, tls_version="TLSv1.3"),
+            Service(asset_id=mock_asset.id, port=8443, has_tls=True, tls_version="TLSv1.2"),
             Service(asset_id=mock_asset.id, port=80, has_tls=False),
         ]
 
@@ -222,16 +205,8 @@ class TestServiceRepository:
 
         # Create services with technologies
         services = [
-            Service(
-                asset_id=mock_asset.id,
-                port=80,
-                http_technologies=['nginx', 'PHP', 'WordPress']
-            ),
-            Service(
-                asset_id=mock_asset.id,
-                port=443,
-                http_technologies=['Apache', 'Python']
-            ),
+            Service(asset_id=mock_asset.id, port=80, http_technologies=["nginx", "PHP", "WordPress"]),
+            Service(asset_id=mock_asset.id, port=443, http_technologies=["Apache", "Python"]),
         ]
 
         for service in services:
@@ -239,7 +214,7 @@ class TestServiceRepository:
         db_session.commit()
 
         # Find services using WordPress
-        wordpress_services = repo.get_services_by_technology(mock_tenant.id, 'WordPress')
+        wordpress_services = repo.get_services_by_technology(mock_tenant.id, "WordPress")
 
         assert len(wordpress_services) == 1
         assert wordpress_services[0].port == 80
@@ -248,6 +223,7 @@ class TestServiceRepository:
 # =============================================================================
 # CERTIFICATE REPOSITORY TESTS
 # =============================================================================
+
 
 class TestCertificateRepository:
     """Test CertificateRepository operations"""
@@ -258,30 +234,30 @@ class TestCertificateRepository:
 
         certificates_data = [
             {
-                'serial_number': 'ABC123',
-                'subject_cn': 'example.com',
-                'issuer': "Let's Encrypt",
-                'not_before': datetime.now(timezone.utc) - timedelta(days=30),
-                'not_after': datetime.now(timezone.utc) + timedelta(days=60),
-                'is_expired': False,
-                'days_until_expiry': 60,
-                'san_domains': ['example.com', 'www.example.com'],
-                'is_wildcard': False,
-                'is_self_signed': False
+                "serial_number": "ABC123",
+                "subject_cn": "example.com",
+                "issuer": "Let's Encrypt",
+                "not_before": datetime.now(timezone.utc) - timedelta(days=30),
+                "not_after": datetime.now(timezone.utc) + timedelta(days=60),
+                "is_expired": False,
+                "days_until_expiry": 60,
+                "san_domains": ["example.com", "www.example.com"],
+                "is_wildcard": False,
+                "is_self_signed": False,
             },
             {
-                'serial_number': 'DEF456',
-                'subject_cn': '*.example.com',
-                'issuer': 'DigiCert',
-                'not_after': datetime.now(timezone.utc) + timedelta(days=365),
-                'is_wildcard': True
-            }
+                "serial_number": "DEF456",
+                "subject_cn": "*.example.com",
+                "issuer": "DigiCert",
+                "not_after": datetime.now(timezone.utc) + timedelta(days=365),
+                "is_wildcard": True,
+            },
         ]
 
         result = repo.bulk_upsert(mock_asset.id, certificates_data)
 
-        assert result['created'] == 2
-        assert result['updated'] == 0
+        assert result["created"] == 2
+        assert result["updated"] == 0
 
         # Verify certificates were created
         certs = db_session.query(Certificate).filter_by(asset_id=mock_asset.id).all()
@@ -295,25 +271,25 @@ class TestCertificateRepository:
         certs = [
             Certificate(
                 asset_id=mock_asset.id,
-                serial_number='EXPIRING_SOON',
+                serial_number="EXPIRING_SOON",
                 not_after=datetime.now(timezone.utc) + timedelta(days=15),  # Expires in 15 days
                 days_until_expiry=15,
-                is_expired=False
+                is_expired=False,
             ),
             Certificate(
                 asset_id=mock_asset.id,
-                serial_number='VALID_LONG',
+                serial_number="VALID_LONG",
                 not_after=datetime.now(timezone.utc) + timedelta(days=365),  # Expires in 1 year
                 days_until_expiry=365,
-                is_expired=False
+                is_expired=False,
             ),
             Certificate(
                 asset_id=mock_asset.id,
-                serial_number='ALREADY_EXPIRED',
+                serial_number="ALREADY_EXPIRED",
                 not_after=datetime.now(timezone.utc) - timedelta(days=10),  # Already expired
                 days_until_expiry=-10,
-                is_expired=True
-            )
+                is_expired=True,
+            ),
         ]
 
         for cert in certs:
@@ -324,7 +300,7 @@ class TestCertificateRepository:
         expiring_certs = repo.get_expiring_soon(mock_tenant.id, days_threshold=30)
 
         assert len(expiring_certs) == 1
-        assert expiring_certs[0].serial_number == 'EXPIRING_SOON'
+        assert expiring_certs[0].serial_number == "EXPIRING_SOON"
 
     def test_get_expired(self, db_session, mock_asset, mock_tenant):
         """Test getting expired certificates"""
@@ -334,22 +310,22 @@ class TestCertificateRepository:
         certs = [
             Certificate(
                 asset_id=mock_asset.id,
-                serial_number='EXPIRED_1',
+                serial_number="EXPIRED_1",
                 is_expired=True,
-                not_after=datetime.now(timezone.utc) - timedelta(days=30)
+                not_after=datetime.now(timezone.utc) - timedelta(days=30),
             ),
             Certificate(
                 asset_id=mock_asset.id,
-                serial_number='EXPIRED_2',
+                serial_number="EXPIRED_2",
                 is_expired=True,
-                not_after=datetime.now(timezone.utc) - timedelta(days=5)
+                not_after=datetime.now(timezone.utc) - timedelta(days=5),
             ),
             Certificate(
                 asset_id=mock_asset.id,
-                serial_number='VALID',
+                serial_number="VALID",
                 is_expired=False,
-                not_after=datetime.now(timezone.utc) + timedelta(days=60)
-            )
+                not_after=datetime.now(timezone.utc) + timedelta(days=60),
+            ),
         ]
 
         for cert in certs:
@@ -367,17 +343,11 @@ class TestCertificateRepository:
 
         certs = [
             Certificate(
-                asset_id=mock_asset.id,
-                serial_number='SELF_SIGNED',
-                is_self_signed=True,
-                subject_cn='test.local'
+                asset_id=mock_asset.id, serial_number="SELF_SIGNED", is_self_signed=True, subject_cn="test.local"
             ),
             Certificate(
-                asset_id=mock_asset.id,
-                serial_number='CA_SIGNED',
-                is_self_signed=False,
-                issuer="Let's Encrypt"
-            )
+                asset_id=mock_asset.id, serial_number="CA_SIGNED", is_self_signed=False, issuer="Let's Encrypt"
+            ),
         ]
 
         for cert in certs:
@@ -396,16 +366,16 @@ class TestCertificateRepository:
         certs = [
             Certificate(
                 asset_id=mock_asset.id,
-                serial_number='WEAK_SIG',
+                serial_number="WEAK_SIG",
                 has_weak_signature=True,
-                signature_algorithm='SHA1WithRSA'
+                signature_algorithm="SHA1WithRSA",
             ),
             Certificate(
                 asset_id=mock_asset.id,
-                serial_number='STRONG_SIG',
+                serial_number="STRONG_SIG",
                 has_weak_signature=False,
-                signature_algorithm='SHA256WithRSA'
-            )
+                signature_algorithm="SHA256WithRSA",
+            ),
         ]
 
         for cert in certs:
@@ -423,11 +393,11 @@ class TestCertificateRepository:
 
         # Create diverse certificates
         certs = [
-            Certificate(asset_id=mock_asset.id, serial_number='1', is_expired=True),
-            Certificate(asset_id=mock_asset.id, serial_number='2', is_expired=False, days_until_expiry=15),
-            Certificate(asset_id=mock_asset.id, serial_number='3', is_self_signed=True),
-            Certificate(asset_id=mock_asset.id, serial_number='4', has_weak_signature=True),
-            Certificate(asset_id=mock_asset.id, serial_number='5', is_wildcard=True),
+            Certificate(asset_id=mock_asset.id, serial_number="1", is_expired=True),
+            Certificate(asset_id=mock_asset.id, serial_number="2", is_expired=False, days_until_expiry=15),
+            Certificate(asset_id=mock_asset.id, serial_number="3", is_self_signed=True),
+            Certificate(asset_id=mock_asset.id, serial_number="4", has_weak_signature=True),
+            Certificate(asset_id=mock_asset.id, serial_number="5", is_wildcard=True),
         ]
 
         for cert in certs:
@@ -436,18 +406,19 @@ class TestCertificateRepository:
 
         stats = repo.get_certificate_stats(mock_tenant.id)
 
-        assert stats['total'] == 5
-        assert stats['expired'] == 1
-        assert stats['expiring_soon'] == 1  # days_until_expiry <= 30
-        assert stats['self_signed'] == 1
-        assert stats['weak_signatures'] == 1
-        assert stats['wildcards'] == 1
-        assert stats['valid'] == 4  # total - expired
+        assert stats["total"] == 5
+        assert stats["expired"] == 1
+        assert stats["expiring_soon"] == 1  # days_until_expiry <= 30
+        assert stats["self_signed"] == 1
+        assert stats["weak_signatures"] == 1
+        assert stats["wildcards"] == 1
+        assert stats["valid"] == 4  # total - expired
 
 
 # =============================================================================
 # ENDPOINT REPOSITORY TESTS
 # =============================================================================
+
 
 class TestEndpointRepository:
     """Test EndpointRepository operations"""
@@ -458,33 +429,33 @@ class TestEndpointRepository:
 
         endpoints_data = [
             {
-                'url': 'https://example.com/',
-                'method': 'GET',
-                'path': '/',
-                'status_code': 200,
-                'endpoint_type': 'page',
-                'is_api': False
+                "url": "https://example.com/",
+                "method": "GET",
+                "path": "/",
+                "status_code": 200,
+                "endpoint_type": "page",
+                "is_api": False,
             },
             {
-                'url': 'https://example.com/api/v1/users',
-                'method': 'GET',
-                'path': '/api/v1/users',
-                'status_code': 200,
-                'endpoint_type': 'api',
-                'is_api': True
+                "url": "https://example.com/api/v1/users",
+                "method": "GET",
+                "path": "/api/v1/users",
+                "status_code": 200,
+                "endpoint_type": "api",
+                "is_api": True,
             },
             {
-                'url': 'https://example.com/admin/login',
-                'method': 'POST',
-                'path': '/admin/login',
-                'endpoint_type': 'form'
-            }
+                "url": "https://example.com/admin/login",
+                "method": "POST",
+                "path": "/admin/login",
+                "endpoint_type": "form",
+            },
         ]
 
         result = repo.bulk_upsert(mock_asset.id, endpoints_data)
 
-        assert result['created'] == 3
-        assert result['updated'] == 0
+        assert result["created"] == 3
+        assert result["updated"] == 0
 
         # Verify endpoints were created
         endpoints = db_session.query(Endpoint).filter_by(asset_id=mock_asset.id).all()
@@ -497,25 +468,25 @@ class TestEndpointRepository:
         endpoints = [
             Endpoint(
                 asset_id=mock_asset.id,
-                url='https://example.com/api/users',
-                method='GET',
+                url="https://example.com/api/users",
+                method="GET",
                 is_api=True,
-                endpoint_type='api'
+                endpoint_type="api",
             ),
             Endpoint(
                 asset_id=mock_asset.id,
-                url='https://example.com/api/posts',
-                method='GET',
+                url="https://example.com/api/posts",
+                method="GET",
                 is_api=True,
-                endpoint_type='api'
+                endpoint_type="api",
             ),
             Endpoint(
                 asset_id=mock_asset.id,
-                url='https://example.com/about',
-                method='GET',
+                url="https://example.com/about",
+                method="GET",
                 is_api=False,
-                endpoint_type='page'
-            )
+                endpoint_type="page",
+            ),
         ]
 
         for endpoint in endpoints:
@@ -532,26 +503,10 @@ class TestEndpointRepository:
         repo = EndpointRepository(db_session)
 
         endpoints = [
-            Endpoint(
-                asset_id=mock_asset.id,
-                url='https://example.com/admin/dashboard',
-                method='GET'
-            ),
-            Endpoint(
-                asset_id=mock_asset.id,
-                url='https://example.com/login',
-                method='POST'
-            ),
-            Endpoint(
-                asset_id=mock_asset.id,
-                url='https://example.com/api/secret',
-                method='GET'
-            ),
-            Endpoint(
-                asset_id=mock_asset.id,
-                url='https://example.com/about',
-                method='GET'
-            )
+            Endpoint(asset_id=mock_asset.id, url="https://example.com/admin/dashboard", method="GET"),
+            Endpoint(asset_id=mock_asset.id, url="https://example.com/login", method="POST"),
+            Endpoint(asset_id=mock_asset.id, url="https://example.com/api/secret", method="GET"),
+            Endpoint(asset_id=mock_asset.id, url="https://example.com/about", method="GET"),
         ]
 
         for endpoint in endpoints:
@@ -562,34 +517,16 @@ class TestEndpointRepository:
 
         # Should find admin, login, and api endpoints (not about)
         assert len(sensitive) == 3
-        assert all(
-            any(keyword in e.url.lower() for keyword in ['admin', 'login', 'api', 'secret'])
-            for e in sensitive
-        )
+        assert all(any(keyword in e.url.lower() for keyword in ["admin", "login", "api", "secret"]) for e in sensitive)
 
     def test_get_forms(self, db_session, mock_asset, mock_tenant):
         """Test getting form endpoints"""
         repo = EndpointRepository(db_session)
 
         endpoints = [
-            Endpoint(
-                asset_id=mock_asset.id,
-                url='https://example.com/contact',
-                method='POST',
-                endpoint_type='form'
-            ),
-            Endpoint(
-                asset_id=mock_asset.id,
-                url='https://example.com/search',
-                method='GET',
-                endpoint_type='form'
-            ),
-            Endpoint(
-                asset_id=mock_asset.id,
-                url='https://example.com/api',
-                method='GET',
-                endpoint_type='api'
-            )
+            Endpoint(asset_id=mock_asset.id, url="https://example.com/contact", method="POST", endpoint_type="form"),
+            Endpoint(asset_id=mock_asset.id, url="https://example.com/search", method="GET", endpoint_type="form"),
+            Endpoint(asset_id=mock_asset.id, url="https://example.com/api", method="GET", endpoint_type="api"),
         ]
 
         for endpoint in endpoints:
@@ -599,23 +536,15 @@ class TestEndpointRepository:
         forms = repo.get_forms(mock_tenant.id)
 
         assert len(forms) == 2
-        assert all(e.endpoint_type == 'form' for e in forms)
+        assert all(e.endpoint_type == "form" for e in forms)
 
     def test_get_external_links(self, db_session, mock_asset, mock_tenant):
         """Test getting external links"""
         repo = EndpointRepository(db_session)
 
         endpoints = [
-            Endpoint(
-                asset_id=mock_asset.id,
-                url='https://external.com/page',
-                is_external=True
-            ),
-            Endpoint(
-                asset_id=mock_asset.id,
-                url='https://example.com/internal',
-                is_external=False
-            )
+            Endpoint(asset_id=mock_asset.id, url="https://external.com/page", is_external=True),
+            Endpoint(asset_id=mock_asset.id, url="https://example.com/internal", is_external=False),
         ]
 
         for endpoint in endpoints:
@@ -632,10 +561,10 @@ class TestEndpointRepository:
         repo = EndpointRepository(db_session)
 
         endpoints = [
-            Endpoint(asset_id=mock_asset.id, url='https://example.com/', depth=0),
-            Endpoint(asset_id=mock_asset.id, url='https://example.com/page1', depth=1),
-            Endpoint(asset_id=mock_asset.id, url='https://example.com/page1/sub', depth=2),
-            Endpoint(asset_id=mock_asset.id, url='https://example.com/page1/sub/deep', depth=3),
+            Endpoint(asset_id=mock_asset.id, url="https://example.com/", depth=0),
+            Endpoint(asset_id=mock_asset.id, url="https://example.com/page1", depth=1),
+            Endpoint(asset_id=mock_asset.id, url="https://example.com/page1/sub", depth=2),
+            Endpoint(asset_id=mock_asset.id, url="https://example.com/page1/sub/deep", depth=3),
         ]
 
         for endpoint in endpoints:
@@ -653,10 +582,10 @@ class TestEndpointRepository:
         repo = EndpointRepository(db_session)
 
         endpoints = [
-            Endpoint(asset_id=mock_asset.id, url='https://example.com/api/1', is_api=True, endpoint_type='api'),
-            Endpoint(asset_id=mock_asset.id, url='https://example.com/api/2', is_api=True, endpoint_type='api'),
-            Endpoint(asset_id=mock_asset.id, url='https://external.com', is_external=True, endpoint_type='external'),
-            Endpoint(asset_id=mock_asset.id, url='https://example.com/form', endpoint_type='form'),
+            Endpoint(asset_id=mock_asset.id, url="https://example.com/api/1", is_api=True, endpoint_type="api"),
+            Endpoint(asset_id=mock_asset.id, url="https://example.com/api/2", is_api=True, endpoint_type="api"),
+            Endpoint(asset_id=mock_asset.id, url="https://external.com", is_external=True, endpoint_type="external"),
+            Endpoint(asset_id=mock_asset.id, url="https://example.com/form", endpoint_type="form"),
         ]
 
         for endpoint in endpoints:
@@ -665,12 +594,12 @@ class TestEndpointRepository:
 
         stats = repo.get_endpoint_stats(mock_tenant.id)
 
-        assert stats['total'] == 4
-        assert stats['api_endpoints'] == 2
-        assert stats['external_links'] == 1
-        assert stats['forms'] == 1
-        assert stats['by_type']['api'] == 2
-        assert stats['by_type']['form'] == 1
+        assert stats["total"] == 4
+        assert stats["api_endpoints"] == 2
+        assert stats["external_links"] == 1
+        assert stats["forms"] == 1
+        assert stats["by_type"]["api"] == 2
+        assert stats["by_type"]["form"] == 1
 
     def test_get_recent_discoveries(self, db_session, mock_asset, mock_tenant):
         """Test getting recently discovered endpoints"""
@@ -679,13 +608,13 @@ class TestEndpointRepository:
         # Create endpoints with different discovery times
         old_endpoint = Endpoint(
             asset_id=mock_asset.id,
-            url='https://example.com/old',
-            first_seen=datetime.now(timezone.utc) - timedelta(days=5)
+            url="https://example.com/old",
+            first_seen=datetime.now(timezone.utc) - timedelta(days=5),
         )
         recent_endpoint = Endpoint(
             asset_id=mock_asset.id,
-            url='https://example.com/recent',
-            first_seen=datetime.now(timezone.utc) - timedelta(hours=12)
+            url="https://example.com/recent",
+            first_seen=datetime.now(timezone.utc) - timedelta(hours=12),
         )
 
         db_session.add(old_endpoint)
@@ -696,12 +625,13 @@ class TestEndpointRepository:
         recent = repo.get_recent_discoveries(mock_tenant.id, hours=24)
 
         assert len(recent) == 1
-        assert recent[0].url == 'https://example.com/recent'
+        assert recent[0].url == "https://example.com/recent"
 
 
 # =============================================================================
 # DATABASE CONSTRAINT TESTS
 # =============================================================================
+
 
 class TestDatabaseConstraints:
     """Test database constraints and unique indexes"""
@@ -709,11 +639,7 @@ class TestDatabaseConstraints:
     def test_service_unique_constraint_asset_port(self, db_session, mock_asset):
         """Test that (asset_id, port) is unique for services"""
         # Create first service
-        service1 = Service(
-            asset_id=mock_asset.id,
-            port=80,
-            protocol='http'
-        )
+        service1 = Service(asset_id=mock_asset.id, port=80, protocol="http")
         db_session.add(service1)
         db_session.commit()
 
@@ -721,84 +647,63 @@ class TestDatabaseConstraints:
         service2 = Service(
             asset_id=mock_asset.id,
             port=80,
-            protocol='https'  # Different protocol, but same port
+            protocol="https",  # Different protocol, but same port
         )
         db_session.add(service2)
 
         # Should raise IntegrityError due to unique constraint
         from sqlalchemy.exc import IntegrityError
+
         with pytest.raises(IntegrityError):
             db_session.commit()
 
     def test_certificate_unique_constraint_asset_serial(self, db_session, mock_asset):
         """Test that (asset_id, serial_number) is unique for certificates"""
         # Create first certificate
-        cert1 = Certificate(
-            asset_id=mock_asset.id,
-            serial_number='ABC123'
-        )
+        cert1 = Certificate(asset_id=mock_asset.id, serial_number="ABC123")
         db_session.add(cert1)
         db_session.commit()
 
         # Try to create duplicate (same asset, same serial)
-        cert2 = Certificate(
-            asset_id=mock_asset.id,
-            serial_number='ABC123'
-        )
+        cert2 = Certificate(asset_id=mock_asset.id, serial_number="ABC123")
         db_session.add(cert2)
 
         # Should raise IntegrityError
         from sqlalchemy.exc import IntegrityError
+
         with pytest.raises(IntegrityError):
             db_session.commit()
 
     def test_endpoint_unique_constraint_asset_url_method(self, db_session, mock_asset):
         """Test that (asset_id, url, method) is unique for endpoints"""
         # Create first endpoint
-        endpoint1 = Endpoint(
-            asset_id=mock_asset.id,
-            url='https://example.com/api',
-            method='GET'
-        )
+        endpoint1 = Endpoint(asset_id=mock_asset.id, url="https://example.com/api", method="GET")
         db_session.add(endpoint1)
         db_session.commit()
 
         # Try to create duplicate (same asset, url, method)
-        endpoint2 = Endpoint(
-            asset_id=mock_asset.id,
-            url='https://example.com/api',
-            method='GET'
-        )
+        endpoint2 = Endpoint(asset_id=mock_asset.id, url="https://example.com/api", method="GET")
         db_session.add(endpoint2)
 
         # Should raise IntegrityError
         from sqlalchemy.exc import IntegrityError
+
         with pytest.raises(IntegrityError):
             db_session.commit()
 
     def test_endpoint_different_methods_allowed(self, db_session, mock_asset):
         """Test that same URL with different methods is allowed"""
         # Create GET endpoint
-        endpoint1 = Endpoint(
-            asset_id=mock_asset.id,
-            url='https://example.com/api',
-            method='GET'
-        )
+        endpoint1 = Endpoint(asset_id=mock_asset.id, url="https://example.com/api", method="GET")
 
         # Create POST endpoint (same URL, different method)
-        endpoint2 = Endpoint(
-            asset_id=mock_asset.id,
-            url='https://example.com/api',
-            method='POST'
-        )
+        endpoint2 = Endpoint(asset_id=mock_asset.id, url="https://example.com/api", method="POST")
 
         db_session.add(endpoint1)
         db_session.add(endpoint2)
         db_session.commit()
 
         # Should not raise error - different methods are allowed
-        endpoints = db_session.query(Endpoint).filter_by(
-            asset_id=mock_asset.id
-        ).all()
+        endpoints = db_session.query(Endpoint).filter_by(asset_id=mock_asset.id).all()
 
         assert len(endpoints) == 2

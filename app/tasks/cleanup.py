@@ -76,12 +76,9 @@ def cleanup_old_scan_data(self, retention_days: int | None = None) -> dict:
         # Identify scan_run IDs eligible for deletion:
         #   - created before the cutoff
         #   - in a terminal status (COMPLETED / FAILED / CANCELLED)
-        eligible_ids_query = (
-            db.query(ScanRun.id)
-            .filter(
-                ScanRun.created_at < cutoff,
-                ScanRun.status.in_(_TERMINAL_STATUSES),
-            )
+        eligible_ids_query = db.query(ScanRun.id).filter(
+            ScanRun.created_at < cutoff,
+            ScanRun.status.in_(_TERMINAL_STATUSES),
         )
         eligible_ids = [row[0] for row in eligible_ids_query.all()]
 
@@ -97,37 +94,27 @@ def cleanup_old_scan_data(self, retention_days: int | None = None) -> dict:
 
         # --- 1. Delete phase_results ----------------------------------
         phase_deleted = (
-            db.query(PhaseResult)
-            .filter(PhaseResult.scan_run_id.in_(eligible_ids))
-            .delete(synchronize_session=False)
+            db.query(PhaseResult).filter(PhaseResult.scan_run_id.in_(eligible_ids)).delete(synchronize_session=False)
         )
         summary["phase_results_deleted"] = phase_deleted
         logger.info("Deleted %d phase_result(s).", phase_deleted)
 
         # --- 2. Delete observations -----------------------------------
         obs_deleted = (
-            db.query(Observation)
-            .filter(Observation.scan_run_id.in_(eligible_ids))
-            .delete(synchronize_session=False)
+            db.query(Observation).filter(Observation.scan_run_id.in_(eligible_ids)).delete(synchronize_session=False)
         )
         summary["observations_deleted"] = obs_deleted
         logger.info("Deleted %d observation(s).", obs_deleted)
 
         # --- 3. Delete risk_scores tied to these scan runs ------------
         rs_deleted = (
-            db.query(RiskScore)
-            .filter(RiskScore.scan_run_id.in_(eligible_ids))
-            .delete(synchronize_session=False)
+            db.query(RiskScore).filter(RiskScore.scan_run_id.in_(eligible_ids)).delete(synchronize_session=False)
         )
         summary["risk_scores_deleted"] = rs_deleted
         logger.info("Deleted %d risk_score(s).", rs_deleted)
 
         # --- 4. Delete the scan_runs themselves -----------------------
-        sr_deleted = (
-            db.query(ScanRun)
-            .filter(ScanRun.id.in_(eligible_ids))
-            .delete(synchronize_session=False)
-        )
+        sr_deleted = db.query(ScanRun).filter(ScanRun.id.in_(eligible_ids)).delete(synchronize_session=False)
         summary["scan_runs_deleted"] = sr_deleted
         logger.info("Deleted %d scan_run(s).", sr_deleted)
 

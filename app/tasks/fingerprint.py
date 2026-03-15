@@ -289,9 +289,7 @@ SIGNATURES: list[dict] = [
 
 
 @celery.task(name="app.tasks.fingerprint.run_fingerprinting")
-def run_fingerprinting(
-    tenant_id: int, scan_run_id: Optional[int] = None
-) -> dict:
+def run_fingerprinting(tenant_id: int, scan_run_id: Optional[int] = None) -> dict:
     """Run technology fingerprinting on HTTP services.
 
     Iterates over all services belonging to the tenant that have stored

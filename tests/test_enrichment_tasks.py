@@ -27,7 +27,7 @@ from app.tasks.enrichment import (
     sanitize_http_headers,
     sanitize_html,
     detect_and_redact_private_keys,
-    is_ip_allowed
+    is_ip_allowed,
 )
 from app.models.database import Asset, AssetType, Service, Tenant
 from app.models.enrichment import Certificate, Endpoint
@@ -37,14 +37,11 @@ from app.models.enrichment import Certificate, Endpoint
 # FIXTURES
 # =============================================================================
 
+
 @pytest.fixture
 def mock_tenant(db_session):
     """Create a test tenant"""
-    tenant = Tenant(
-        name="Test Tenant",
-        slug="test-tenant",
-        contact_policy="security@test.com"
-    )
+    tenant = Tenant(name="Test Tenant", slug="test-tenant", contact_policy="security@test.com")
     db_session.add(tenant)
     db_session.commit()
     return tenant
@@ -61,7 +58,7 @@ def mock_assets(db_session, mock_tenant):
             identifier="critical.example.com",
             risk_score=9.0,
             priority="critical",
-            is_active=True
+            is_active=True,
         ),
         # High priority (6.0 <= risk_score < 8.0)
         Asset(
@@ -70,7 +67,7 @@ def mock_assets(db_session, mock_tenant):
             identifier="high.example.com",
             risk_score=7.0,
             priority="high",
-            is_active=True
+            is_active=True,
         ),
         # Normal priority (3.0 <= risk_score < 6.0)
         Asset(
@@ -79,7 +76,7 @@ def mock_assets(db_session, mock_tenant):
             identifier="192.0.2.1",
             risk_score=5.0,
             priority="normal",
-            is_active=True
+            is_active=True,
         ),
         # Low priority (risk_score < 3.0)
         Asset(
@@ -88,7 +85,7 @@ def mock_assets(db_session, mock_tenant):
             identifier="https://low.example.com",
             risk_score=2.0,
             priority="low",
-            is_active=True
+            is_active=True,
         ),
     ]
 
@@ -103,6 +100,7 @@ def mock_assets(db_session, mock_tenant):
 # ENRICHMENT CANDIDATE SELECTION TESTS
 # =============================================================================
 
+
 class TestEnrichmentCandidates:
     """Test tiered enrichment candidate selection logic"""
 
@@ -114,11 +112,7 @@ class TestEnrichmentCandidates:
         db_session.commit()
 
         candidates = get_enrichment_candidates(
-            tenant_id=mock_tenant.id,
-            asset_ids=None,
-            priority="critical",
-            force_refresh=False,
-            db=db_session
+            tenant_id=mock_tenant.id, asset_ids=None, priority="critical", force_refresh=False, db=db_session
         )
 
         assert len(candidates) == 1
@@ -132,11 +126,7 @@ class TestEnrichmentCandidates:
         db_session.commit()
 
         candidates = get_enrichment_candidates(
-            tenant_id=mock_tenant.id,
-            asset_ids=None,
-            priority="high",
-            force_refresh=False,
-            db=db_session
+            tenant_id=mock_tenant.id, asset_ids=None, priority="high", force_refresh=False, db=db_session
         )
 
         assert len(candidates) == 1
@@ -150,11 +140,7 @@ class TestEnrichmentCandidates:
         db_session.commit()
 
         candidates = get_enrichment_candidates(
-            tenant_id=mock_tenant.id,
-            asset_ids=None,
-            priority=None,
-            force_refresh=False,
-            db=db_session
+            tenant_id=mock_tenant.id, asset_ids=None, priority=None, force_refresh=False, db=db_session
         )
 
         assert len(candidates) == 0
@@ -167,11 +153,7 @@ class TestEnrichmentCandidates:
         db_session.commit()
 
         candidates = get_enrichment_candidates(
-            tenant_id=mock_tenant.id,
-            asset_ids=None,
-            priority=None,
-            force_refresh=True,
-            db=db_session
+            tenant_id=mock_tenant.id, asset_ids=None, priority=None, force_refresh=True, db=db_session
         )
 
         assert len(candidates) == 4  # All assets
@@ -181,11 +163,7 @@ class TestEnrichmentCandidates:
         asset_ids = [mock_assets[0].id, mock_assets[1].id]
 
         candidates = get_enrichment_candidates(
-            tenant_id=mock_tenant.id,
-            asset_ids=asset_ids,
-            priority=None,
-            force_refresh=False,
-            db=db_session
+            tenant_id=mock_tenant.id, asset_ids=asset_ids, priority=None, force_refresh=False, db=db_session
         )
 
         assert len(candidates) == 2
@@ -195,6 +173,7 @@ class TestEnrichmentCandidates:
 # =============================================================================
 # HTTPX TESTS
 # =============================================================================
+
 
 class TestHTTPx:
     """Test HTTPx web fingerprinting"""
@@ -210,32 +189,32 @@ class TestHTTPx:
             "header": {
                 "Server": "nginx/1.21.0",
                 "Content-Type": "text/html; charset=UTF-8",
-                "Authorization": "Bearer secret-token"  # Should be redacted
+                "Authorization": "Bearer secret-token",  # Should be redacted
             },
             "time": "150ms",
             "content_length": 1234,
-            "final_url": "https://www.example.com"
+            "final_url": "https://www.example.com",
         }
 
         tenant_logger = Mock()
         result = parse_httpx_result(httpx_output, tenant_logger)
 
         assert result is not None
-        assert result['port'] == 443
-        assert result['protocol'] == 'https'
-        assert result['http_status'] == 200
-        assert result['http_title'] == "Example Domain"
-        assert result['web_server'] == "nginx/1.21.0"
-        assert result['http_technologies'] == ["nginx", "PHP", "WordPress"]
-        assert result['response_time_ms'] == 150
-        assert result['content_length'] == 1234
-        assert result['redirect_url'] == "https://www.example.com"
-        assert result['has_tls'] is True
-        assert result['enrichment_source'] == 'httpx'
+        assert result["port"] == 443
+        assert result["protocol"] == "https"
+        assert result["http_status"] == 200
+        assert result["http_title"] == "Example Domain"
+        assert result["web_server"] == "nginx/1.21.0"
+        assert result["http_technologies"] == ["nginx", "PHP", "WordPress"]
+        assert result["response_time_ms"] == 150
+        assert result["content_length"] == 1234
+        assert result["redirect_url"] == "https://www.example.com"
+        assert result["has_tls"] is True
+        assert result["enrichment_source"] == "httpx"
 
         # Verify Authorization header was redacted
-        assert result['http_headers']['Authorization'] == '[REDACTED]'
-        assert result['http_headers']['Server'] == "nginx/1.21.0"
+        assert result["http_headers"]["Authorization"] == "[REDACTED]"
+        assert result["http_headers"]["Server"] == "nginx/1.21.0"
 
     def test_sanitize_http_headers(self):
         """Test HTTP header sanitization removes sensitive values"""
@@ -246,21 +225,21 @@ class TestHTTPx:
             "Cookie": "session=abc123",
             "Set-Cookie": "user=admin; HttpOnly",
             "X-API-Key": "api-key-12345",
-            "Custom-Header": "safe-value"
+            "Custom-Header": "safe-value",
         }
 
         sanitized = sanitize_http_headers(headers)
 
         # Sensitive headers should be redacted
-        assert sanitized['Authorization'] == '[REDACTED]'
-        assert sanitized['Cookie'] == '[REDACTED]'
-        assert sanitized['Set-Cookie'] == '[REDACTED]'
-        assert sanitized['X-API-Key'] == '[REDACTED]'
+        assert sanitized["Authorization"] == "[REDACTED]"
+        assert sanitized["Cookie"] == "[REDACTED]"
+        assert sanitized["Set-Cookie"] == "[REDACTED]"
+        assert sanitized["X-API-Key"] == "[REDACTED]"
 
         # Non-sensitive headers should be preserved
-        assert sanitized['Server'] == 'nginx'
-        assert sanitized['Content-Type'] == 'text/html'
-        assert sanitized['Custom-Header'] == 'safe-value'
+        assert sanitized["Server"] == "nginx"
+        assert sanitized["Content-Type"] == "text/html"
+        assert sanitized["Custom-Header"] == "safe-value"
 
     def test_sanitize_html_removes_xss(self):
         """Test HTML sanitization removes XSS vectors"""
@@ -275,18 +254,20 @@ class TestHTTPx:
         sanitized = sanitize_html(malicious_html)
 
         # XSS vectors should be removed
-        assert '<script>' not in sanitized
-        assert 'alert(' not in sanitized
-        assert '<iframe>' not in sanitized
-        assert 'javascript:' not in sanitized
-        assert 'onclick=' not in sanitized
+        assert "<script>" not in sanitized
+        assert "alert(" not in sanitized
+        assert "<iframe>" not in sanitized
+        assert "javascript:" not in sanitized
+        assert "onclick=" not in sanitized
 
         # Safe content should be preserved
-        assert 'Safe content here' in sanitized
+        assert "Safe content here" in sanitized
 
-    @patch('app.database.SessionLocal')
-    @patch('app.tasks.enrichment.SecureToolExecutor')
-    def test_run_httpx_with_domain_assets(self, mock_executor_class, mock_session_local, db_session, mock_tenant, mock_assets):
+    @patch("app.database.SessionLocal")
+    @patch("app.tasks.enrichment.SecureToolExecutor")
+    def test_run_httpx_with_domain_assets(
+        self, mock_executor_class, mock_session_local, db_session, mock_tenant, mock_assets
+    ):
         """Test HTTPx execution with domain assets"""
         # Patch SessionLocal to return our test session
         mock_session_local.return_value = db_session
@@ -296,12 +277,9 @@ class TestHTTPx:
         mock_executor_class.return_value.__enter__.return_value = mock_executor
 
         # Mock HTTPx output
-        httpx_output = json.dumps({
-            "url": "https://critical.example.com",
-            "status_code": 200,
-            "title": "Test Site",
-            "webserver": "nginx"
-        })
+        httpx_output = json.dumps(
+            {"url": "https://critical.example.com", "status_code": 200, "title": "Test Site", "webserver": "nginx"}
+        )
 
         mock_executor.execute.return_value = (0, httpx_output, "")
         mock_executor.create_input_file.return_value = "/tmp/urls.txt"
@@ -309,7 +287,7 @@ class TestHTTPx:
         # Run HTTPx
         result = run_httpx(
             tenant_id=mock_tenant.id,
-            asset_ids=[mock_assets[0].id]  # critical.example.com
+            asset_ids=[mock_assets[0].id],  # critical.example.com
         )
 
         # Verify executor was called correctly
@@ -318,33 +296,31 @@ class TestHTTPx:
 
         # Verify httpx command arguments
         call_args = mock_executor.execute.call_args
-        assert call_args[0][0] == 'httpx'
-        assert '-json' in call_args[0][1]
-        assert '-status-code' in call_args[0][1]
+        assert call_args[0][0] == "httpx"
+        assert "-json" in call_args[0][1]
+        assert "-status-code" in call_args[0][1]
 
 
 # =============================================================================
 # NAABU TESTS
 # =============================================================================
 
+
 class TestNaabu:
     """Test Naabu port scanning"""
 
     def test_parse_naabu_result_success(self):
         """Test parsing valid Naabu JSON output"""
-        naabu_output = {
-            "host": "example.com",
-            "port": 443
-        }
+        naabu_output = {"host": "example.com", "port": 443}
 
         tenant_logger = Mock()
         result = parse_naabu_result(naabu_output, tenant_logger)
 
         assert result is not None
-        assert result['host'] == "example.com"
-        assert result['port'] == 443
-        assert result['protocol'] == 'tcp'
-        assert result['enrichment_source'] == 'naabu'
+        assert result["host"] == "example.com"
+        assert result["port"] == 443
+        assert result["protocol"] == "tcp"
+        assert result["enrichment_source"] == "naabu"
 
     def test_is_ip_allowed_public_ip(self):
         """Test that public IPs are allowed"""
@@ -390,6 +366,7 @@ class TestNaabu:
 # TLSX TESTS
 # =============================================================================
 
+
 class TestTLSx:
     """Test TLSx certificate analysis"""
 
@@ -408,10 +385,10 @@ class TestTLSx:
         detected, sanitized = detect_and_redact_private_keys(output_with_key, tenant_logger)
 
         assert detected is True
-        assert '-----BEGIN RSA PRIVATE KEY-----' not in sanitized
-        assert '[REDACTED: PRIVATE KEY - CRITICAL SECURITY INCIDENT]' in sanitized
-        assert 'Some output here' in sanitized
-        assert 'More output' in sanitized
+        assert "-----BEGIN RSA PRIVATE KEY-----" not in sanitized
+        assert "[REDACTED: PRIVATE KEY - CRITICAL SECURITY INCIDENT]" in sanitized
+        assert "Some output here" in sanitized
+        assert "More output" in sanitized
 
         # Verify critical alert was logged
         tenant_logger.critical.assert_called()
@@ -429,8 +406,8 @@ class TestTLSx:
         detected, sanitized = detect_and_redact_private_keys(output_with_key, tenant_logger)
 
         assert detected is True
-        assert '-----BEGIN EC PRIVATE KEY-----' not in sanitized
-        assert '[REDACTED: PRIVATE KEY' in sanitized
+        assert "-----BEGIN EC PRIVATE KEY-----" not in sanitized
+        assert "[REDACTED: PRIVATE KEY" in sanitized
 
     def test_detect_and_redact_private_keys_generic(self):
         """Test CRITICAL private key detection for generic keys"""
@@ -444,7 +421,7 @@ class TestTLSx:
         detected, sanitized = detect_and_redact_private_keys(output_with_key, tenant_logger)
 
         assert detected is True
-        assert '-----BEGIN PRIVATE KEY-----' not in sanitized
+        assert "-----BEGIN PRIVATE KEY-----" not in sanitized
 
     def test_detect_and_redact_private_keys_encrypted(self):
         """Test CRITICAL private key detection for encrypted keys"""
@@ -458,7 +435,7 @@ class TestTLSx:
         detected, sanitized = detect_and_redact_private_keys(output_with_key, tenant_logger)
 
         assert detected is True
-        assert '-----BEGIN ENCRYPTED PRIVATE KEY-----' not in sanitized
+        assert "-----BEGIN ENCRYPTED PRIVATE KEY-----" not in sanitized
 
     def test_detect_and_redact_private_keys_clean_output(self):
         """Test that clean output (no private keys) passes through"""
@@ -496,19 +473,20 @@ class TestTLSx:
 
         assert detected is True
         # Both keys should be redacted
-        assert sanitized.count('[REDACTED: PRIVATE KEY') == 2
-        assert '-----BEGIN RSA PRIVATE KEY-----' not in sanitized
-        assert '-----BEGIN EC PRIVATE KEY-----' not in sanitized
+        assert sanitized.count("[REDACTED: PRIVATE KEY") == 2
+        assert "-----BEGIN RSA PRIVATE KEY-----" not in sanitized
+        assert "-----BEGIN EC PRIVATE KEY-----" not in sanitized
 
 
 # =============================================================================
 # SECURITY VALIDATION TESTS
 # =============================================================================
 
+
 class TestSecurityValidation:
     """Test security validation and SSRF prevention"""
 
-    @patch('app.database.SessionLocal')
+    @patch("app.database.SessionLocal")
     def test_httpx_validates_urls(self, mock_session_local, db_session, mock_tenant):
         """Test that HTTPx validates URLs before execution"""
         # Patch SessionLocal to return our test session
@@ -519,21 +497,18 @@ class TestSecurityValidation:
             tenant_id=mock_tenant.id,
             type=AssetType.IP,
             identifier="192.168.1.1",  # Private IP
-            is_active=True
+            is_active=True,
         )
         db_session.add(internal_asset)
         db_session.commit()
 
-        with patch('app.tasks.enrichment.SecureToolExecutor'):
-            result = run_httpx(
-                tenant_id=mock_tenant.id,
-                asset_ids=[internal_asset.id]
-            )
+        with patch("app.tasks.enrichment.SecureToolExecutor"):
+            result = run_httpx(tenant_id=mock_tenant.id, asset_ids=[internal_asset.id])
 
             # Should return 0 services because IP was rejected
-            assert result.get('services_enriched', 0) == 0
+            assert result.get("services_enriched", 0) == 0
 
-    @patch('app.database.SessionLocal')
+    @patch("app.database.SessionLocal")
     def test_naabu_validates_ips(self, mock_session_local, db_session, mock_tenant):
         """Test that Naabu validates IPs before scanning"""
         # Patch SessionLocal to return our test session
@@ -544,32 +519,32 @@ class TestSecurityValidation:
             tenant_id=mock_tenant.id,
             type=AssetType.IP,
             identifier="127.0.0.1",  # Loopback
-            is_active=True
+            is_active=True,
         )
         db_session.add(loopback_asset)
         db_session.commit()
 
-        with patch('app.tasks.enrichment.SecureToolExecutor'):
-            result = run_naabu(
-                tenant_id=mock_tenant.id,
-                asset_ids=[loopback_asset.id]
-            )
+        with patch("app.tasks.enrichment.SecureToolExecutor"):
+            result = run_naabu(tenant_id=mock_tenant.id, asset_ids=[loopback_asset.id])
 
             # Should return 0 ports because IP was blocked
-            assert result.get('ports_discovered', 0) == 0
+            assert result.get("ports_discovered", 0) == 0
 
 
 # =============================================================================
 # INTEGRATION TESTS
 # =============================================================================
 
+
 class TestEnrichmentIntegration:
     """Test end-to-end enrichment workflows"""
 
-    @patch('app.database.SessionLocal')
-    @patch('app.tasks.enrichment.chain')
-    @patch('app.tasks.enrichment.group')
-    def test_run_enrichment_pipeline_orchestration(self, mock_group, mock_chain, mock_session_local, db_session, mock_tenant, mock_assets):
+    @patch("app.database.SessionLocal")
+    @patch("app.tasks.enrichment.chain")
+    @patch("app.tasks.enrichment.group")
+    def test_run_enrichment_pipeline_orchestration(
+        self, mock_group, mock_chain, mock_session_local, db_session, mock_tenant, mock_assets
+    ):
         """Test that enrichment pipeline orchestrates tools correctly"""
         # Patch SessionLocal to return our test session
         mock_session_local.return_value = db_session
@@ -584,14 +559,9 @@ class TestEnrichmentIntegration:
         mock_group.return_value = mock_parallel
         mock_sequential = Mock()
         mock_chain.return_value = mock_sequential
-        mock_sequential.apply_async.return_value = Mock(id='task-123')
+        mock_sequential.apply_async.return_value = Mock(id="task-123")
 
-        result = run_enrichment_pipeline(
-            tenant_id=mock_tenant.id,
-            asset_ids=None,
-            priority=None,
-            force_refresh=False
-        )
+        result = run_enrichment_pipeline(tenant_id=mock_tenant.id, asset_ids=None, priority=None, force_refresh=False)
 
         # Verify parallel group was created with HTTPx, Naabu, TLSx
         mock_group.assert_called_once()
@@ -602,13 +572,14 @@ class TestEnrichmentIntegration:
         # Verify pipeline was queued
         mock_sequential.apply_async.assert_called_once()
 
-        assert result['status'] == 'started'
-        assert result['task_id'] == 'task-123'
+        assert result["status"] == "started"
+        assert result["task_id"] == "task-123"
 
 
 # =============================================================================
 # PERFORMANCE TESTS
 # =============================================================================
+
 
 class TestEnrichmentPerformance:
     """Test enrichment performance benchmarks"""
@@ -627,7 +598,7 @@ class TestEnrichmentPerformance:
                 risk_score=5.0,
                 priority="normal",
                 last_enriched_at=datetime.now(timezone.utc) - timedelta(days=10),
-                is_active=True
+                is_active=True,
             )
             assets.append(asset)
 
@@ -637,11 +608,7 @@ class TestEnrichmentPerformance:
         # Time the candidate selection
         start_time = time.time()
         candidates = get_enrichment_candidates(
-            tenant_id=mock_tenant.id,
-            asset_ids=None,
-            priority="normal",
-            force_refresh=False,
-            db=db_session
+            tenant_id=mock_tenant.id, asset_ids=None, priority="normal", force_refresh=False, db=db_session
         )
         elapsed_time = time.time() - start_time
 
@@ -654,12 +621,15 @@ class TestEnrichmentPerformance:
 # ERROR HANDLING TESTS
 # =============================================================================
 
+
 class TestErrorHandling:
     """Test error handling in enrichment tasks"""
 
-    @patch('app.database.SessionLocal')
-    @patch('app.tasks.enrichment.SecureToolExecutor')
-    def test_httpx_handles_tool_execution_error(self, mock_executor_class, mock_session_local, db_session, mock_tenant, mock_assets):
+    @patch("app.database.SessionLocal")
+    @patch("app.tasks.enrichment.SecureToolExecutor")
+    def test_httpx_handles_tool_execution_error(
+        self, mock_executor_class, mock_session_local, db_session, mock_tenant, mock_assets
+    ):
         """Test that HTTPx handles tool execution errors gracefully"""
         # Patch SessionLocal to return our test session
         mock_session_local.return_value = db_session
@@ -670,16 +640,14 @@ class TestErrorHandling:
         mock_executor.create_input_file.return_value = "/tmp/urls.txt"
 
         from app.utils.secure_executor import ToolExecutionError
+
         mock_executor.execute.side_effect = ToolExecutionError("Tool failed")
 
-        result = run_httpx(
-            tenant_id=mock_tenant.id,
-            asset_ids=[mock_assets[0].id]
-        )
+        result = run_httpx(tenant_id=mock_tenant.id, asset_ids=[mock_assets[0].id])
 
         # Should return error but not crash
-        assert 'error' in result
-        assert result['services_enriched'] == 0
+        assert "error" in result
+        assert result["services_enriched"] == 0
 
     def test_parse_httpx_handles_malformed_json(self):
         """Test that parser handles malformed JSON gracefully"""
@@ -700,6 +668,7 @@ class TestErrorHandling:
 # PRIORITY SYSTEM TESTS
 # =============================================================================
 
+
 class TestPrioritySystem:
     """Test tiered enrichment priority system"""
 
@@ -713,17 +682,13 @@ class TestPrioritySystem:
             risk_score=9.0,
             priority="critical",
             last_enriched_at=datetime.now(timezone.utc) - timedelta(hours=25),
-            is_active=True
+            is_active=True,
         )
         db_session.add(asset)
         db_session.commit()
 
         candidates = get_enrichment_candidates(
-            tenant_id=mock_tenant.id,
-            asset_ids=None,
-            priority="critical",
-            force_refresh=False,
-            db=db_session
+            tenant_id=mock_tenant.id, asset_ids=None, priority="critical", force_refresh=False, db=db_session
         )
 
         assert len(candidates) == 1
@@ -739,17 +704,13 @@ class TestPrioritySystem:
             risk_score=7.0,
             priority="high",
             last_enriched_at=datetime.now(timezone.utc) - timedelta(hours=73),
-            is_active=True
+            is_active=True,
         )
         db_session.add(asset)
         db_session.commit()
 
         candidates = get_enrichment_candidates(
-            tenant_id=mock_tenant.id,
-            asset_ids=None,
-            priority="high",
-            force_refresh=False,
-            db=db_session
+            tenant_id=mock_tenant.id, asset_ids=None, priority="high", force_refresh=False, db=db_session
         )
 
         assert len(candidates) == 1
@@ -764,17 +725,13 @@ class TestPrioritySystem:
             risk_score=5.0,
             priority="normal",
             last_enriched_at=datetime.now(timezone.utc) - timedelta(days=8),
-            is_active=True
+            is_active=True,
         )
         db_session.add(asset)
         db_session.commit()
 
         candidates = get_enrichment_candidates(
-            tenant_id=mock_tenant.id,
-            asset_ids=None,
-            priority="normal",
-            force_refresh=False,
-            db=db_session
+            tenant_id=mock_tenant.id, asset_ids=None, priority="normal", force_refresh=False, db=db_session
         )
 
         assert len(candidates) == 1
@@ -789,17 +746,13 @@ class TestPrioritySystem:
             risk_score=1.0,
             priority="low",
             last_enriched_at=datetime.now(timezone.utc) - timedelta(days=15),
-            is_active=True
+            is_active=True,
         )
         db_session.add(asset)
         db_session.commit()
 
         candidates = get_enrichment_candidates(
-            tenant_id=mock_tenant.id,
-            asset_ids=None,
-            priority="low",
-            force_refresh=False,
-            db=db_session
+            tenant_id=mock_tenant.id, asset_ids=None, priority="low", force_refresh=False, db=db_session
         )
 
         assert len(candidates) == 1

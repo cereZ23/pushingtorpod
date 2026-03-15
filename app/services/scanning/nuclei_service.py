@@ -45,20 +45,20 @@ class NucleiService:
     """
 
     # Default severity levels
-    DEFAULT_SEVERITIES = ['critical', 'high', 'medium']
+    DEFAULT_SEVERITIES = ["critical", "high", "medium"]
 
     # Template categories
     TEMPLATE_CATEGORIES = {
-        'cves': 'CVE-based vulnerabilities',
-        'exposed-panels': 'Exposed admin/login panels',
-        'misconfigurations': 'Common misconfigurations',
-        'default-logins': 'Default credentials',
-        'takeovers': 'Subdomain takeovers',
-        'exposures': 'Information disclosure',
-        'technologies': 'Technology detection',
-        'vulnerabilities': 'Generic vulnerabilities',
-        'fuzzing': 'Fuzzing templates',
-        'workflows': 'Workflow-based scans'
+        "cves": "CVE-based vulnerabilities",
+        "exposed-panels": "Exposed admin/login panels",
+        "misconfigurations": "Common misconfigurations",
+        "default-logins": "Default credentials",
+        "takeovers": "Subdomain takeovers",
+        "exposures": "Information disclosure",
+        "technologies": "Technology detection",
+        "vulnerabilities": "Generic vulnerabilities",
+        "fuzzing": "Fuzzing templates",
+        "workflows": "Workflow-based scans",
     }
 
     def __init__(self, tenant_id: int):
@@ -116,13 +116,9 @@ class NucleiService:
         if not valid_urls:
             logger.warning(f"No valid URLs for Nuclei scan (tenant {self.tenant_id})")
             return {
-                'findings': [],
-                'stats': {
-                    'urls_scanned': 0,
-                    'findings_count': 0,
-                    'by_severity': {}
-                },
-                'errors': validation_errors
+                "findings": [],
+                "stats": {"urls_scanned": 0, "findings_count": 0, "by_severity": {}},
+                "errors": validation_errors,
             }
 
         # Use defaults if not provided
@@ -131,8 +127,8 @@ class NucleiService:
         # Execute scan
         with SecureToolExecutor(self.tenant_id) as executor:
             # Create URLs input file
-            urls_content = '\n'.join(valid_urls)
-            urls_file = executor.create_input_file('urls.txt', urls_content)
+            urls_content = "\n".join(valid_urls)
+            urls_file = executor.create_input_file("urls.txt", urls_content)
 
             # Build Nuclei arguments
             args = self._build_nuclei_args(
@@ -148,31 +144,23 @@ class NucleiService:
             logger.info(f"Executing Nuclei with args: {' '.join(args[:10])}...")
 
             try:
-                returncode, stdout, stderr = executor.execute(
-                    'nuclei',
-                    args,
-                    timeout=timeout
-                )
+                returncode, stdout, stderr = executor.execute("nuclei", args, timeout=timeout)
 
                 if returncode != 0 and returncode != 1:  # 1 is OK (findings found)
                     logger.warning(f"Nuclei returned code {returncode}: {stderr[:500]}")
 
                 # Log stats from stderr (progress info)
                 if stderr:
-                    for line in stderr.strip().split('\n')[-10:]:
+                    for line in stderr.strip().split("\n")[-10:]:
                         if line.strip():
                             logger.info(f"Nuclei stats: {line.strip()}")
 
             except ToolExecutionError as e:
                 logger.error(f"Nuclei execution failed for tenant {self.tenant_id}: {e}")
                 return {
-                    'findings': [],
-                    'stats': {
-                        'urls_scanned': len(valid_urls),
-                        'findings_count': 0,
-                        'by_severity': {}
-                    },
-                    'errors': [str(e)] + validation_errors
+                    "findings": [],
+                    "stats": {"urls_scanned": len(valid_urls), "findings_count": 0, "by_severity": {}},
+                    "errors": [str(e)] + validation_errors,
                 }
 
             # Parse results
@@ -184,15 +172,15 @@ class NucleiService:
             # Store raw output in MinIO
             store_raw_output(
                 self.tenant_id,
-                'nuclei',
+                "nuclei",
                 {
-                    'urls': valid_urls,
-                    'templates': templates,
-                    'severity': severity,
-                    'findings': findings,
-                    'stats': stats,
-                    'timestamp': datetime.now(timezone.utc).isoformat()
-                }
+                    "urls": valid_urls,
+                    "templates": templates,
+                    "severity": severity,
+                    "findings": findings,
+                    "stats": stats,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
             )
 
             logger.info(
@@ -200,18 +188,10 @@ class NucleiService:
                 f"{stats['findings_count']} findings from {stats['urls_scanned']} URLs"
             )
 
-            return {
-                'findings': findings,
-                'stats': stats,
-                'errors': validation_errors
-            }
+            return {"findings": findings, "stats": stats, "errors": validation_errors}
 
     async def scan_asset(
-        self,
-        asset_id: int,
-        asset_url: str,
-        templates: Optional[List[str]] = None,
-        severity: Optional[List[str]] = None
+        self, asset_id: int, asset_url: str, templates: Optional[List[str]] = None, severity: Optional[List[str]] = None
     ) -> List[Dict]:
         """
         Scan a single asset (convenience method)
@@ -225,17 +205,13 @@ class NucleiService:
         Returns:
             List of findings with asset_id attached
         """
-        result = await self.scan_urls(
-            urls=[asset_url],
-            templates=templates,
-            severity=severity
-        )
+        result = await self.scan_urls(urls=[asset_url], templates=templates, severity=severity)
 
         # Attach asset_id to each finding
-        for finding in result['findings']:
-            finding['asset_id'] = asset_id
+        for finding in result["findings"]:
+            finding["asset_id"] = asset_id
 
-        return result['findings']
+        return result["findings"]
 
     def _validate_urls(self, urls: List[str]) -> Tuple[List[str], List[str]]:
         """
@@ -290,55 +266,75 @@ class NucleiService:
             List of command arguments
         """
         # Template base directory — use pre-installed templates
-        nuclei_templates_dir = '/home/appuser/nuclei-templates'
+        nuclei_templates_dir = "/home/appuser/nuclei-templates"
 
         args = [
-            '-l', urls_file,           # Input URLs file
-            '-jsonl',                  # JSONL output (Nuclei v3+)
-            '-no-color',               # Disable colors
-            '-duc',                    # Disable update check (saves 5-10 min startup)
-            '-ss', 'host-spray',       # Host-spray: all templates per host (less RAM, reuses connections)
-            '-stats',                  # Print periodic stats to stderr
-            '-si', '30',               # Stats interval: every 30 seconds
-            '-rl', str(rate_limit),    # Rate limit
-            '-c', str(concurrency),    # Concurrency
-            '-timeout', '7',           # Request timeout (seconds, was 10)
-            '-retries', '0',           # No retries (saves ~15% time on fast pass)
-            '-bs', '50',               # Bulk size per template (was 25)
-            '-mhe', '5',               # Max host errors before skipping (avoid stuck hosts)
-            '-no-httpx',               # Skip Nuclei's built-in httpx probe (Phase 4 already did it)
-            '-response-size-read', '2097152',  # 2MB max response read (saves RAM)
+            "-l",
+            urls_file,  # Input URLs file
+            "-jsonl",  # JSONL output (Nuclei v3+)
+            "-no-color",  # Disable colors
+            "-duc",  # Disable update check (saves 5-10 min startup)
+            "-ss",
+            "host-spray",  # Host-spray: all templates per host (less RAM, reuses connections)
+            "-stats",  # Print periodic stats to stderr
+            "-si",
+            "30",  # Stats interval: every 30 seconds
+            "-rl",
+            str(rate_limit),  # Rate limit
+            "-c",
+            str(concurrency),  # Concurrency
+            "-timeout",
+            "7",  # Request timeout (seconds, was 10)
+            "-retries",
+            "0",  # No retries (saves ~15% time on fast pass)
+            "-bs",
+            "50",  # Bulk size per template (was 25)
+            "-mhe",
+            "5",  # Max host errors before skipping (avoid stuck hosts)
+            "-no-httpx",  # Skip Nuclei's built-in httpx probe (Phase 4 already did it)
+            "-response-size-read",
+            "2097152",  # 2MB max response read (saves RAM)
         ]
 
         # Add severity filter
         if severity:
-            severity_str = ','.join(severity)
-            args.extend(['-severity', severity_str])
+            severity_str = ",".join(severity)
+            args.extend(["-severity", severity_str])
 
         # Select EASM-relevant template categories to avoid loading all 12k+ templates.
         # Use absolute paths so Nuclei finds them even with -duc (no update check).
         if templates:
             for template in templates:
                 # Convert relative paths to absolute using the templates dir
-                if not template.startswith('/'):
-                    template = f'{nuclei_templates_dir}/{template}'
-                args.extend(['-t', template])
+                if not template.startswith("/"):
+                    template = f"{nuclei_templates_dir}/{template}"
+                args.extend(["-t", template])
         else:
             for tpl_dir in [
-                'http/cves/', 'http/exposed-panels/', 'http/misconfiguration/',
-                'http/default-logins/', 'http/takeovers/', 'http/exposures/',
-                'http/vulnerabilities/', 'dns/', 'ssl/', 'network/',
+                "http/cves/",
+                "http/exposed-panels/",
+                "http/misconfiguration/",
+                "http/default-logins/",
+                "http/takeovers/",
+                "http/exposures/",
+                "http/vulnerabilities/",
+                "dns/",
+                "ssl/",
+                "network/",
             ]:
-                args.extend(['-t', f'{nuclei_templates_dir}/{tpl_dir}'])
+                args.extend(["-t", f"{nuclei_templates_dir}/{tpl_dir}"])
 
         # Exclude templates that are slow, destructive, or redundant with other phases
-        args.extend([
-            '-exclude-tags', 'dos,headless,fuzz,osint,token-spray',
-        ])
+        args.extend(
+            [
+                "-exclude-tags",
+                "dos,headless,fuzz,osint,token-spray",
+            ]
+        )
 
         # Interactsh OOB callback support (Tier 3 aggressive scans)
         if interactsh_server:
-            args.extend(['-iserver', interactsh_server, '-itoken', ''])
+            args.extend(["-iserver", interactsh_server, "-itoken", ""])
 
         return args
 
@@ -378,12 +374,12 @@ class NucleiService:
         """
         findings = []
 
-        for line in stdout.strip().split('\n'):
+        for line in stdout.strip().split("\n"):
             if not line:
                 continue
 
             # Skip non-JSON lines (e.g. Nuclei warnings/stats printed to stdout)
-            if not line.lstrip().startswith('{'):
+            if not line.lstrip().startswith("{"):
                 continue
 
             try:
@@ -416,17 +412,17 @@ class NucleiService:
             Normalized finding dict or None if parsing fails
         """
         try:
-            info = result.get('info', {})
-            classification = info.get('classification', {})
+            info = result.get("info", {})
+            classification = info.get("classification", {})
 
             # Extract CVE ID
             cve_id = None
-            cve_list = classification.get('cve-id', [])
+            cve_list = classification.get("cve-id", [])
             if cve_list and isinstance(cve_list, list):
                 cve_id = cve_list[0]
 
             # Extract CVSS score
-            cvss_score = classification.get('cvss-score')
+            cvss_score = classification.get("cvss-score")
             if cvss_score:
                 try:
                     cvss_score = float(cvss_score)
@@ -435,28 +431,28 @@ class NucleiService:
 
             # Build evidence
             evidence = {
-                'matched_at': result.get('matched-at') or result.get('host'),
-                'matcher_name': result.get('matcher-name'),
-                'extracted_results': result.get('extracted-results', []),
-                'timestamp': result.get('timestamp'),
-                'type': result.get('type'),
-                'curl_command': result.get('curl-command'),
-                'template_id': result.get('template-id'),
-                'description': info.get('description'),
-                'reference': info.get('reference', []),
-                'tags': info.get('tags', [])
+                "matched_at": result.get("matched-at") or result.get("host"),
+                "matcher_name": result.get("matcher-name"),
+                "extracted_results": result.get("extracted-results", []),
+                "timestamp": result.get("timestamp"),
+                "type": result.get("type"),
+                "curl_command": result.get("curl-command"),
+                "template_id": result.get("template-id"),
+                "description": info.get("description"),
+                "reference": info.get("reference", []),
+                "tags": info.get("tags", []),
             }
 
             # Parse URL to get host
-            matched_url = result.get('matched-at') or result.get('host')
+            matched_url = result.get("matched-at") or result.get("host")
             host = None
             if matched_url:
                 try:
                     # SSL/network templates output "hostname:port" without scheme.
                     # urlparse treats that as scheme:path, giving hostname=None.
-                    if '://' not in matched_url:
+                    if "://" not in matched_url:
                         # Strip port if present (e.g. "example.com:443" → "example.com")
-                        host = matched_url.split(':')[0]
+                        host = matched_url.split(":")[0]
                     else:
                         parsed = urlparse(matched_url)
                         host = parsed.hostname
@@ -464,21 +460,21 @@ class NucleiService:
                     host = matched_url
 
             # Normalize severity
-            severity = info.get('severity', 'info').lower()
-            if severity not in ['critical', 'high', 'medium', 'low', 'info']:
-                severity = 'info'
+            severity = info.get("severity", "info").lower()
+            if severity not in ["critical", "high", "medium", "low", "info"]:
+                severity = "info"
 
             finding = {
-                'template_id': result.get('template-id'),
-                'name': info.get('name', 'Unknown Vulnerability'),
-                'severity': severity,
-                'cvss_score': cvss_score,
-                'cve_id': cve_id,
-                'evidence': json.dumps(evidence),
-                'matched_at': matched_url,
-                'host': host,
-                'source': 'nuclei',
-                'discovered_at': datetime.now(timezone.utc)
+                "template_id": result.get("template-id"),
+                "name": info.get("name", "Unknown Vulnerability"),
+                "severity": severity,
+                "cvss_score": cvss_score,
+                "cve_id": cve_id,
+                "evidence": json.dumps(evidence),
+                "matched_at": matched_url,
+                "host": host,
+                "source": "nuclei",
+                "discovered_at": datetime.now(timezone.utc),
             }
 
             return finding
@@ -500,22 +496,16 @@ class NucleiService:
             Statistics dict
         """
         stats = {
-            'urls_scanned': len(urls),
-            'findings_count': len(findings),
-            'by_severity': {
-                'critical': 0,
-                'high': 0,
-                'medium': 0,
-                'low': 0,
-                'info': 0
-            }
+            "urls_scanned": len(urls),
+            "findings_count": len(findings),
+            "by_severity": {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0},
         }
 
         # Count by severity
         for finding in findings:
-            severity = finding.get('severity', 'info')
-            if severity in stats['by_severity']:
-                stats['by_severity'][severity] += 1
+            severity = finding.get("severity", "info")
+            if severity in stats["by_severity"]:
+                stats["by_severity"][severity] += 1
 
         return stats
 
@@ -538,18 +528,12 @@ def calculate_risk_score_from_findings(findings: List[Dict]) -> float:
     Returns:
         Risk score (0.0 to 10.0)
     """
-    severity_weights = {
-        'critical': 3.0,
-        'high': 2.0,
-        'medium': 1.0,
-        'low': 0.5,
-        'info': 0.1
-    }
+    severity_weights = {"critical": 3.0, "high": 2.0, "medium": 1.0, "low": 0.5, "info": 0.1}
 
     score = 0.0
 
     for finding in findings:
-        severity = finding.get('severity', 'info')
+        severity = finding.get("severity", "info")
         weight = severity_weights.get(severity, 0.0)
         score += weight
 

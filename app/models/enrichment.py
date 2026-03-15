@@ -17,10 +17,11 @@ from app.models.database import Base
 
 class AssetPriority(str, Enum):
     """Asset priority levels for tiered enrichment"""
+
     CRITICAL = "critical"  # 1-day TTL - Daily enrichment
-    HIGH = "high"          # 3-day TTL - Every 3 days
-    NORMAL = "normal"      # 7-day TTL - Weekly
-    LOW = "low"            # 14-day TTL - Bi-weekly
+    HIGH = "high"  # 3-day TTL - Every 3 days
+    NORMAL = "normal"  # 7-day TTL - Weekly
+    LOW = "low"  # 14-day TTL - Bi-weekly
 
 
 class Certificate(Base):
@@ -39,14 +40,15 @@ class Certificate(Base):
         - is_expired for filtering
         - (asset_id, serial_number) unique constraint
     """
-    __tablename__ = 'certificates'
+
+    __tablename__ = "certificates"
 
     id = Column(Integer, primary_key=True)
-    asset_id = Column(Integer, ForeignKey('assets.id', ondelete='CASCADE'), nullable=False)
+    asset_id = Column(Integer, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
 
     # Certificate Identity
     subject_cn = Column(String(500))  # Common Name
-    issuer = Column(String(500))      # Certificate Authority
+    issuer = Column(String(500))  # Certificate Authority
     serial_number = Column(String(255))
 
     # Validity
@@ -61,8 +63,8 @@ class Certificate(Base):
 
     # Security Configuration
     signature_algorithm = Column(String(100))  # SHA256withRSA, etc.
-    public_key_algorithm = Column(String(100)) # RSA, EC, etc.
-    public_key_bits = Column(Integer)          # 2048, 4096, etc.
+    public_key_algorithm = Column(String(100))  # RSA, EC, etc.
+    public_key_bits = Column(Integer)  # 2048, 4096, etc.
 
     # Cipher Suites - JSON array
     # Example: ["TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256"]
@@ -79,7 +81,9 @@ class Certificate(Base):
 
     # Metadata
     first_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    last_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    last_seen = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
     raw_data = Column(JSON)  # Full TLSx output for debugging
 
     # Relationship
@@ -87,10 +91,10 @@ class Certificate(Base):
     # asset = relationship("Asset", back_populates="certificates")
 
     __table_args__ = (
-        Index('idx_asset_cert', 'asset_id'),
-        Index('idx_expiry', 'not_after'),
-        Index('idx_expired', 'is_expired'),
-        Index('idx_asset_serial', 'asset_id', 'serial_number', unique=True),
+        Index("idx_asset_cert", "asset_id"),
+        Index("idx_expiry", "not_after"),
+        Index("idx_expired", "is_expired"),
+        Index("idx_asset_serial", "asset_id", "serial_number", unique=True),
     )
 
     def __repr__(self):
@@ -120,15 +124,16 @@ class Endpoint(Base):
         - is_api for API discovery
         - (asset_id, url, method) unique constraint
     """
-    __tablename__ = 'endpoints'
+
+    __tablename__ = "endpoints"
 
     id = Column(Integer, primary_key=True)
-    asset_id = Column(Integer, ForeignKey('assets.id', ondelete='CASCADE'), nullable=False)
+    asset_id = Column(Integer, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
 
     # Endpoint Identity
     url = Column(String(2048), nullable=False)
     path = Column(String(1024))  # /api/v1/users
-    method = Column(String(10), default='GET')  # GET, POST, PUT, DELETE, etc.
+    method = Column(String(10), default="GET")  # GET, POST, PUT, DELETE, etc.
 
     # Request Parameters - JSON objects
     # Example query_params: {"id": "123", "page": "1"}
@@ -148,7 +153,7 @@ class Endpoint(Base):
     # Classification
     endpoint_type = Column(String(50))  # api, form, file, redirect, external, static
     is_external = Column(Boolean, default=False)  # External link (different domain)
-    is_api = Column(Boolean, default=False)       # Looks like API endpoint
+    is_api = Column(Boolean, default=False)  # Looks like API endpoint
 
     # Discovery Source
     source_url = Column(String(2048))  # Page where this endpoint was found
@@ -156,7 +161,9 @@ class Endpoint(Base):
 
     # Metadata
     first_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    last_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    last_seen = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
     raw_data = Column(JSON)  # Full Katana output
 
     # Relationship
@@ -164,10 +171,10 @@ class Endpoint(Base):
     # asset = relationship("Asset", back_populates="endpoints")
 
     __table_args__ = (
-        Index('idx_asset_endpoint', 'asset_id'),
-        Index('idx_endpoint_type', 'endpoint_type'),
-        Index('idx_is_api', 'is_api'),
-        Index('idx_asset_url', 'asset_id', 'url', 'method', unique=True),
+        Index("idx_asset_endpoint", "asset_id"),
+        Index("idx_endpoint_type", "endpoint_type"),
+        Index("idx_is_api", "is_api"),
+        Index("idx_asset_url", "asset_id", "url", "method", unique=True),
     )
 
     def __repr__(self):
@@ -176,10 +183,7 @@ class Endpoint(Base):
     @property
     def is_sensitive_endpoint(self) -> bool:
         """Check if endpoint appears to be sensitive (admin, login, api)"""
-        sensitive_keywords = [
-            'admin', 'login', 'auth', 'api', 'password',
-            'reset', 'token', 'key', 'secret', 'config'
-        ]
+        sensitive_keywords = ["admin", "login", "auth", "api", "password", "reset", "token", "key", "secret", "config"]
 
         url_lower = self.url.lower()
         return any(keyword in url_lower for keyword in sensitive_keywords)

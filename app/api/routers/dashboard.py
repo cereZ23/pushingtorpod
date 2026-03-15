@@ -73,10 +73,7 @@ def get_dashboard_summary(
 
     # Asset counts (only active/in-scope assets)
     total_assets = (
-        db.query(func.count(Asset.id))
-        .filter(Asset.tenant_id == tenant_id, Asset.is_active.is_(True))
-        .scalar()
-        or 0
+        db.query(func.count(Asset.id)).filter(Asset.tenant_id == tenant_id, Asset.is_active.is_(True)).scalar() or 0
     )
     active_assets = total_assets
 
@@ -508,6 +505,7 @@ def get_risk_heatmap(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _verify_tenant_exists(db: Session, tenant_id: int) -> None:
     """

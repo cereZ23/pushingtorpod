@@ -4,6 +4,7 @@ Graph Router Unit Tests
 Tests tenant isolation, helper functions, and cache behaviour
 for the graph visualization API. No database required — uses mocks.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -16,6 +17,7 @@ from fastapi import HTTPException
 # ---------------------------------------------------------------------------
 # _risk_to_criticality
 # ---------------------------------------------------------------------------
+
 
 class TestRiskToCriticality:
     """Test risk score → criticality mapping."""
@@ -55,6 +57,7 @@ class TestRiskToCriticality:
 # _verify_tenant_exists
 # ---------------------------------------------------------------------------
 
+
 class TestVerifyTenantExists:
     """Test tenant existence check raises 404 correctly."""
 
@@ -75,6 +78,7 @@ class TestVerifyTenantExists:
 # Cache behaviour
 # ---------------------------------------------------------------------------
 
+
 class TestGraphCacheConfig:
     """Verify cache configuration constants."""
 
@@ -85,6 +89,7 @@ class TestGraphCacheConfig:
 # ---------------------------------------------------------------------------
 # Tenant isolation in queries
 # ---------------------------------------------------------------------------
+
 
 class TestGraphTenantIsolation:
     """
@@ -98,6 +103,7 @@ class TestGraphTenantIsolation:
         """get_graph_nodes must filter Asset.tenant_id == tenant_id."""
         import inspect
         from app.api.routers.graph import get_graph_nodes
+
         source = inspect.getsource(get_graph_nodes)
         assert "Asset.tenant_id == tenant_id" in source
 
@@ -105,14 +111,16 @@ class TestGraphTenantIsolation:
         """get_graph_edges must filter Relationship.tenant_id == tenant_id."""
         import inspect
         from app.api.routers.graph import get_graph_edges
+
         source = inspect.getsource(get_graph_edges)
         assert "Relationship.tenant_id == tenant_id" in source
 
     def test_neighbors_query_filters_by_tenant_id(self):
-        """get_neighbors must filter both central asset and neighbors by tenant."""
+        """get_asset_neighbors must filter both central asset and neighbors by tenant."""
         import inspect
-        from app.api.routers.graph import get_neighbors
-        source = inspect.getsource(get_neighbors)
+        from app.api.routers.graph import get_asset_neighbors
+
+        source = inspect.getsource(get_asset_neighbors)
         # Central asset check
         assert "Asset.tenant_id == tenant_id" in source
 
@@ -120,5 +128,6 @@ class TestGraphTenantIsolation:
         """get_graph_stats must filter by tenant_id."""
         import inspect
         from app.api.routers.graph import get_graph_stats
+
         source = inspect.getsource(get_graph_stats)
         assert "Asset.tenant_id == tenant_id" in source

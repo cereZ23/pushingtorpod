@@ -37,6 +37,7 @@ router = APIRouter(
 # Pydantic schemas
 # ---------------------------------------------------------------------------
 
+
 class StatusBreakdown(BaseModel):
     """Finding counts grouped by status."""
 
@@ -44,11 +45,7 @@ class StatusBreakdown(BaseModel):
     suppressed: int = Field(default=0, description="Suppressed findings")
     fixed: int = Field(default=0, description="Fixed findings")
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {"open": 120, "suppressed": 15, "fixed": 45}
-        }
-    )
+    model_config = ConfigDict(json_schema_extra={"example": {"open": 120, "suppressed": 15, "fixed": 45}})
 
 
 class IssueStatusBreakdown(BaseModel):
@@ -90,9 +87,7 @@ class MttrBySeverity(BaseModel):
     low: Optional[float] = Field(None, description="MTTR for low issues (hours)")
 
     model_config = ConfigDict(
-        json_schema_extra={
-            "example": {"critical": 12.5, "high": 48.0, "medium": 168.0, "low": 336.0}
-        }
+        json_schema_extra={"example": {"critical": 12.5, "high": 48.0, "medium": 168.0, "low": 336.0}}
     )
 
 
@@ -104,9 +99,7 @@ class RemediationStatsResponse(BaseModel):
     issues_by_status: IssueStatusBreakdown = Field(..., description="Issues grouped by lifecycle status")
     total_resolved_issues: int = Field(..., description="Total issues that reached a terminal status")
     mttr: MttrBySeverity = Field(..., description="Mean time to remediation by severity")
-    sla_compliance_pct: float = Field(
-        ..., description="Percentage of resolved issues that met their SLA deadline"
-    )
+    sla_compliance_pct: float = Field(..., description="Percentage of resolved issues that met their SLA deadline")
     overdue_issues: int = Field(..., description="Number of open issues past their SLA due date")
 
     model_config = ConfigDict(
@@ -115,9 +108,15 @@ class RemediationStatsResponse(BaseModel):
                 "generated_at": "2026-02-25T12:00:00Z",
                 "findings_by_status": {"open": 120, "suppressed": 15, "fixed": 45},
                 "issues_by_status": {
-                    "open": 30, "triaged": 10, "in_progress": 8, "mitigated": 5,
-                    "verifying": 3, "verified_fixed": 20, "closed": 15,
-                    "false_positive": 4, "accepted_risk": 2,
+                    "open": 30,
+                    "triaged": 10,
+                    "in_progress": 8,
+                    "mitigated": 5,
+                    "verifying": 3,
+                    "verified_fixed": 20,
+                    "closed": 15,
+                    "false_positive": 4,
+                    "accepted_risk": 2,
                 },
                 "total_resolved_issues": 35,
                 "mttr": {"critical": 12.5, "high": 48.0, "medium": 168.0, "low": 336.0},
@@ -135,11 +134,7 @@ class TimelineBucket(BaseModel):
     resolved: int = Field(..., description="Number of issues resolved in this period")
     opened: int = Field(..., description="Number of issues opened in this period")
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {"period": "2026-W08", "resolved": 12, "opened": 8}
-        }
-    )
+    model_config = ConfigDict(json_schema_extra={"example": {"period": "2026-W08", "resolved": 12, "opened": 8}})
 
 
 class TimelineResponse(BaseModel):
@@ -212,23 +207,26 @@ class SlaComplianceResponse(BaseModel):
 
 SLA_TARGETS_HOURS: Dict[str, int] = {
     "critical": 24,
-    "high": 168,       # 7 days
-    "medium": 720,     # 30 days
-    "low": 2160,       # 90 days
+    "high": 168,  # 7 days
+    "medium": 720,  # 30 days
+    "low": 2160,  # 90 days
 }
 
 # Terminal statuses considered "resolved"
-RESOLVED_STATUSES = frozenset({
-    IssueStatus.VERIFIED_FIXED,
-    IssueStatus.CLOSED,
-    IssueStatus.FALSE_POSITIVE,
-    IssueStatus.ACCEPTED_RISK,
-})
+RESOLVED_STATUSES = frozenset(
+    {
+        IssueStatus.VERIFIED_FIXED,
+        IssueStatus.CLOSED,
+        IssueStatus.FALSE_POSITIVE,
+        IssueStatus.ACCEPTED_RISK,
+    }
+)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _verify_tenant_exists(db: Session, tenant_id: int) -> None:
     """Raise 404 if the tenant does not exist."""
@@ -267,10 +265,7 @@ def _compute_mttr_by_severity(db: Session, tenant_id: int) -> MttrBySeverity:
             mttr_values[sev] = None
             continue
 
-        total_hours = sum(
-            (issue.resolved_at - issue.created_at).total_seconds() / 3600
-            for issue in resolved_issues
-        )
+        total_hours = sum((issue.resolved_at - issue.created_at).total_seconds() / 3600 for issue in resolved_issues)
         mttr_values[sev] = round(total_hours / len(resolved_issues), 1)
 
     return MttrBySeverity(
@@ -281,9 +276,7 @@ def _compute_mttr_by_severity(db: Session, tenant_id: int) -> MttrBySeverity:
     )
 
 
-def _compute_sla_compliance(
-    db: Session, tenant_id: int
-) -> tuple[float, int]:
+def _compute_sla_compliance(db: Session, tenant_id: int) -> tuple[float, int]:
     """
     Compute overall SLA compliance percentage and count of overdue issues.
 
@@ -304,16 +297,9 @@ def _compute_sla_compliance(
         .all()
     )
 
-    within_sla = sum(
-        1 for issue in resolved_with_sla
-        if issue.resolved_at <= issue.sla_due_at
-    )
+    within_sla = sum(1 for issue in resolved_with_sla if issue.resolved_at <= issue.sla_due_at)
 
-    compliance_pct = (
-        round((within_sla / len(resolved_with_sla)) * 100, 1)
-        if resolved_with_sla
-        else 100.0
-    )
+    compliance_pct = round((within_sla / len(resolved_with_sla)) * 100, 1) if resolved_with_sla else 100.0
 
     # Overdue open issues
     overdue_count = (
@@ -324,7 +310,8 @@ def _compute_sla_compliance(
             Issue.sla_due_at.isnot(None),
             Issue.sla_due_at < now,
         )
-        .scalar() or 0
+        .scalar()
+        or 0
     )
 
     return compliance_pct, overdue_count
@@ -333,6 +320,7 @@ def _compute_sla_compliance(
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.get("/stats", response_model=RemediationStatsResponse)
 def get_remediation_stats(
@@ -364,7 +352,8 @@ def get_remediation_stats(
             db.query(func.count(Finding.id))
             .join(Asset)
             .filter(Asset.tenant_id == tenant_id, Finding.status == fs)
-            .scalar() or 0
+            .scalar()
+            or 0
         )
         finding_status_counts[fs.value] = count
 
@@ -378,9 +367,7 @@ def get_remediation_stats(
     issue_status_counts: Dict[str, int] = {}
     for is_status in IssueStatus:
         count = (
-            db.query(func.count(Issue.id))
-            .filter(Issue.tenant_id == tenant_id, Issue.status == is_status)
-            .scalar() or 0
+            db.query(func.count(Issue.id)).filter(Issue.tenant_id == tenant_id, Issue.status == is_status).scalar() or 0
         )
         issue_status_counts[is_status.value] = count
 
@@ -403,7 +390,8 @@ def get_remediation_stats(
             Issue.tenant_id == tenant_id,
             Issue.status.in_(list(RESOLVED_STATUSES)),
         )
-        .scalar() or 0
+        .scalar()
+        or 0
     )
 
     # --- MTTR by severity ---
@@ -497,11 +485,7 @@ def get_remediation_timeline(
             key = _period_key(issue.created_at)
             opened_buckets[key] = opened_buckets.get(key, 0) + 1
 
-        if (
-            issue.resolved_at
-            and issue.resolved_at >= cutoff
-            and issue.status in RESOLVED_STATUSES
-        ):
+        if issue.resolved_at and issue.resolved_at >= cutoff and issue.status in RESOLVED_STATUSES:
             key = _period_key(issue.resolved_at)
             resolved_buckets[key] = resolved_buckets.get(key, 0) + 1
 
@@ -571,35 +555,26 @@ def get_sla_compliance(
         )
 
         total_resolved = len(resolved_issues)
-        within_sla = sum(
-            1 for issue in resolved_issues
-            if issue.resolved_at <= issue.sla_due_at
-        )
+        within_sla = sum(1 for issue in resolved_issues if issue.resolved_at <= issue.sla_due_at)
         breached_sla = total_resolved - within_sla
 
-        compliance_pct = (
-            round((within_sla / total_resolved) * 100, 1)
-            if total_resolved > 0
-            else 100.0
-        )
+        compliance_pct = round((within_sla / total_resolved) * 100, 1) if total_resolved > 0 else 100.0
 
         total_resolved_all += total_resolved
         total_within_all += within_sla
 
-        entries.append(SlaComplianceEntry(
-            severity=sev,
-            total_resolved=total_resolved,
-            within_sla=within_sla,
-            breached_sla=breached_sla,
-            compliance_pct=compliance_pct,
-            target_hours=target_hours,
-        ))
+        entries.append(
+            SlaComplianceEntry(
+                severity=sev,
+                total_resolved=total_resolved,
+                within_sla=within_sla,
+                breached_sla=breached_sla,
+                compliance_pct=compliance_pct,
+                target_hours=target_hours,
+            )
+        )
 
-    overall_compliance = (
-        round((total_within_all / total_resolved_all) * 100, 1)
-        if total_resolved_all > 0
-        else 100.0
-    )
+    overall_compliance = round((total_within_all / total_resolved_all) * 100, 1) if total_resolved_all > 0 else 100.0
 
     return SlaComplianceResponse(
         generated_at=datetime.now(timezone.utc),

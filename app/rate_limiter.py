@@ -32,15 +32,17 @@ MUTATION_DEFAULT_LIMIT = "30/minute"
 MUTATION_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 # Paths excluded from rate limiting (health, docs, OpenAPI schema)
-RATE_LIMIT_EXEMPT_PATHS = frozenset({
-    "/health",
-    "/health/metrics",
-    "/ready",
-    "/metrics",
-    "/api/docs",
-    "/api/redoc",
-    "/api/openapi.json",
-})
+RATE_LIMIT_EXEMPT_PATHS = frozenset(
+    {
+        "/health",
+        "/health/metrics",
+        "/ready",
+        "/metrics",
+        "/api/docs",
+        "/api/redoc",
+        "/api/openapi.json",
+    }
+)
 
 
 def _get_rate_limit_key(request: Request) -> str:
@@ -93,6 +95,7 @@ def _build_redis_uri() -> Optional[str]:
     """
     try:
         from app.config import settings
+
         return settings.redis_url
     except Exception:
         logger.warning("Could not load Redis URL from settings; rate limiter will use in-memory storage")

@@ -4,6 +4,7 @@ API Performance Tests
 Tests for API endpoint performance and response times.
 Total: 5 tests
 """
+
 import pytest
 import time
 from statistics import mean, median
@@ -20,8 +21,7 @@ class TestAPIPerformance:
         performance_timer.start()
 
         response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/assets",
-            params={"limit": 50, "offset": 0}
+            f"/api/v1/tenants/{test_tenant.id}/assets", params={"limit": 50, "offset": 0}
         )
 
         elapsed = performance_timer.stop()
@@ -31,10 +31,7 @@ class TestAPIPerformance:
         assert len(data["items"]) == 50
 
         # Should respond in under 200ms
-        performance_timer.assert_faster_than(
-            0.2,
-            "Asset listing with 1000 records"
-        )
+        performance_timer.assert_faster_than(0.2, "Asset listing with 1000 records")
 
     def test_dashboard_endpoint_response_time_under_500ms(
         self, authenticated_client, test_tenant, full_tenant_data, performance_timer
@@ -42,9 +39,7 @@ class TestAPIPerformance:
         """Test dashboard endpoint responds in under 500ms"""
         performance_timer.start()
 
-        response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/dashboard"
-        )
+        response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/dashboard")
 
         elapsed = performance_timer.stop()
 
@@ -53,14 +48,9 @@ class TestAPIPerformance:
         assert "stats" in data
 
         # Dashboard should respond in under 500ms even with aggregations
-        performance_timer.assert_faster_than(
-            0.5,
-            "Dashboard with full tenant data"
-        )
+        performance_timer.assert_faster_than(0.5, "Dashboard with full tenant data")
 
-    def test_concurrent_requests_throughput(
-        self, authenticated_client, test_tenant, performance_assets
-    ):
+    def test_concurrent_requests_throughput(self, authenticated_client, test_tenant, performance_assets):
         """Test API handles concurrent requests with good throughput"""
         import concurrent.futures
 
@@ -97,8 +87,7 @@ class TestAPIPerformance:
         # Test 1: Filtered query
         performance_timer.start()
         response1 = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/findings",
-            params={"severity": "critical", "status": "open"}
+            f"/api/v1/tenants/{test_tenant.id}/findings", params={"severity": "critical", "status": "open"}
         )
         elapsed1 = performance_timer.stop()
 
@@ -107,9 +96,7 @@ class TestAPIPerformance:
 
         # Test 2: Complex aggregation
         performance_timer.start()
-        response2 = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/stats"
-        )
+        response2 = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/stats")
         elapsed2 = performance_timer.stop()
 
         assert response2.status_code == 200
@@ -117,18 +104,13 @@ class TestAPIPerformance:
 
         # Test 3: Search query
         performance_timer.start()
-        response3 = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/assets",
-            params={"search": "prod"}
-        )
+        response3 = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/assets", params={"search": "prod"})
         elapsed3 = performance_timer.stop()
 
         assert response3.status_code == 200
         performance_timer.assert_faster_than(0.3, "Asset search query")
 
-    def test_pagination_performance_with_10k_records(
-        self, authenticated_client, test_tenant, ten_k_assets
-    ):
+    def test_pagination_performance_with_10k_records(self, authenticated_client, test_tenant, ten_k_assets):
         """Test pagination performance with 10k records"""
         response_times = []
 
@@ -137,8 +119,7 @@ class TestAPIPerformance:
             start = time.time()
 
             response = authenticated_client.get(
-                f"/api/v1/tenants/{test_tenant.id}/assets",
-                params={"limit": 100, "offset": offset}
+                f"/api/v1/tenants/{test_tenant.id}/assets", params={"limit": 100, "offset": offset}
             )
 
             elapsed = time.time() - start
@@ -154,9 +135,9 @@ class TestAPIPerformance:
         max_time = max(response_times)
 
         print(f"\nPagination performance:")
-        print(f"  Average: {avg_time*1000:.0f}ms")
-        print(f"  Median: {median_time*1000:.0f}ms")
-        print(f"  Max: {max_time*1000:.0f}ms")
+        print(f"  Average: {avg_time * 1000:.0f}ms")
+        print(f"  Median: {median_time * 1000:.0f}ms")
+        print(f"  Max: {max_time * 1000:.0f}ms")
 
         # All pages should respond in reasonable time
         assert avg_time < 0.3, f"Average pagination time too high: {avg_time:.3f}s"
@@ -168,6 +149,7 @@ class TestAPIPerformance:
 
 
 # ==================== Fixtures ====================
+
 
 @pytest.fixture
 def performance_assets(db_session, test_tenant):
@@ -181,7 +163,7 @@ def performance_assets(db_session, test_tenant):
             type=AssetType.SUBDOMAIN,
             risk_score=float(i % 100),
             is_active=True,
-            priority=['low', 'normal', 'high', 'critical'][i % 4]
+            priority=["low", "normal", "high", "critical"][i % 4],
         )
         for i in range(100)
     ]
@@ -202,7 +184,7 @@ def full_tenant_data(db_session, test_tenant):
             identifier=f"dashboard{i}.example.com",
             type=AssetType.SUBDOMAIN,
             risk_score=float(i % 100),
-            is_active=True
+            is_active=True,
         )
         for i in range(200)
     ]
@@ -213,18 +195,13 @@ def full_tenant_data(db_session, test_tenant):
     services = []
     for i, asset in enumerate(assets[:100]):
         db_session.refresh(asset)
-        services.append(Service(
-            asset_id=asset.id,
-            port=443,
-            protocol="https"
-        ))
+        services.append(Service(asset_id=asset.id, port=443, protocol="https"))
     db_session.add_all(services)
 
     # Create findings with various severities
     findings = []
     for i, asset in enumerate(assets[:50]):
-        severity = [FindingSeverity.CRITICAL, FindingSeverity.HIGH,
-                   FindingSeverity.MEDIUM, FindingSeverity.LOW][i % 4]
+        severity = [FindingSeverity.CRITICAL, FindingSeverity.HIGH, FindingSeverity.MEDIUM, FindingSeverity.LOW][i % 4]
         finding = Finding(
             asset_id=asset.id,
             tenant_id=test_tenant.id,
@@ -234,7 +211,7 @@ def full_tenant_data(db_session, test_tenant):
             severity=severity,
             cvss_score=8.0 if severity == FindingSeverity.CRITICAL else 5.0,
             status=FindingStatus.OPEN,
-            evidence='{}'
+            evidence="{}",
         )
         findings.append(finding)
     db_session.add_all(findings)
@@ -255,7 +232,7 @@ def large_finding_dataset(db_session, test_tenant):
             identifier=f"finding-perf{i}.example.com",
             type=AssetType.SUBDOMAIN,
             risk_score=50.0,
-            is_active=True
+            is_active=True,
         )
         for i in range(100)
     ]
@@ -264,10 +241,8 @@ def large_finding_dataset(db_session, test_tenant):
 
     # Create many findings
     findings = []
-    severities = [FindingSeverity.CRITICAL, FindingSeverity.HIGH,
-                 FindingSeverity.MEDIUM, FindingSeverity.LOW]
-    statuses = [FindingStatus.OPEN, FindingStatus.OPEN,
-               FindingStatus.FIXED, FindingStatus.FALSE_POSITIVE]
+    severities = [FindingSeverity.CRITICAL, FindingSeverity.HIGH, FindingSeverity.MEDIUM, FindingSeverity.LOW]
+    statuses = [FindingStatus.OPEN, FindingStatus.OPEN, FindingStatus.FIXED, FindingStatus.FALSE_POSITIVE]
 
     for i, asset in enumerate(assets):
         db_session.refresh(asset)
@@ -282,7 +257,7 @@ def large_finding_dataset(db_session, test_tenant):
                 severity=severities[(i + j) % 4],
                 cvss_score=7.5,
                 status=statuses[(i + j) % 4],
-                evidence='{}'
+                evidence="{}",
             )
             findings.append(finding)
 
@@ -305,7 +280,7 @@ def ten_k_assets(db_session, test_tenant):
                 identifier=f"paginate{batch * batch_size + i}.example.com",
                 type=AssetType.SUBDOMAIN,
                 risk_score=float((batch * batch_size + i) % 100),
-                is_active=True
+                is_active=True,
             )
             for i in range(batch_size)
         ]

@@ -220,15 +220,9 @@ class HeatmapCell(BaseModel):
 class RiskHeatmapResponse(BaseModel):
     """Risk heatmap: open findings grouped by severity and asset type."""
 
-    cells: list[HeatmapCell] = Field(
-        ..., description="Heatmap cells with finding counts per severity/asset_type pair"
-    )
-    severities: list[str] = Field(
-        ..., description="Ordered list of severity levels (rows)"
-    )
-    asset_types: list[str] = Field(
-        ..., description="Ordered list of asset types (columns)"
-    )
+    cells: list[HeatmapCell] = Field(..., description="Heatmap cells with finding counts per severity/asset_type pair")
+    severities: list[str] = Field(..., description="Ordered list of severity levels (rows)")
+    asset_types: list[str] = Field(..., description="Ordered list of asset types (columns)")
 
     model_config = ConfigDict(
         json_schema_extra={

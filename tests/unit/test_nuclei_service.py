@@ -17,10 +17,7 @@ import json
 from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime
 
-from app.services.scanning.nuclei_service import (
-    NucleiService,
-    calculate_risk_score_from_findings
-)
+from app.services.scanning.nuclei_service import NucleiService, calculate_risk_score_from_findings
 from app.utils.secure_executor import ToolExecutionError
 
 
@@ -35,27 +32,29 @@ class TestNucleiService:
     @pytest.fixture
     def sample_nuclei_output(self):
         """Sample Nuclei JSON output"""
-        return json.dumps({
-            "template-id": "CVE-2021-12345",
-            "info": {
-                "name": "Test Vulnerability",
-                "severity": "critical",
-                "description": "A test vulnerability",
-                "tags": ["cve", "test"],
-                "reference": ["https://example.com"],
-                "classification": {
-                    "cvss-metrics": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
-                    "cvss-score": 9.8,
-                    "cve-id": ["CVE-2021-12345"]
-                }
-            },
-            "matcher-name": "version-check",
-            "type": "http",
-            "host": "https://example.com",
-            "matched-at": "https://example.com/vulnerable",
-            "timestamp": "2024-01-01T12:00:00Z",
-            "curl-command": "curl -X GET https://example.com/vulnerable"
-        })
+        return json.dumps(
+            {
+                "template-id": "CVE-2021-12345",
+                "info": {
+                    "name": "Test Vulnerability",
+                    "severity": "critical",
+                    "description": "A test vulnerability",
+                    "tags": ["cve", "test"],
+                    "reference": ["https://example.com"],
+                    "classification": {
+                        "cvss-metrics": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+                        "cvss-score": 9.8,
+                        "cve-id": ["CVE-2021-12345"],
+                    },
+                },
+                "matcher-name": "version-check",
+                "type": "http",
+                "host": "https://example.com",
+                "matched-at": "https://example.com/vulnerable",
+                "timestamp": "2024-01-01T12:00:00Z",
+                "curl-command": "curl -X GET https://example.com/vulnerable",
+            }
+        )
 
     def test_init(self, nuclei_service):
         """Test NucleiService initialization"""
@@ -64,11 +63,7 @@ class TestNucleiService:
 
     def test_validate_urls_valid(self, nuclei_service):
         """Test URL validation with valid URLs"""
-        urls = [
-            "https://example.com",
-            "http://test.example.com:8080",
-            "https://192.0.2.1"
-        ]
+        urls = ["https://example.com", "http://test.example.com:8080", "https://192.0.2.1"]
 
         valid_urls, errors = nuclei_service._validate_urls(urls)
 
@@ -79,10 +74,10 @@ class TestNucleiService:
         """Test URL validation with invalid URLs"""
         urls = [
             "https://localhost",  # Blocked
-            "http://127.0.0.1",   # Loopback
+            "http://127.0.0.1",  # Loopback
             "https://169.254.169.254",  # Metadata endpoint
             "ftp://example.com",  # Invalid scheme
-            "not-a-url"
+            "not-a-url",
         ]
 
         valid_urls, errors = nuclei_service._validate_urls(urls)
@@ -94,8 +89,8 @@ class TestNucleiService:
         """Test URL validation with mixed valid/invalid"""
         urls = [
             "https://example.com",  # Valid
-            "https://localhost",     # Invalid
-            "http://test.com",      # Valid
+            "https://localhost",  # Invalid
+            "http://test.com",  # Valid
         ]
 
         valid_urls, errors = nuclei_service._validate_urls(urls)
@@ -108,42 +103,38 @@ class TestNucleiService:
     def test_build_nuclei_args_default(self, nuclei_service):
         """Test building Nuclei arguments with defaults"""
         args = nuclei_service._build_nuclei_args(
-            urls_file="/tmp/urls.txt",
-            templates=None,
-            severity=['critical', 'high'],
-            rate_limit=300,
-            concurrency=50
+            urls_file="/tmp/urls.txt", templates=None, severity=["critical", "high"], rate_limit=300, concurrency=50
         )
 
-        assert '-l' in args
-        assert '/tmp/urls.txt' in args
-        assert '-jsonl' in args  # Nuclei v3+ uses -jsonl instead of -json
-        assert '-no-color' in args  # -silent was replaced with -no-color + -duc
-        assert '-severity' in args
-        assert 'critical,high' in args
-        assert '-rl' in args
-        assert '300' in args
-        assert '-c' in args
-        assert '50' in args
+        assert "-l" in args
+        assert "/tmp/urls.txt" in args
+        assert "-jsonl" in args  # Nuclei v3+ uses -jsonl instead of -json
+        assert "-no-color" in args  # -silent was replaced with -no-color + -duc
+        assert "-severity" in args
+        assert "critical,high" in args
+        assert "-rl" in args
+        assert "300" in args
+        assert "-c" in args
+        assert "50" in args
 
         # Default templates are built with absolute paths
-        assert any('cves/' in a for a in args)
-        assert any('exposed-panels/' in a for a in args)
+        assert any("cves/" in a for a in args)
+        assert any("exposed-panels/" in a for a in args)
 
     def test_build_nuclei_args_custom_templates(self, nuclei_service):
         """Test building Nuclei arguments with custom templates"""
         args = nuclei_service._build_nuclei_args(
             urls_file="/tmp/urls.txt",
-            templates=['custom-template.yaml', 'takeovers/'],
-            severity=['critical'],
+            templates=["custom-template.yaml", "takeovers/"],
+            severity=["critical"],
             rate_limit=100,
-            concurrency=25
+            concurrency=25,
         )
 
-        assert any('custom-template.yaml' in a for a in args)
-        assert any('takeovers/' in a for a in args)
-        assert '-severity' in args
-        assert 'critical' in args
+        assert any("custom-template.yaml" in a for a in args)
+        assert any("takeovers/" in a for a in args)
+        assert "-severity" in args
+        assert "critical" in args
 
     def test_parse_nuclei_result_valid(self, nuclei_service, sample_nuclei_output):
         """Test parsing valid Nuclei result"""
@@ -151,33 +142,30 @@ class TestNucleiService:
         finding = nuclei_service.parse_nuclei_result(result)
 
         assert finding is not None
-        assert finding['template_id'] == 'CVE-2021-12345'
-        assert finding['name'] == 'Test Vulnerability'
-        assert finding['severity'] == 'critical'
-        assert finding['cvss_score'] == 9.8
-        assert finding['cve_id'] == 'CVE-2021-12345'
-        assert finding['matched_at'] == 'https://example.com/vulnerable'
-        assert finding['host'] == 'example.com'
-        assert finding['source'] == 'nuclei'
+        assert finding["template_id"] == "CVE-2021-12345"
+        assert finding["name"] == "Test Vulnerability"
+        assert finding["severity"] == "critical"
+        assert finding["cvss_score"] == 9.8
+        assert finding["cve_id"] == "CVE-2021-12345"
+        assert finding["matched_at"] == "https://example.com/vulnerable"
+        assert finding["host"] == "example.com"
+        assert finding["source"] == "nuclei"
 
     def test_parse_nuclei_result_missing_fields(self, nuclei_service):
         """Test parsing Nuclei result with missing fields"""
         result = {
             "template-id": "test-template",
-            "info": {
-                "name": "Test",
-                "severity": "high"
-            },
-            "host": "https://example.com"
+            "info": {"name": "Test", "severity": "high"},
+            "host": "https://example.com",
         }
 
         finding = nuclei_service.parse_nuclei_result(result)
 
         assert finding is not None
-        assert finding['template_id'] == 'test-template'
-        assert finding['severity'] == 'high'
-        assert finding['cvss_score'] is None
-        assert finding['cve_id'] is None
+        assert finding["template_id"] == "test-template"
+        assert finding["severity"] == "high"
+        assert finding["cvss_score"] is None
+        assert finding["cve_id"] is None
 
     def test_parse_nuclei_result_invalid_severity(self, nuclei_service):
         """Test parsing Nuclei result with invalid severity"""
@@ -185,38 +173,38 @@ class TestNucleiService:
             "template-id": "test",
             "info": {
                 "name": "Test",
-                "severity": "unknown-severity"  # Invalid
+                "severity": "unknown-severity",  # Invalid
             },
-            "host": "https://example.com"
+            "host": "https://example.com",
         }
 
         finding = nuclei_service.parse_nuclei_result(result)
 
         assert finding is not None
-        assert finding['severity'] == 'info'  # Defaults to info
+        assert finding["severity"] == "info"  # Defaults to info
 
     def test_parse_nuclei_output_multiple(self, nuclei_service, sample_nuclei_output):
         """Test parsing multiple Nuclei results"""
-        stdout = sample_nuclei_output + '\n' + sample_nuclei_output
+        stdout = sample_nuclei_output + "\n" + sample_nuclei_output
 
         findings = nuclei_service._parse_nuclei_output(stdout)
 
         assert len(findings) == 2
-        assert all(f['template_id'] == 'CVE-2021-12345' for f in findings)
+        assert all(f["template_id"] == "CVE-2021-12345" for f in findings)
 
     def test_parse_nuclei_output_invalid_json(self, nuclei_service):
         """Test parsing Nuclei output with invalid JSON lines"""
-        stdout = '''
+        stdout = """
 {"valid": "json"}
 invalid json line
 {"another": "valid"}
-'''
+"""
 
-        with patch.object(nuclei_service, 'parse_nuclei_result') as mock_parse:
+        with patch.object(nuclei_service, "parse_nuclei_result") as mock_parse:
             mock_parse.side_effect = [
-                {'finding': 1},
+                {"finding": 1},
                 None,  # Invalid line returns None
-                {'finding': 2}
+                {"finding": 2},
             ]
 
             findings = nuclei_service._parse_nuclei_output(stdout)
@@ -226,101 +214,98 @@ invalid json line
 
     def test_calculate_stats(self, nuclei_service):
         """Test statistics calculation"""
-        urls = ['https://example.com', 'https://test.com']
+        urls = ["https://example.com", "https://test.com"]
         findings = [
-            {'severity': 'critical'},
-            {'severity': 'critical'},
-            {'severity': 'high'},
-            {'severity': 'medium'},
-            {'severity': 'low'},
-            {'severity': 'info'}
+            {"severity": "critical"},
+            {"severity": "critical"},
+            {"severity": "high"},
+            {"severity": "medium"},
+            {"severity": "low"},
+            {"severity": "info"},
         ]
 
         stats = nuclei_service._calculate_stats(urls, findings)
 
-        assert stats['urls_scanned'] == 2
-        assert stats['findings_count'] == 6
-        assert stats['by_severity']['critical'] == 2
-        assert stats['by_severity']['high'] == 1
-        assert stats['by_severity']['medium'] == 1
-        assert stats['by_severity']['low'] == 1
-        assert stats['by_severity']['info'] == 1
+        assert stats["urls_scanned"] == 2
+        assert stats["findings_count"] == 6
+        assert stats["by_severity"]["critical"] == 2
+        assert stats["by_severity"]["high"] == 1
+        assert stats["by_severity"]["medium"] == 1
+        assert stats["by_severity"]["low"] == 1
+        assert stats["by_severity"]["info"] == 1
 
     @pytest.mark.asyncio
     async def test_scan_urls_success(self, nuclei_service, sample_nuclei_output):
         """Test successful URL scanning"""
-        urls = ['https://example.com']
+        urls = ["https://example.com"]
 
-        with patch('app.services.scanning.nuclei_service.SecureToolExecutor') as mock_executor:
+        with patch("app.services.scanning.nuclei_service.SecureToolExecutor") as mock_executor:
             # Mock executor context manager
             mock_ctx = MagicMock()
             mock_executor.return_value.__enter__.return_value = mock_ctx
             mock_executor.return_value.__exit__.return_value = None
 
             # Mock file creation
-            mock_ctx.create_input_file.return_value = '/tmp/urls.txt'
+            mock_ctx.create_input_file.return_value = "/tmp/urls.txt"
 
             # Mock Nuclei execution
-            mock_ctx.execute.return_value = (0, sample_nuclei_output, '')
+            mock_ctx.execute.return_value = (0, sample_nuclei_output, "")
 
             # Mock storage
-            with patch('app.services.scanning.nuclei_service.store_raw_output'):
+            with patch("app.services.scanning.nuclei_service.store_raw_output"):
                 result = await nuclei_service.scan_urls(urls)
 
-                assert result['stats']['urls_scanned'] == 1
-                assert result['stats']['findings_count'] == 1
-                assert len(result['findings']) == 1
-                assert result['findings'][0]['template_id'] == 'CVE-2021-12345'
+                assert result["stats"]["urls_scanned"] == 1
+                assert result["stats"]["findings_count"] == 1
+                assert len(result["findings"]) == 1
+                assert result["findings"][0]["template_id"] == "CVE-2021-12345"
 
     @pytest.mark.asyncio
     async def test_scan_urls_no_valid_urls(self, nuclei_service):
         """Test scanning with no valid URLs"""
-        urls = ['https://localhost', 'http://127.0.0.1']
+        urls = ["https://localhost", "http://127.0.0.1"]
 
         result = await nuclei_service.scan_urls(urls)
 
-        assert result['stats']['urls_scanned'] == 0
-        assert result['stats']['findings_count'] == 0
-        assert len(result['errors']) > 0
+        assert result["stats"]["urls_scanned"] == 0
+        assert result["stats"]["findings_count"] == 0
+        assert len(result["errors"]) > 0
 
     @pytest.mark.asyncio
     async def test_scan_urls_tool_execution_error(self, nuclei_service):
         """Test handling of tool execution errors"""
-        urls = ['https://example.com']
+        urls = ["https://example.com"]
 
-        with patch('app.services.scanning.nuclei_service.SecureToolExecutor') as mock_executor:
+        with patch("app.services.scanning.nuclei_service.SecureToolExecutor") as mock_executor:
             mock_ctx = MagicMock()
             mock_executor.return_value.__enter__.return_value = mock_ctx
             mock_executor.return_value.__exit__.return_value = None
 
-            mock_ctx.create_input_file.return_value = '/tmp/urls.txt'
+            mock_ctx.create_input_file.return_value = "/tmp/urls.txt"
             mock_ctx.execute.side_effect = ToolExecutionError("Tool failed")
 
-            with patch('app.services.scanning.nuclei_service.store_raw_output'):
+            with patch("app.services.scanning.nuclei_service.store_raw_output"):
                 result = await nuclei_service.scan_urls(urls)
 
-                assert result['stats']['findings_count'] == 0
-                assert len(result['errors']) > 0
+                assert result["stats"]["findings_count"] == 0
+                assert len(result["errors"]) > 0
 
     @pytest.mark.asyncio
     async def test_scan_asset(self, nuclei_service, sample_nuclei_output):
         """Test scanning single asset"""
-        with patch('app.services.scanning.nuclei_service.SecureToolExecutor') as mock_executor:
+        with patch("app.services.scanning.nuclei_service.SecureToolExecutor") as mock_executor:
             mock_ctx = MagicMock()
             mock_executor.return_value.__enter__.return_value = mock_ctx
             mock_executor.return_value.__exit__.return_value = None
 
-            mock_ctx.create_input_file.return_value = '/tmp/urls.txt'
-            mock_ctx.execute.return_value = (0, sample_nuclei_output, '')
+            mock_ctx.create_input_file.return_value = "/tmp/urls.txt"
+            mock_ctx.execute.return_value = (0, sample_nuclei_output, "")
 
-            with patch('app.services.scanning.nuclei_service.store_raw_output'):
-                findings = await nuclei_service.scan_asset(
-                    asset_id=123,
-                    asset_url='https://example.com'
-                )
+            with patch("app.services.scanning.nuclei_service.store_raw_output"):
+                findings = await nuclei_service.scan_asset(asset_id=123, asset_url="https://example.com")
 
                 assert len(findings) == 1
-                assert findings[0]['asset_id'] == 123
+                assert findings[0]["asset_id"] == 123
 
 
 class TestRiskScoreCalculation:
@@ -333,47 +318,45 @@ class TestRiskScoreCalculation:
 
     def test_calculate_risk_score_critical(self):
         """Test risk score with critical findings"""
-        findings = [
-            {'severity': 'critical'},
-            {'severity': 'critical'}
-        ]
+        findings = [{"severity": "critical"}, {"severity": "critical"}]
         score = calculate_risk_score_from_findings(findings)
         assert score == 6.0  # 2 * 3.0
 
     def test_calculate_risk_score_mixed(self):
         """Test risk score with mixed severity"""
         findings = [
-            {'severity': 'critical'},  # 3.0
-            {'severity': 'high'},      # 2.0
-            {'severity': 'medium'},    # 1.0
-            {'severity': 'low'},       # 0.5
-            {'severity': 'info'}       # 0.1
+            {"severity": "critical"},  # 3.0
+            {"severity": "high"},  # 2.0
+            {"severity": "medium"},  # 1.0
+            {"severity": "low"},  # 0.5
+            {"severity": "info"},  # 0.1
         ]
         score = calculate_risk_score_from_findings(findings)
         assert score == 6.6  # 3.0 + 2.0 + 1.0 + 0.5 + 0.1
 
     def test_calculate_risk_score_capped(self):
         """Test risk score is capped at 10.0"""
-        findings = [{'severity': 'critical'}] * 10  # 10 * 3.0 = 30.0
+        findings = [{"severity": "critical"}] * 10  # 10 * 3.0 = 30.0
         score = calculate_risk_score_from_findings(findings)
         assert score == 10.0  # Capped
 
     def test_calculate_risk_score_unknown_severity(self):
         """Test risk score with unknown severity"""
         findings = [
-            {'severity': 'critical'},
-            {'severity': 'unknown'},  # Unknown, treated as 0.0
-            {'severity': 'high'}
+            {"severity": "critical"},
+            {"severity": "unknown"},  # Unknown, treated as 0.0
+            {"severity": "high"},
         ]
         score = calculate_risk_score_from_findings(findings)
         assert score == 5.0  # 3.0 + 0.0 + 2.0
 
 
 # Pytest configuration
-@pytest.fixture(scope='session')
+@pytest.fixture(scope="session")
 def event_loop():
     """Create event loop for async tests"""
     import asyncio
+
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()

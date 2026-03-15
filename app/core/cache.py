@@ -57,6 +57,7 @@ def _get_async_redis() -> aioredis.Redis:
 # Async helpers (for AsyncSession endpoints)
 # ---------------------------------------------------------------------------
 
+
 async def cache_get_async(key: str) -> Optional[Any]:
     """Fetch a cached value by *key*, deserializing from JSON.
 
@@ -84,6 +85,7 @@ async def cache_set_async(key: str, value: Any, ttl: int) -> None:
 # ---------------------------------------------------------------------------
 # Sync helpers (for Session endpoints)
 # ---------------------------------------------------------------------------
+
 
 def cache_get_sync(key: str) -> Optional[Any]:
     """Fetch a cached value by *key*, deserializing from JSON.

@@ -14,8 +14,16 @@ execution, tracking, and artifact collection.
 """
 
 from sqlalchemy import (
-    Column, Integer, String, DateTime, ForeignKey, Text, Enum,
-    Boolean, Index, JSON,
+    Column,
+    Integer,
+    String,
+    DateTime,
+    ForeignKey,
+    Text,
+    Enum,
+    Boolean,
+    Index,
+    JSON,
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
@@ -26,6 +34,7 @@ from app.models.database import Base
 
 class ScanRunStatus(enum.Enum):
     """Status values for scan run lifecycle"""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -35,6 +44,7 @@ class ScanRunStatus(enum.Enum):
 
 class PhaseStatus(enum.Enum):
     """Status values for individual scan phases"""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -65,17 +75,20 @@ class Project(Base):
         - Has many ScanProfiles (one-to-many)
         - Has many ScanRuns (one-to-many)
     """
-    __tablename__ = 'projects'
+
+    __tablename__ = "projects"
 
     id = Column(Integer, primary_key=True)
-    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
     name = Column(String(255), nullable=False)
     description = Column(Text)
     seeds = Column(JSON)  # [{"type": "domain", "value": "example.com"}, ...]
     settings = Column(JSON)  # Project-level settings overrides
-    created_by = Column(Integer, ForeignKey('users.id'))
+    created_by = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
 
     # Relationships
     tenant = relationship("Tenant", backref="projects")
@@ -85,8 +98,8 @@ class Project(Base):
     scan_runs = relationship("ScanRun", back_populates="project", cascade="all, delete-orphan")
 
     __table_args__ = (
-        Index('idx_project_tenant', 'tenant_id'),
-        Index('idx_project_tenant_name', 'tenant_id', 'name', unique=True),
+        Index("idx_project_tenant", "tenant_id"),
+        Index("idx_project_tenant_name", "tenant_id", "name", unique=True),
     )
 
     def __repr__(self):
@@ -111,10 +124,11 @@ class Scope(Base):
     Relationships:
         - Belongs to one Project (many-to-one)
     """
-    __tablename__ = 'scopes'
+
+    __tablename__ = "scopes"
 
     id = Column(Integer, primary_key=True)
-    project_id = Column(Integer, ForeignKey('projects.id'), nullable=False)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     rule_type = Column(String(20), nullable=False)  # 'include' or 'exclude'
     match_type = Column(String(20), nullable=False)  # 'domain', 'ip', 'cidr', 'regex'
     pattern = Column(String(500), nullable=False)
@@ -124,9 +138,7 @@ class Scope(Base):
     # Relationships
     project = relationship("Project", back_populates="scopes")
 
-    __table_args__ = (
-        Index('idx_scope_project', 'project_id'),
-    )
+    __table_args__ = (Index("idx_scope_project", "project_id"),)
 
     def __repr__(self):
         return f"<Scope(id={self.id}, rule_type='{self.rule_type}', pattern='{self.pattern}')>"
@@ -155,28 +167,31 @@ class ScanProfile(Base):
         - Belongs to one Project (many-to-one)
         - Has many ScanRuns (one-to-many)
     """
-    __tablename__ = 'scan_profiles'
+
+    __tablename__ = "scan_profiles"
 
     id = Column(Integer, primary_key=True)
-    project_id = Column(Integer, ForeignKey('projects.id'), nullable=False)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     name = Column(String(255), nullable=False)
     scan_tier = Column(Integer, default=1)  # 1=Safe, 2=Moderate, 3=Aggressive
-    port_scan_mode = Column(String(50), default='top-100')
+    port_scan_mode = Column(String(50), default="top-100")
     nuclei_tags = Column(JSON)  # ["cves", "exposed-panels", "misconfiguration"]
     schedule_cron = Column(String(100))  # Cron expression or null for manual
     max_rate_pps = Column(Integer, default=10)
     timeout_minutes = Column(Integer, default=120)
     enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
 
     # Relationships
     project = relationship("Project", back_populates="scan_profiles")
     scan_runs = relationship("ScanRun", back_populates="profile")
 
     __table_args__ = (
-        Index('idx_profile_project', 'project_id'),
-        Index('idx_profile_project_enabled', 'project_id', 'enabled'),
+        Index("idx_profile_project", "project_id"),
+        Index("idx_profile_project_enabled", "project_id", "enabled"),
     )
 
     def __repr__(self):
@@ -211,12 +226,13 @@ class ScanRun(Base):
         - Has many PhaseResults (one-to-many)
         - Has many Observations (one-to-many)
     """
-    __tablename__ = 'scan_runs'
+
+    __tablename__ = "scan_runs"
 
     id = Column(Integer, primary_key=True)
-    project_id = Column(Integer, ForeignKey('projects.id'), nullable=False)
-    profile_id = Column(Integer, ForeignKey('scan_profiles.id'))
-    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    profile_id = Column(Integer, ForeignKey("scan_profiles.id"))
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
     status = Column(Enum(ScanRunStatus), default=ScanRunStatus.PENDING)
     triggered_by = Column(String(100))  # 'manual', 'schedule', 'api'
     started_at = Column(DateTime)
@@ -234,10 +250,10 @@ class ScanRun(Base):
     observations = relationship("Observation", back_populates="scan_run", cascade="all, delete-orphan")
 
     __table_args__ = (
-        Index('idx_scanrun_project', 'project_id'),
-        Index('idx_scanrun_tenant', 'tenant_id'),
-        Index('idx_scanrun_status', 'status'),
-        Index('idx_scanrun_project_created', 'project_id', 'created_at'),
+        Index("idx_scanrun_project", "project_id"),
+        Index("idx_scanrun_tenant", "tenant_id"),
+        Index("idx_scanrun_status", "status"),
+        Index("idx_scanrun_project_created", "project_id", "created_at"),
     )
 
     def __repr__(self):
@@ -272,10 +288,11 @@ class PhaseResult(Base):
     Relationships:
         - Belongs to one ScanRun (many-to-one)
     """
-    __tablename__ = 'phase_results'
+
+    __tablename__ = "phase_results"
 
     id = Column(Integer, primary_key=True)
-    scan_run_id = Column(Integer, ForeignKey('scan_runs.id', ondelete='CASCADE'), nullable=False)
+    scan_run_id = Column(Integer, ForeignKey("scan_runs.id", ondelete="CASCADE"), nullable=False)
     phase = Column(String(10), nullable=False)  # '0', '1', '1b', '1c', '2', etc.
     status = Column(Enum(PhaseStatus), default=PhaseStatus.PENDING)
     started_at = Column(DateTime)
@@ -287,8 +304,8 @@ class PhaseResult(Base):
     scan_run = relationship("ScanRun", back_populates="phase_results")
 
     __table_args__ = (
-        Index('idx_phase_scanrun', 'scan_run_id'),
-        Index('idx_phase_scanrun_phase', 'scan_run_id', 'phase', unique=True),
+        Index("idx_phase_scanrun", "scan_run_id"),
+        Index("idx_phase_scanrun_phase", "scan_run_id", "phase", unique=True),
     )
 
     def __repr__(self):
@@ -325,12 +342,13 @@ class Observation(Base):
         - Belongs to one ScanRun (many-to-one, optional)
         - Belongs to one Asset (many-to-one, optional)
     """
-    __tablename__ = 'observations'
+
+    __tablename__ = "observations"
 
     id = Column(Integer, primary_key=True)
-    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
-    scan_run_id = Column(Integer, ForeignKey('scan_runs.id', ondelete='SET NULL'))
-    asset_id = Column(Integer, ForeignKey('assets.id', ondelete='SET NULL'))
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    scan_run_id = Column(Integer, ForeignKey("scan_runs.id", ondelete="SET NULL"))
+    asset_id = Column(Integer, ForeignKey("assets.id", ondelete="SET NULL"))
     source = Column(String(100), nullable=False)  # 'subfinder', 'crtsh', 'dnsx', etc.
     observation_type = Column(String(100), nullable=False)  # 'passive_subdomain', 'spf_ip', 'mx_ip'
     raw_data = Column(JSON)
@@ -342,9 +360,9 @@ class Observation(Base):
     asset = relationship("Asset", backref="observations")
 
     __table_args__ = (
-        Index('idx_observation_tenant', 'tenant_id'),
-        Index('idx_observation_scanrun', 'scan_run_id'),
-        Index('idx_observation_type', 'observation_type'),
+        Index("idx_observation_tenant", "tenant_id"),
+        Index("idx_observation_scanrun", "scan_run_id"),
+        Index("idx_observation_type", "observation_type"),
     )
 
     def __repr__(self):

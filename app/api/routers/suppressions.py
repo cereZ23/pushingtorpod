@@ -40,6 +40,7 @@ VALID_PATTERN_TYPES = {"template_id", "url", "host", "severity", "name", "regex"
 # Pydantic schemas (inline for this router)
 # ---------------------------------------------------------------------------
 
+
 class SuppressionCreate(BaseModel):
     """Schema for creating a new suppression rule."""
 
@@ -48,9 +49,7 @@ class SuppressionCreate(BaseModel):
         ...,
         description="Type of pattern to match against: template_id, url, host, severity, name, regex",
     )
-    pattern: str = Field(
-        ..., max_length=1000, description="Regex pattern to match"
-    )
+    pattern: str = Field(..., max_length=1000, description="Regex pattern to match")
     reason: str | None = Field(None, description="Reason for suppression")
     priority: int = Field(0, ge=0, description="Higher priority rules are matched first")
     expires_at: datetime | None = Field(None, description="Optional expiration datetime")
@@ -59,10 +58,7 @@ class SuppressionCreate(BaseModel):
     @classmethod
     def validate_pattern_type(cls, v: str) -> str:
         if v not in VALID_PATTERN_TYPES:
-            raise ValueError(
-                f"Invalid pattern_type '{v}'. "
-                f"Must be one of: {', '.join(sorted(VALID_PATTERN_TYPES))}"
-            )
+            raise ValueError(f"Invalid pattern_type '{v}'. Must be one of: {', '.join(sorted(VALID_PATTERN_TYPES))}")
         return v
 
     @field_validator("pattern")
@@ -128,10 +124,7 @@ class SuppressionFromFindingCreate(BaseModel):
     @classmethod
     def validate_pattern_type(cls, v: str) -> str:
         if v not in VALID_PATTERN_TYPES:
-            raise ValueError(
-                f"Invalid pattern_type '{v}'. "
-                f"Must be one of: {', '.join(sorted(VALID_PATTERN_TYPES))}"
-            )
+            raise ValueError(f"Invalid pattern_type '{v}'. Must be one of: {', '.join(sorted(VALID_PATTERN_TYPES))}")
         return v
 
 
@@ -139,19 +132,24 @@ class SuppressionFromFindingCreate(BaseModel):
 # Helper
 # ---------------------------------------------------------------------------
 
+
 def _get_suppression_or_404(
     db: Session,
     tenant_id: int,
     suppression_id: int,
 ) -> Suppression:
     """Fetch a suppression scoped to the given tenant, or raise 404."""
-    suppression = db.query(Suppression).filter(
-        Suppression.id == suppression_id,
-        or_(
-            Suppression.tenant_id == tenant_id,
-            Suppression.is_global == True,
-        ),
-    ).first()
+    suppression = (
+        db.query(Suppression)
+        .filter(
+            Suppression.id == suppression_id,
+            or_(
+                Suppression.tenant_id == tenant_id,
+                Suppression.is_global == True,
+            ),
+        )
+        .first()
+    )
     if not suppression:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -181,6 +179,7 @@ def _serialize_suppression(suppression: Suppression) -> dict:
 # ===========================================================================
 # ENDPOINTS
 # ===========================================================================
+
 
 @router.get("", response_model=PaginatedResponse[SuppressionResponse])
 def list_suppressions(
@@ -488,10 +487,15 @@ def create_suppression_from_finding(
         )
 
     # Fetch the finding with tenant isolation
-    finding = db.query(Finding).join(Asset).filter(
-        Finding.id == finding_id,
-        Asset.tenant_id == tenant_id,
-    ).first()
+    finding = (
+        db.query(Finding)
+        .join(Asset)
+        .filter(
+            Finding.id == finding_id,
+            Asset.tenant_id == tenant_id,
+        )
+        .first()
+    )
 
     if not finding:
         raise HTTPException(

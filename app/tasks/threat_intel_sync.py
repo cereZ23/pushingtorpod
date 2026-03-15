@@ -80,12 +80,7 @@ def refresh_threat_intel(self) -> dict:
     # Step 2: Get all unique CVE IDs from findings
     db = SessionLocal()
     try:
-        cve_rows = (
-            db.query(Finding.cve_id)
-            .filter(Finding.cve_id.isnot(None), Finding.cve_id != "")
-            .distinct()
-            .all()
-        )
+        cve_rows = db.query(Finding.cve_id).filter(Finding.cve_id.isnot(None), Finding.cve_id != "").distinct().all()
         cve_ids = [row[0] for row in cve_rows if row[0]]
         stats["unique_cves"] = len(cve_ids)
         logger.info("Found %d unique CVEs in findings table", len(cve_ids))
@@ -103,20 +98,14 @@ def refresh_threat_intel(self) -> dict:
             epss_results = service.get_epss_scores_bulk(cve_ids)
             stats["epss_fetched"] = len(epss_results)
             # Log CVEs with high EPSS for operational awareness
-            high_epss = {
-                cve: score
-                for cve, score in epss_results.items()
-                if score >= 0.5
-            }
+            high_epss = {cve: score for cve, score in epss_results.items() if score >= 0.5}
             if high_epss:
                 logger.warning(
                     "High EPSS scores detected (%d CVEs >= 0.5): %s",
                     len(high_epss),
                     ", ".join(
                         f"{cve}={score:.3f}"
-                        for cve, score in sorted(
-                            high_epss.items(), key=lambda x: x[1], reverse=True
-                        )[:10]
+                        for cve, score in sorted(high_epss.items(), key=lambda x: x[1], reverse=True)[:10]
                     ),
                 )
         except Exception as exc:
@@ -246,8 +235,7 @@ def enrich_findings_threat_intel(self, tenant_id: int) -> dict:
         db.commit()
 
         tenant_logger.info(
-            "Threat intel enrichment complete: %d findings processed, "
-            "%d KEV matches, %d high-EPSS, %d assets affected",
+            "Threat intel enrichment complete: %d findings processed, %d KEV matches, %d high-EPSS, %d assets affected",
             stats["findings_processed"],
             stats["kev_matches"],
             stats["high_epss_count"],
@@ -267,16 +255,12 @@ def enrich_findings_threat_intel(self, tenant_id: int) -> dict:
                     tenant_id,
                 )
             except Exception as exc:
-                tenant_logger.warning(
-                    "Failed to trigger risk recalculation: %s", exc
-                )
+                tenant_logger.warning("Failed to trigger risk recalculation: %s", exc)
 
         stats["status"] = "completed"
 
     except Exception as exc:
-        tenant_logger.error(
-            "Threat intel enrichment failed: %s", exc, exc_info=True
-        )
+        tenant_logger.error("Threat intel enrichment failed: %s", exc, exc_info=True)
         db.rollback()
         stats["status"] = "failed"
         stats["error"] = str(exc)

@@ -41,23 +41,20 @@ def validate_password_strength(password: str) -> tuple[bool, Optional[str]]:
     if len(password) > 128:
         return False, "Password must not exceed 128 characters"
 
-    if not re.search(r'[A-Z]', password):
+    if not re.search(r"[A-Z]", password):
         return False, "Password must contain at least one uppercase letter"
 
-    if not re.search(r'[a-z]', password):
+    if not re.search(r"[a-z]", password):
         return False, "Password must contain at least one lowercase letter"
 
-    if not re.search(r'\d', password):
+    if not re.search(r"\d", password):
         return False, "Password must contain at least one digit"
 
     if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
         return False, "Password must contain at least one special character"
 
     # Check for common weak passwords
-    common_passwords = [
-        'password', 'password123', '12345678', 'qwerty123',
-        'admin123', 'welcome123', 'letmein123'
-    ]
+    common_passwords = ["password", "password123", "12345678", "qwerty123", "admin123", "welcome123", "letmein123"]
     if password.lower() in common_passwords:
         return False, "Password is too common. Please choose a stronger password"
 
@@ -84,28 +81,28 @@ def sanitize_filename(filename: str, max_length: int = 255) -> str:
     OWASP: A03:2021 - Injection
     """
     # Remove path separators
-    filename = filename.replace('/', '_').replace('\\', '_')
+    filename = filename.replace("/", "_").replace("\\", "_")
 
     # Remove null bytes
-    filename = filename.replace('\x00', '')
+    filename = filename.replace("\x00", "")
 
     # Remove dangerous characters
-    filename = re.sub(r'[^\w\s.-]', '', filename)
+    filename = re.sub(r"[^\w\s.-]", "", filename)
 
     # Remove leading/trailing dots and spaces
-    filename = filename.strip('. ')
+    filename = filename.strip(". ")
 
     # Truncate to max length
     if len(filename) > max_length:
-        name, ext = filename.rsplit('.', 1) if '.' in filename else (filename, '')
+        name, ext = filename.rsplit(".", 1) if "." in filename else (filename, "")
         if ext:
-            filename = name[:max_length-len(ext)-1] + '.' + ext
+            filename = name[: max_length - len(ext) - 1] + "." + ext
         else:
             filename = filename[:max_length]
 
     # Ensure filename is not empty
     if not filename:
-        filename = 'file_' + secrets.token_hex(8)
+        filename = "file_" + secrets.token_hex(8)
 
     return filename
 
@@ -133,14 +130,14 @@ def sanitize_user_input(input_str: str, max_length: int = 1000) -> str:
         return ""
 
     # Remove control characters except newline and tab
-    sanitized = ''.join(char for char in input_str if ord(char) >= 32 or char in '\n\t')
+    sanitized = "".join(char for char in input_str if ord(char) >= 32 or char in "\n\t")
 
     # Truncate to max length
     if len(sanitized) > max_length:
         sanitized = sanitized[:max_length]
 
     # Escape newlines to prevent log injection
-    sanitized = sanitized.replace('\n', '\\n').replace('\r', '\\r')
+    sanitized = sanitized.replace("\n", "\\n").replace("\r", "\\r")
 
     return sanitized
 
@@ -167,20 +164,18 @@ def validate_domain_name(domain: str) -> bool:
         return False
 
     # Remove trailing dot if present
-    if domain.endswith('.'):
+    if domain.endswith("."):
         domain = domain[:-1]
 
     # Split into labels
-    labels = domain.split('.')
+    labels = domain.split(".")
 
     # Need at least 2 labels (name.tld)
     if len(labels) < 2:
         return False
 
     # Validate each label
-    domain_pattern = re.compile(
-        r'^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$'
-    )
+    domain_pattern = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$")
 
     for label in labels:
         if not label or len(label) > 63:
@@ -241,7 +236,7 @@ def is_safe_redirect_url(url: str, allowed_hosts: List[str]) -> bool:
         # Relative URLs are safe
         if not parsed.netloc:
             # But check for protocol-relative URLs
-            if url.startswith('//'):
+            if url.startswith("//"):
                 return False
             return True
 
@@ -250,7 +245,7 @@ def is_safe_redirect_url(url: str, allowed_hosts: List[str]) -> bool:
             return False
 
         # Check for suspicious patterns
-        if '@' in parsed.netloc:  # User info in URL (phishing)
+        if "@" in parsed.netloc:  # User info in URL (phishing)
             return False
 
         return True
@@ -295,6 +290,7 @@ def constant_time_compare(a: str, b: str) -> bool:
     OWASP: A02:2021 - Cryptographic Failures
     """
     import hmac
+
     return hmac.compare_digest(a.encode(), b.encode())
 
 

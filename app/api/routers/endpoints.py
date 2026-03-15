@@ -11,12 +11,7 @@ from typing import Optional, List
 import logging
 
 from app.api.dependencies import get_db, verify_tenant_access, PaginationParams, escape_like
-from app.api.schemas.endpoint import (
-    EndpointResponse,
-    EndpointListRequest,
-    EndpointStatsResponse,
-    APIEndpointSummary
-)
+from app.api.schemas.endpoint import EndpointResponse, EndpointListRequest, EndpointStatsResponse, APIEndpointSummary
 from app.api.schemas.common import PaginatedResponse
 from app.models.database import Asset
 from app.models.enrichment import Endpoint
@@ -41,7 +36,7 @@ def list_endpoints(
     sort_order: str = Query("desc"),
     pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
+    membership=Depends(verify_tenant_access),
 ):
     """
     List endpoints with filtering
@@ -55,9 +50,13 @@ def list_endpoints(
     - Sensitive path detection
     """
     # Build query with tenant isolation
-    query = db.query(Endpoint).join(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.is_active == True,  # noqa: E712
+    query = (
+        db.query(Endpoint)
+        .join(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.is_active == True,  # noqa: E712
+        )
     )
 
     # Apply filters
@@ -118,16 +117,13 @@ def list_endpoints(
         total=total,
         page=pagination.page,
         page_size=pagination.page_size,
-        total_pages=(total + pagination.page_size - 1) // pagination.page_size
+        total_pages=(total + pagination.page_size - 1) // pagination.page_size,
     )
 
 
 @router.get("/{endpoint_id}", response_model=EndpointResponse)
 def get_endpoint(
-    tenant_id: int,
-    endpoint_id: int,
-    db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
+    tenant_id: int, endpoint_id: int, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)
 ):
     """
     Get endpoint by ID
@@ -137,26 +133,16 @@ def get_endpoint(
     Raises:
         - 404: Endpoint not found
     """
-    endpoint = db.query(Endpoint).join(Asset).filter(
-        Endpoint.id == endpoint_id,
-        Asset.tenant_id == tenant_id
-    ).first()
+    endpoint = db.query(Endpoint).join(Asset).filter(Endpoint.id == endpoint_id, Asset.tenant_id == tenant_id).first()
 
     if not endpoint:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Endpoint not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint not found")
 
     return EndpointResponse.model_validate(endpoint)
 
 
 @router.get("/stats", response_model=EndpointStatsResponse)
-def get_endpoint_stats(
-    tenant_id: int,
-    db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
-):
+def get_endpoint_stats(tenant_id: int, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)):
     """
     Get endpoint statistics
 
@@ -168,59 +154,50 @@ def get_endpoint_stats(
     - Sensitive endpoints
     """
     # Total endpoints
-    total = db.query(Endpoint).join(Asset).filter(
-        Asset.tenant_id == tenant_id
-    ).count()
+    total = db.query(Endpoint).join(Asset).filter(Asset.tenant_id == tenant_id).count()
 
     # Distribution by type
     by_type = {}
-    types = db.query(
-        Endpoint.endpoint_type,
-        func.count(Endpoint.id).label('count')
-    ).join(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Endpoint.endpoint_type.isnot(None)
-    ).group_by(Endpoint.endpoint_type).all()
+    types = (
+        db.query(Endpoint.endpoint_type, func.count(Endpoint.id).label("count"))
+        .join(Asset)
+        .filter(Asset.tenant_id == tenant_id, Endpoint.endpoint_type.isnot(None))
+        .group_by(Endpoint.endpoint_type)
+        .all()
+    )
 
     for endpoint_type, count in types:
         by_type[endpoint_type] = count
 
     # Distribution by method
     by_method = {}
-    methods = db.query(
-        Endpoint.method,
-        func.count(Endpoint.id).label('count')
-    ).join(Asset).filter(
-        Asset.tenant_id == tenant_id
-    ).group_by(Endpoint.method).all()
+    methods = (
+        db.query(Endpoint.method, func.count(Endpoint.id).label("count"))
+        .join(Asset)
+        .filter(Asset.tenant_id == tenant_id)
+        .group_by(Endpoint.method)
+        .all()
+    )
 
     for method, count in methods:
         by_method[method] = count
 
     # API endpoints
-    api_endpoints = db.query(Endpoint).join(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Endpoint.is_api == True
-    ).count()
+    api_endpoints = db.query(Endpoint).join(Asset).filter(Asset.tenant_id == tenant_id, Endpoint.is_api == True).count()
 
     # External links
-    external_links = db.query(Endpoint).join(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Endpoint.is_external == True
-    ).count()
+    external_links = (
+        db.query(Endpoint).join(Asset).filter(Asset.tenant_id == tenant_id, Endpoint.is_external == True).count()
+    )
 
     # Sensitive endpoints (check URL for sensitive keywords)
     # This is done in the property, so we need to fetch and check
-    all_endpoints = db.query(Endpoint).join(Asset).filter(
-        Asset.tenant_id == tenant_id
-    ).all()
+    all_endpoints = db.query(Endpoint).join(Asset).filter(Asset.tenant_id == tenant_id).all()
 
     sensitive_count = sum(1 for e in all_endpoints if e.is_sensitive_endpoint)
 
     # Average depth
-    avg_depth = db.query(func.avg(Endpoint.depth)).join(Asset).filter(
-        Asset.tenant_id == tenant_id
-    ).scalar() or 0.0
+    avg_depth = db.query(func.avg(Endpoint.depth)).join(Asset).filter(Asset.tenant_id == tenant_id).scalar() or 0.0
 
     return EndpointStatsResponse(
         total_endpoints=total,
@@ -229,16 +206,12 @@ def get_endpoint_stats(
         api_endpoints=api_endpoints,
         external_links=external_links,
         sensitive_endpoints=sensitive_count,
-        average_depth=round(float(avg_depth), 2)
+        average_depth=round(float(avg_depth), 2),
     )
 
 
 @router.get("/api/summary", response_model=List[APIEndpointSummary])
-def get_api_summary(
-    tenant_id: int,
-    db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
-):
+def get_api_summary(tenant_id: int, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)):
     """
     Get API endpoint summary
 
@@ -250,10 +223,7 @@ def get_api_summary(
         List of API path patterns with methods and examples
     """
     # Get all API endpoints
-    api_endpoints = db.query(Endpoint).join(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Endpoint.is_api == True
-    ).all()
+    api_endpoints = db.query(Endpoint).join(Asset).filter(Asset.tenant_id == tenant_id, Endpoint.is_api == True).all()
 
     # Group by path pattern
     path_patterns = {}
@@ -267,24 +237,24 @@ def get_api_summary(
         # This is a simplified version
         if path not in path_patterns:
             path_patterns[path] = {
-                'path': path,
-                'methods': set(),
-                'count': 0,
-                'example_url': endpoint.url,
-                'requires_auth': None
+                "path": path,
+                "methods": set(),
+                "count": 0,
+                "example_url": endpoint.url,
+                "requires_auth": None,
             }
 
-        path_patterns[path]['methods'].add(endpoint.method)
-        path_patterns[path]['count'] += 1
+        path_patterns[path]["methods"].add(endpoint.method)
+        path_patterns[path]["count"] += 1
 
     # Convert to response format
     return [
         APIEndpointSummary(
-            path=data['path'],
-            methods=sorted(list(data['methods'])),
-            count=data['count'],
-            example_url=data['example_url'],
-            requires_auth=data['requires_auth']
+            path=data["path"],
+            methods=sorted(list(data["methods"])),
+            count=data["count"],
+            example_url=data["example_url"],
+            requires_auth=data["requires_auth"],
         )
-        for data in sorted(path_patterns.values(), key=lambda x: x['count'], reverse=True)[:100]
+        for data in sorted(path_patterns.values(), key=lambda x: x["count"], reverse=True)[:100]
     ]

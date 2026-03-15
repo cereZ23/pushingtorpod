@@ -115,8 +115,7 @@ def _send_email(
     """
     if not settings.smtp_host or not settings.smtp_from:
         logger.warning(
-            "SMTP not configured (smtp_host=%s, smtp_from=%s). "
-            "Skipping email delivery.",
+            "SMTP not configured (smtp_host=%s, smtp_from=%s). Skipping email delivery.",
             settings.smtp_host,
             settings.smtp_from,
         )
@@ -187,11 +186,7 @@ def deliver_scheduled_reports(self) -> dict:
     failed = 0
 
     try:
-        active_schedules = (
-            db.query(ReportSchedule)
-            .filter(ReportSchedule.is_active.is_(True))
-            .all()
-        )
+        active_schedules = db.query(ReportSchedule).filter(ReportSchedule.is_active.is_(True)).all()
 
         logger.info(
             "Report delivery task started: %d active schedule(s) found",
@@ -237,14 +232,8 @@ def deliver_scheduled_reports(self) -> dict:
             # Build filename and subject
             timestamp = datetime.now(timezone.utc).strftime("%Y%m%d")
             ext = _EXTENSIONS.get(schedule.format, schedule.format)
-            filename = (
-                f"easm_{schedule.report_type}_tenant_{schedule.tenant_id}"
-                f"_{timestamp}.{ext}"
-            )
-            subject = (
-                f"[EASM] Scheduled {schedule.report_type.capitalize()} Report "
-                f"- {schedule.name}"
-            )
+            filename = f"easm_{schedule.report_type}_tenant_{schedule.tenant_id}_{timestamp}.{ext}"
+            subject = f"[EASM] Scheduled {schedule.report_type.capitalize()} Report - {schedule.name}"
             body = (
                 f"Attached is the scheduled {schedule.report_type} report "
                 f"'{schedule.name}' generated on "

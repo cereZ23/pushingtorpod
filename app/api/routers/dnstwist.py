@@ -56,10 +56,7 @@ def trigger_dnstwist_scan(
     """
     domain_list = body.domain_list if body else None
 
-    logger.info(
-        f"Triggering DNSTwist scan for tenant {tenant_id} "
-        f"(domains: {domain_list or 'all'})"
-    )
+    logger.info(f"Triggering DNSTwist scan for tenant {tenant_id} (domains: {domain_list or 'all'})")
 
     task = run_dnstwist.delay(
         tenant_id=tenant_id,
@@ -68,8 +65,8 @@ def trigger_dnstwist_scan(
 
     return TaskResponse(
         task_id=task.id,
-        status='queued',
-        message=f'DNSTwist scan queued for tenant {tenant_id}',
+        status="queued",
+        message=f"DNSTwist scan queued for tenant {tenant_id}",
     )
 
 
@@ -105,11 +102,11 @@ def list_dnstwist_findings(
         Paginated list of ``DnstwistFindingResponse`` items
     """
     query = (
-        db.query(Finding, Asset.identifier.label('asset_identifier'))
+        db.query(Finding, Asset.identifier.label("asset_identifier"))
         .join(Asset)
         .filter(
             Asset.tenant_id == tenant_id,
-            Finding.source == 'dnstwist',
+            Finding.source == "dnstwist",
         )
     )
 
@@ -153,11 +150,11 @@ def list_dnstwist_findings(
             asset_id=finding.asset_id,
             template_id=finding.template_id,
             name=finding.name,
-            severity=finding.severity.value if finding.severity else 'medium',
+            severity=finding.severity.value if finding.severity else "medium",
             evidence=finding.evidence,
-            first_seen=finding.first_seen.isoformat() if finding.first_seen else '',
-            last_seen=finding.last_seen.isoformat() if finding.last_seen else '',
-            status=finding.status.value if finding.status else 'open',
+            first_seen=finding.first_seen.isoformat() if finding.first_seen else "",
+            last_seen=finding.last_seen.isoformat() if finding.last_seen else "",
+            status=finding.status.value if finding.status else "open",
             asset_identifier=asset_identifier,
         )
         items.append(item)

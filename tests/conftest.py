@@ -7,6 +7,7 @@ Provides:
 - Test data factories
 - Configuration for test execution
 """
+
 import pytest
 import tempfile
 import os
@@ -19,15 +20,25 @@ from sqlalchemy.orm import sessionmaker
 
 # Load environment variables from .env file for database connection
 from dotenv import load_dotenv
-env_path = Path(__file__).parent.parent / '.env'
+
+env_path = Path(__file__).parent.parent / ".env"
 if env_path.exists():
     load_dotenv(dotenv_path=env_path)
 
 # Import all models to ensure they're registered with SQLAlchemy
 import app.models
 from app.models import (
-    Base, Tenant, Asset, Seed, Event, Service, Finding,
-    AssetType, EventKind, FindingSeverity, FindingStatus
+    Base,
+    Tenant,
+    Asset,
+    Seed,
+    Event,
+    Service,
+    Finding,
+    AssetType,
+    EventKind,
+    FindingSeverity,
+    FindingStatus,
 )
 from app.models.enrichment import Certificate, Endpoint
 
@@ -35,25 +46,15 @@ from app.models.enrichment import Certificate, Endpoint
 # Pytest configuration
 def pytest_configure(config):
     """Configure pytest with custom markers"""
-    config.addinivalue_line(
-        "markers", "integration: mark test as integration test (slower)"
-    )
-    config.addinivalue_line(
-        "markers", "security: mark test as security test"
-    )
-    config.addinivalue_line(
-        "markers", "performance: mark test as performance test"
-    )
-    config.addinivalue_line(
-        "markers", "slow: mark test as slow running"
-    )
-    config.addinivalue_line(
-        "markers", "benchmark: mark test as benchmark"
-    )
+    config.addinivalue_line("markers", "integration: mark test as integration test (slower)")
+    config.addinivalue_line("markers", "security: mark test as security test")
+    config.addinivalue_line("markers", "performance: mark test as performance test")
+    config.addinivalue_line("markers", "slow: mark test as slow running")
+    config.addinivalue_line("markers", "benchmark: mark test as benchmark")
 
 
 # Database Fixtures
-@pytest.fixture(scope='function')
+@pytest.fixture(scope="function")
 def db_engine():
     """Create PostgreSQL database engine for testing
 
@@ -64,11 +65,8 @@ def db_engine():
     # Connection string matches docker-compose.yml configuration
     # Using 127.0.0.1 instead of localhost to force IPv4
     # Read password from environment (set in .env file)
-    db_password = os.environ.get('DB_PASSWORD', 'easm_password')
-    database_url = os.environ.get(
-        'TEST_DATABASE_URL',
-        f'postgresql://easm:{db_password}@127.0.0.1:15432/easm'
-    )
+    db_password = os.environ.get("DB_PASSWORD", "easm_password")
+    database_url = os.environ.get("TEST_DATABASE_URL", f"postgresql://easm:{db_password}@127.0.0.1:15432/easm")
 
     engine = create_engine(database_url, echo=False)
 
@@ -79,7 +77,7 @@ def db_engine():
     engine.dispose()
 
 
-@pytest.fixture(scope='function')
+@pytest.fixture(scope="function")
 def db_session(db_engine):
     """Create database session with transaction rollback for test isolation"""
     # Create a connection
@@ -100,7 +98,7 @@ def db_session(db_engine):
     connection.close()
 
 
-@pytest.fixture(scope='function')
+@pytest.fixture(scope="function")
 def test_db(db_session):
     """Alias for db_session for backward compatibility"""
     return db_session
@@ -110,11 +108,7 @@ def test_db(db_session):
 @pytest.fixture
 def tenant(db_session):
     """Create a test tenant"""
-    tenant = Tenant(
-        name="Test Tenant",
-        slug="test-tenant",
-        contact_policy="security@test.com"
-    )
+    tenant = Tenant(name="Test Tenant", slug="test-tenant", contact_policy="security@test.com")
     db_session.add(tenant)
     db_session.commit()
     db_session.refresh(tenant)
@@ -124,11 +118,7 @@ def tenant(db_session):
 @pytest.fixture
 def tenant_with_api_keys(db_session):
     """Create tenant with API keys configured"""
-    tenant = Tenant(
-        name="Tenant With Keys",
-        slug="tenant-keys",
-        contact_policy="security@test.com"
-    )
+    tenant = Tenant(name="Tenant With Keys", slug="tenant-keys", contact_policy="security@test.com")
     db_session.add(tenant)
     db_session.commit()
     db_session.refresh(tenant)
@@ -138,10 +128,7 @@ def tenant_with_api_keys(db_session):
 @pytest.fixture
 def multiple_tenants(db_session):
     """Create multiple tenants for isolation testing"""
-    tenants = [
-        Tenant(name=f"Tenant {i}", slug=f"tenant-{i}")
-        for i in range(3)
-    ]
+    tenants = [Tenant(name=f"Tenant {i}", slug=f"tenant-{i}") for i in range(3)]
     db_session.add_all(tenants)
     db_session.commit()
     for t in tenants:
@@ -159,7 +146,7 @@ def sample_asset(db_session, tenant):
         type=AssetType.SUBDOMAIN,
         risk_score=10.0,
         is_active=True,
-        raw_metadata='{"test": "data"}'
+        raw_metadata='{"test": "data"}',
     )
     db_session.add(asset)
     db_session.commit()
@@ -176,7 +163,7 @@ def multiple_assets(db_session, tenant):
             identifier=f"sub{i}.example.com",
             type=AssetType.SUBDOMAIN,
             risk_score=float(i * 10),
-            is_active=True
+            is_active=True,
         )
         for i in range(10)
     ]
@@ -196,7 +183,7 @@ def critical_assets(db_session, tenant):
             identifier=f"critical{i}.example.com",
             type=AssetType.SUBDOMAIN,
             risk_score=75.0 + i,
-            is_active=True
+            is_active=True,
         )
         for i in range(5)
     ]
@@ -212,11 +199,11 @@ def critical_assets(db_session, tenant):
 def sample_seeds(db_session, tenant):
     """Create sample seeds"""
     seeds = [
-        Seed(tenant_id=tenant.id, type='domain', value='example.com', enabled=True),
-        Seed(tenant_id=tenant.id, type='domain', value='test.org', enabled=True),
-        Seed(tenant_id=tenant.id, type='keyword', value='TestCorp', enabled=True),
-        Seed(tenant_id=tenant.id, type='asn', value='AS12345', enabled=True),
-        Seed(tenant_id=tenant.id, type='ip_range', value='192.168.1.0/24', enabled=True),
+        Seed(tenant_id=tenant.id, type="domain", value="example.com", enabled=True),
+        Seed(tenant_id=tenant.id, type="domain", value="test.org", enabled=True),
+        Seed(tenant_id=tenant.id, type="keyword", value="TestCorp", enabled=True),
+        Seed(tenant_id=tenant.id, type="asn", value="AS12345", enabled=True),
+        Seed(tenant_id=tenant.id, type="ip_range", value="192.168.1.0/24", enabled=True),
     ]
     db_session.add_all(seeds)
     db_session.commit()
@@ -228,12 +215,7 @@ def sample_seeds(db_session, tenant):
 @pytest.fixture
 def disabled_seed(db_session, tenant):
     """Create a disabled seed"""
-    seed = Seed(
-        tenant_id=tenant.id,
-        type='domain',
-        value='disabled.com',
-        enabled=False
-    )
+    seed = Seed(tenant_id=tenant.id, type="domain", value="disabled.com", enabled=False)
     db_session.add(seed)
     db_session.commit()
     db_session.refresh(seed)
@@ -245,21 +227,9 @@ def disabled_seed(db_session, tenant):
 def sample_events(db_session, sample_asset):
     """Create sample events"""
     events = [
-        Event(
-            asset_id=sample_asset.id,
-            kind=EventKind.NEW_ASSET,
-            payload='{"discovered": true}'
-        ),
-        Event(
-            asset_id=sample_asset.id,
-            kind=EventKind.OPEN_PORT,
-            payload='{"port": 443, "protocol": "https"}'
-        ),
-        Event(
-            asset_id=sample_asset.id,
-            kind=EventKind.NEW_CERT,
-            payload='{"cert": "data"}'
-        ),
+        Event(asset_id=sample_asset.id, kind=EventKind.NEW_ASSET, payload='{"discovered": true}'),
+        Event(asset_id=sample_asset.id, kind=EventKind.OPEN_PORT, payload='{"port": 443, "protocol": "https"}'),
+        Event(asset_id=sample_asset.id, kind=EventKind.NEW_CERT, payload='{"cert": "data"}'),
     ]
     db_session.add_all(events)
     db_session.commit()
@@ -279,7 +249,7 @@ def sample_service(db_session, sample_asset):
         product="nginx",
         version="1.18.0",
         http_title="Test Page",
-        http_status=200
+        http_status=200,
     )
     db_session.add(service)
     db_session.commit()
@@ -300,7 +270,7 @@ def sample_finding(db_session, sample_asset):
         cvss_score=7.5,
         cve_id="CVE-2021-12345",
         evidence='{"proof": "data"}',
-        status=FindingStatus.OPEN
+        status=FindingStatus.OPEN,
     )
     db_session.add(finding)
     db_session.commit()
@@ -312,7 +282,7 @@ def sample_finding(db_session, sample_asset):
 @pytest.fixture
 def mock_subprocess():
     """Mock subprocess.run"""
-    with patch('subprocess.run') as mock:
+    with patch("subprocess.run") as mock:
         mock.return_value = MagicMock(returncode=0, stdout="", stderr="")
         yield mock
 
@@ -320,7 +290,7 @@ def mock_subprocess():
 @pytest.fixture
 def mock_minio():
     """Mock MinIO client"""
-    with patch('app.utils.storage.get_minio_client') as mock:
+    with patch("app.utils.storage.get_minio_client") as mock:
         client = MagicMock()
         client.bucket_exists.return_value = True
         mock.return_value = client
@@ -330,15 +300,15 @@ def mock_minio():
 @pytest.fixture
 def mock_celery():
     """Mock Celery task execution"""
-    with patch('celery.Task.apply_async') as mock:
-        mock.return_value = MagicMock(id='test-task-id')
+    with patch("celery.Task.apply_async") as mock:
+        mock.return_value = MagicMock(id="test-task-id")
         yield mock
 
 
 @pytest.fixture
 def mock_secure_executor():
     """Mock SecureToolExecutor"""
-    with patch('app.utils.secure_executor.SecureToolExecutor') as mock:
+    with patch("app.utils.secure_executor.SecureToolExecutor") as mock:
         executor = MagicMock()
         executor.execute.return_value = (0, "", "")
         executor.read_output_file.return_value = ""
@@ -351,46 +321,47 @@ def mock_secure_executor():
 @pytest.fixture
 def asset_factory():
     """Factory for creating asset data"""
+
     def _create_asset_data(count=1, tenant_id=1, base_name="test"):
         return [
             {
-                'identifier': f'{base_name}{i}.example.com',
-                'type': AssetType.SUBDOMAIN,
-                'raw_metadata': '{"index": ' + str(i) + '}'
+                "identifier": f"{base_name}{i}.example.com",
+                "type": AssetType.SUBDOMAIN,
+                "raw_metadata": '{"index": ' + str(i) + "}",
             }
             for i in range(count)
         ]
+
     return _create_asset_data
 
 
 @pytest.fixture
 def discovery_result_factory():
     """Factory for creating discovery results"""
+
     def _create_discovery_result(count=10, base_name="sub"):
         return {
-            'resolved': [
-                {
-                    'host': f'{base_name}{i}.example.com',
-                    'a': [f'1.2.3.{i}'],
-                    'status': 'NOERROR'
-                }
-                for i in range(count)
+            "resolved": [
+                {"host": f"{base_name}{i}.example.com", "a": [f"1.2.3.{i}"], "status": "NOERROR"} for i in range(count)
             ],
-            'tenant_id': 1
+            "tenant_id": 1,
         }
+
     return _create_discovery_result
 
 
 @pytest.fixture
 def seed_data_factory():
     """Factory for creating seed data"""
+
     def _create_seed_data(domains=None, keywords=None, asns=None, ip_ranges=None):
         return {
-            'domains': domains or ['example.com', 'test.org'],
-            'keywords': keywords or ['TestCorp'],
-            'asns': asns or ['AS12345'],
-            'ip_ranges': ip_ranges or ['192.168.1.0/24']
+            "domains": domains or ["example.com", "test.org"],
+            "keywords": keywords or ["TestCorp"],
+            "asns": asns or ["AS12345"],
+            "ip_ranges": ip_ranges or ["192.168.1.0/24"],
         }
+
     return _create_seed_data
 
 
@@ -401,7 +372,7 @@ def temp_file():
     files = []
 
     def _create_temp_file(content="", suffix=".txt"):
-        f = tempfile.NamedTemporaryFile(mode='w', suffix=suffix, delete=False)
+        f = tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False)
         f.write(content)
         f.close()
         files.append(f.name)
@@ -429,6 +400,7 @@ def temp_dir():
 
     # Cleanup
     import shutil
+
     for d in dirs:
         if os.path.exists(d):
             shutil.rmtree(d)
@@ -441,10 +413,10 @@ def test_env():
     original_env = os.environ.copy()
 
     # Set test environment variables
-    os.environ['DATABASE_URL'] = 'sqlite:///:memory:'
-    os.environ['MINIO_ENDPOINT'] = 'localhost:9000'
-    os.environ['MINIO_USER'] = 'test'
-    os.environ['MINIO_PASSWORD'] = 'testpass'
+    os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+    os.environ["MINIO_ENDPOINT"] = "localhost:9000"
+    os.environ["MINIO_USER"] = "test"
+    os.environ["MINIO_PASSWORD"] = "testpass"
 
     yield
 
@@ -459,7 +431,7 @@ def freeze_time():
     """Freeze time for consistent testing"""
     fixed_time = datetime(2024, 1, 15, 12, 0, 0)
 
-    with patch('app.repositories.asset_repository.datetime') as mock_datetime:
+    with patch("app.repositories.asset_repository.datetime") as mock_datetime:
         mock_datetime.now.return_value = fixed_time
         mock_datetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
         yield fixed_time
@@ -478,12 +450,13 @@ def cleanup_temp_files():
 @pytest.fixture
 def assert_asset_equal():
     """Helper to assert asset equality"""
+
     def _assert_equal(asset1, asset2, ignore_fields=None):
-        ignore_fields = ignore_fields or ['id', 'first_seen', 'last_seen']
-        for field in ['tenant_id', 'identifier', 'type']:
+        ignore_fields = ignore_fields or ["id", "first_seen", "last_seen"]
+        for field in ["tenant_id", "identifier", "type"]:
             if field not in ignore_fields:
-                assert getattr(asset1, field) == getattr(asset2, field), \
-                    f"Field {field} does not match"
+                assert getattr(asset1, field) == getattr(asset2, field), f"Field {field} does not match"
+
     return _assert_equal
 
 
@@ -510,8 +483,7 @@ def performance_timer():
         def assert_faster_than(self, seconds, message=""):
             if self.elapsed is None:
                 raise RuntimeError("Timer not stopped")
-            assert self.elapsed < seconds, \
-                f"{message} Expected < {seconds}s, got {self.elapsed:.3f}s"
+            assert self.elapsed < seconds, f"{message} Expected < {seconds}s, got {self.elapsed:.3f}s"
 
     return Timer()
 
@@ -520,12 +492,7 @@ def performance_timer():
 @pytest.fixture
 def db_with_data(db_session, tenant, sample_seeds, multiple_assets):
     """Database pre-populated with common test data"""
-    return {
-        'db': db_session,
-        'tenant': tenant,
-        'seeds': sample_seeds,
-        'assets': multiple_assets
-    }
+    return {"db": db_session, "tenant": tenant, "seeds": sample_seeds, "assets": multiple_assets}
 
 
 # Logging Fixtures
@@ -539,7 +506,7 @@ def capture_logs():
     handler = logging.StreamHandler(log_capture)
     handler.setLevel(logging.DEBUG)
 
-    logger = logging.getLogger('app')
+    logger = logging.getLogger("app")
     logger.addHandler(handler)
     logger.setLevel(logging.DEBUG)
 
@@ -553,10 +520,10 @@ def capture_logs():
 def test_config():
     """Test configuration"""
     return {
-        'batch_size': 100,
-        'timeout': 600,
-        'max_retries': 3,
-        'memory_limit': 1024 * 1024 * 1024,  # 1GB
+        "batch_size": 100,
+        "timeout": 600,
+        "max_retries": 3,
+        "memory_limit": 1024 * 1024 * 1024,  # 1GB
     }
 
 
@@ -564,11 +531,7 @@ def test_config():
 @pytest.fixture
 def mock_tenant(db_session):
     """Create a test tenant for enrichment tests"""
-    tenant = Tenant(
-        name="Mock Tenant",
-        slug="mock-tenant",
-        contact_policy="security@mock.com"
-    )
+    tenant = Tenant(name="Mock Tenant", slug="mock-tenant", contact_policy="security@mock.com")
     db_session.add(tenant)
     db_session.commit()
     db_session.refresh(tenant)
@@ -584,8 +547,8 @@ def mock_asset(db_session, mock_tenant):
         type=AssetType.SUBDOMAIN,
         risk_score=5.0,
         is_active=True,
-        priority='normal',
-        enrichment_status='pending'
+        priority="normal",
+        enrichment_status="pending",
     )
     db_session.add(asset)
     db_session.commit()
@@ -605,9 +568,9 @@ def mock_assets(db_session, mock_tenant):
             type=AssetType.SUBDOMAIN,
             risk_score=9.0,
             is_active=True,
-            priority='critical',
-            enrichment_status='pending',
-            last_enriched_at=None
+            priority="critical",
+            enrichment_status="pending",
+            last_enriched_at=None,
         ),
         Asset(
             tenant_id=mock_tenant.id,
@@ -615,9 +578,9 @@ def mock_assets(db_session, mock_tenant):
             type=AssetType.SUBDOMAIN,
             risk_score=7.0,
             is_active=True,
-            priority='high',
-            enrichment_status='pending',
-            last_enriched_at=None
+            priority="high",
+            enrichment_status="pending",
+            last_enriched_at=None,
         ),
         Asset(
             tenant_id=mock_tenant.id,
@@ -625,9 +588,9 @@ def mock_assets(db_session, mock_tenant):
             type=AssetType.SUBDOMAIN,
             risk_score=5.0,
             is_active=True,
-            priority='normal',
-            enrichment_status='pending',
-            last_enriched_at=None
+            priority="normal",
+            enrichment_status="pending",
+            last_enriched_at=None,
         ),
         Asset(
             tenant_id=mock_tenant.id,
@@ -635,9 +598,9 @@ def mock_assets(db_session, mock_tenant):
             type=AssetType.SUBDOMAIN,
             risk_score=2.0,
             is_active=True,
-            priority='low',
-            enrichment_status='pending',
-            last_enriched_at=None
+            priority="low",
+            enrichment_status="pending",
+            last_enriched_at=None,
         ),
     ]
     db_session.add_all(assets)
@@ -659,6 +622,7 @@ def mock_tenant_logger():
 
 
 # API Testing Fixtures (Sprint 3)
+
 
 @pytest.fixture
 def client(db_session):
@@ -688,6 +652,7 @@ def client(db_session):
         # Fallback if app not yet created
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         app = FastAPI()
         yield TestClient(app)
 
@@ -695,11 +660,7 @@ def client(db_session):
 @pytest.fixture
 def test_tenant(db_session):
     """Create test tenant for API tests"""
-    tenant = Tenant(
-        name="Test Tenant",
-        slug="test-tenant",
-        contact_policy="security@test.com"
-    )
+    tenant = Tenant(name="Test Tenant", slug="test-tenant", contact_policy="security@test.com")
     db_session.add(tenant)
     db_session.commit()
     db_session.refresh(tenant)
@@ -714,8 +675,9 @@ def test_user(db_session, test_tenant):
     except ImportError:
         # Create minimal User class if not exists
         from sqlalchemy import Column, Integer, String, Boolean
+
         class User(Base):
-            __tablename__ = 'users'
+            __tablename__ = "users"
             id = Column(Integer, primary_key=True)
             email = Column(String, unique=True, nullable=False)
             username = Column(String, unique=True, nullable=False)
@@ -728,6 +690,7 @@ def test_user(db_session, test_tenant):
     except ImportError:
         # Fallback password hash
         import bcrypt
+
         def get_password_hash(password: str) -> str:
             return bcrypt.hashpw(password.encode(), bcrypt.gensalt(12)).decode()
 
@@ -736,7 +699,7 @@ def test_user(db_session, test_tenant):
         username="testuser",
         hashed_password=get_password_hash("password123"),
         is_active=True,
-        is_superuser=False
+        is_superuser=False,
     )
     db_session.add(user)
     db_session.commit()
@@ -745,11 +708,8 @@ def test_user(db_session, test_tenant):
     # Create tenant membership
     try:
         from app.models.user import TenantMembership
-        membership = TenantMembership(
-            user_id=user.id,
-            tenant_id=test_tenant.id,
-            role="member"
-        )
+
+        membership = TenantMembership(user_id=user.id, tenant_id=test_tenant.id, role="member")
         db_session.add(membership)
         db_session.commit()
     except ImportError:
@@ -765,8 +725,9 @@ def admin_user(db_session, test_tenant):
         from app.models.user import User
     except ImportError:
         from sqlalchemy import Column, Integer, String, Boolean
+
         class User(Base):
-            __tablename__ = 'users'
+            __tablename__ = "users"
             id = Column(Integer, primary_key=True)
             email = Column(String, unique=True, nullable=False)
             username = Column(String, unique=True, nullable=False)
@@ -778,6 +739,7 @@ def admin_user(db_session, test_tenant):
         from app.security.auth import get_password_hash
     except ImportError:
         import bcrypt
+
         def get_password_hash(password: str) -> str:
             return bcrypt.hashpw(password.encode(), bcrypt.gensalt(12)).decode()
 
@@ -786,7 +748,7 @@ def admin_user(db_session, test_tenant):
         username="admin",
         hashed_password=get_password_hash("admin123"),
         is_active=True,
-        is_superuser=True
+        is_superuser=True,
     )
     db_session.add(user)
     db_session.commit()
@@ -795,11 +757,8 @@ def admin_user(db_session, test_tenant):
     # Create tenant membership with admin role
     try:
         from app.models.user import TenantMembership
-        membership = TenantMembership(
-            user_id=user.id,
-            tenant_id=test_tenant.id,
-            role="admin"
-        )
+
+        membership = TenantMembership(user_id=user.id, tenant_id=test_tenant.id, role="admin")
         db_session.add(membership)
         db_session.commit()
     except ImportError:
@@ -811,10 +770,7 @@ def admin_user(db_session, test_tenant):
 @pytest.fixture
 def auth_headers(client, test_user):
     """Generate JWT token for authenticated requests"""
-    response = client.post("/api/v1/auth/login", json={
-        "email": test_user.email,
-        "password": "password123"
-    })
+    response = client.post("/api/v1/auth/login", json={"email": test_user.email, "password": "password123"})
     if response.status_code == 200:
         token = response.json()["access_token"]
         return {"Authorization": f"Bearer {token}"}
@@ -822,6 +778,7 @@ def auth_headers(client, test_user):
     # Login endpoint not available (e.g. minimal test app) — generate token directly
     from datetime import timedelta
     from app.security.auth import create_access_token
+
     token_data = {"sub": test_user.email, "user_id": test_user.id}
     token = create_access_token(token_data, expires_delta=timedelta(hours=1))
     return {"Authorization": f"Bearer {token}"}
@@ -830,10 +787,7 @@ def auth_headers(client, test_user):
 @pytest.fixture
 def admin_headers(client, admin_user):
     """Generate JWT token for admin user"""
-    response = client.post("/api/v1/auth/login", json={
-        "email": admin_user.email,
-        "password": "admin123"
-    })
+    response = client.post("/api/v1/auth/login", json={"email": admin_user.email, "password": "admin123"})
     if response.status_code == 200:
         token = response.json()["access_token"]
         return {"Authorization": f"Bearer {token}"}
@@ -841,6 +795,7 @@ def admin_headers(client, admin_user):
     # Login endpoint not available (e.g. minimal test app) — generate token directly
     from datetime import timedelta
     from app.security.auth import create_access_token
+
     token_data = {"sub": admin_user.email, "user_id": admin_user.id, "is_superuser": True}
     token = create_access_token(token_data, expires_delta=timedelta(hours=1))
     return {"Authorization": f"Bearer {token}"}
@@ -849,16 +804,14 @@ def admin_headers(client, admin_user):
 @pytest.fixture
 def refresh_token(client, test_user):
     """Generate refresh token for token refresh tests"""
-    response = client.post("/api/v1/auth/login", json={
-        "email": test_user.email,
-        "password": "password123"
-    })
+    response = client.post("/api/v1/auth/login", json={"email": test_user.email, "password": "password123"})
     if response.status_code == 200:
         return response.json().get("refresh_token")
 
     # Login endpoint not available (e.g. minimal test app) — generate token directly
     from datetime import timedelta
     from app.security.auth import create_refresh_token
+
     token_data = {"sub": test_user.email, "user_id": test_user.id}
     return create_refresh_token(token_data, expires_delta=timedelta(days=7))
 
@@ -866,11 +819,7 @@ def refresh_token(client, test_user):
 @pytest.fixture
 def other_tenant(db_session):
     """Create another tenant for isolation testing"""
-    tenant = Tenant(
-        name="Other Tenant",
-        slug="other-tenant",
-        contact_policy="other@test.com"
-    )
+    tenant = Tenant(name="Other Tenant", slug="other-tenant", contact_policy="other@test.com")
     db_session.add(tenant)
     db_session.commit()
     db_session.refresh(tenant)
@@ -889,6 +838,7 @@ def other_tenant_user(db_session, other_tenant):
         from app.security.auth import get_password_hash
     except ImportError:
         import bcrypt
+
         def get_password_hash(password: str) -> str:
             return bcrypt.hashpw(password.encode(), bcrypt.gensalt(12)).decode()
 
@@ -897,17 +847,13 @@ def other_tenant_user(db_session, other_tenant):
         username="otheruser",
         hashed_password=get_password_hash("password123"),
         is_active=True,
-        is_superuser=False
+        is_superuser=False,
     )
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
 
-    membership = TenantMembership(
-        user_id=user.id,
-        tenant_id=other_tenant.id,
-        role="member"
-    )
+    membership = TenantMembership(user_id=user.id, tenant_id=other_tenant.id, role="member")
     db_session.add(membership)
     db_session.commit()
 
@@ -927,7 +873,7 @@ def test_assets(db_session, test_tenant):
             risk_score=30.0,
             is_active=True,
             first_seen=datetime.now(timezone.utc) - timedelta(days=30),
-            last_seen=datetime.now(timezone.utc)
+            last_seen=datetime.now(timezone.utc),
         ),
         Asset(
             tenant_id=test_tenant.id,
@@ -936,7 +882,7 @@ def test_assets(db_session, test_tenant):
             risk_score=45.0,
             is_active=True,
             first_seen=datetime.now(timezone.utc) - timedelta(days=10),
-            last_seen=datetime.now(timezone.utc)
+            last_seen=datetime.now(timezone.utc),
         ),
         Asset(
             tenant_id=test_tenant.id,
@@ -945,7 +891,7 @@ def test_assets(db_session, test_tenant):
             risk_score=75.0,
             is_active=True,
             first_seen=datetime.now(timezone.utc) - timedelta(hours=2),
-            last_seen=datetime.now(timezone.utc)
+            last_seen=datetime.now(timezone.utc),
         ),
         Asset(
             tenant_id=test_tenant.id,
@@ -954,7 +900,7 @@ def test_assets(db_session, test_tenant):
             risk_score=60.0,
             is_active=True,
             first_seen=datetime.now(timezone.utc) - timedelta(days=5),
-            last_seen=datetime.now(timezone.utc)
+            last_seen=datetime.now(timezone.utc),
         ),
         Asset(
             tenant_id=test_tenant.id,
@@ -963,7 +909,7 @@ def test_assets(db_session, test_tenant):
             risk_score=85.0,
             is_active=True,
             first_seen=datetime.now(timezone.utc) - timedelta(hours=1),
-            last_seen=datetime.now(timezone.utc)
+            last_seen=datetime.now(timezone.utc),
         ),
     ]
     db_session.add_all(assets)
@@ -984,15 +930,10 @@ def test_services(db_session, test_assets):
             product="nginx",
             version="1.21.0",
             http_title="Example Site",
-            http_status=200
+            http_status=200,
         ),
         Service(
-            asset_id=test_assets[1].id,
-            port=80,
-            protocol="http",
-            product="nginx",
-            version="1.21.0",
-            http_status=301
+            asset_id=test_assets[1].id, port=80, protocol="http", product="nginx", version="1.21.0", http_status=301
         ),
         Service(
             asset_id=test_assets[2].id,  # api.example.com
@@ -1001,7 +942,7 @@ def test_services(db_session, test_assets):
             product="apache",
             version="2.4.41",
             http_title="API Server",
-            http_status=200
+            http_status=200,
         ),
     ]
     db_session.add_all(services)
@@ -1025,7 +966,7 @@ def test_certs(db_session, test_assets):
             not_before=datetime.now(timezone.utc) - timedelta(days=60),
             not_after=datetime.now(timezone.utc) + timedelta(days=30),
             is_wildcard=False,
-            is_self_signed=False
+            is_self_signed=False,
         ),
         Certificate(
             asset_id=test_assets[2].id,  # api.example.com
@@ -1035,7 +976,7 @@ def test_certs(db_session, test_assets):
             not_before=datetime.now(timezone.utc) - timedelta(days=180),
             not_after=datetime.now(timezone.utc) + timedelta(days=10),  # Expiring soon
             is_wildcard=True,
-            is_self_signed=False
+            is_self_signed=False,
         ),
     ]
     db_session.add_all(certs)
@@ -1059,7 +1000,7 @@ def test_findings(db_session, test_assets):
             cvss_score=10.0,
             cve_id="CVE-2021-44228",
             evidence='{"url": "https://api.example.com", "matched": "log4j"}',
-            status=FindingStatus.OPEN
+            status=FindingStatus.OPEN,
         ),
         Finding(
             asset_id=test_assets[4].id,  # login URL
@@ -1070,7 +1011,7 @@ def test_findings(db_session, test_assets):
             severity=FindingSeverity.MEDIUM,
             cvss_score=5.3,
             evidence='{"url": "https://app.example.com/login"}',
-            status=FindingStatus.OPEN
+            status=FindingStatus.OPEN,
         ),
         Finding(
             asset_id=test_assets[1].id,  # www.example.com
@@ -1081,7 +1022,7 @@ def test_findings(db_session, test_assets):
             severity=FindingSeverity.LOW,
             cvss_score=3.1,
             evidence='{"headers": ["X-Frame-Options", "X-Content-Type-Options"]}',
-            status=FindingStatus.SUPPRESSED
+            status=FindingStatus.SUPPRESSED,
         ),
     ]
     db_session.add_all(findings)
@@ -1117,7 +1058,7 @@ def sample_finding(db_session, sample_asset):
         cvss_score=7.5,
         cve_id="CVE-2021-12345",
         evidence='{"proof": "data"}',
-        status=FindingStatus.OPEN
+        status=FindingStatus.OPEN,
     )
     db_session.add(finding)
     db_session.commit()
@@ -1134,7 +1075,7 @@ def other_tenant_assets(db_session, other_tenant):
             identifier=f"other{i}.example.com",
             type=AssetType.SUBDOMAIN,
             risk_score=50.0,
-            is_active=True
+            is_active=True,
         )
         for i in range(3)
     ]
@@ -1156,7 +1097,7 @@ def thousand_assets(db_session, test_tenant):
                 identifier=f"perf{batch * batch_size + i}.example.com",
                 type=AssetType.SUBDOMAIN,
                 risk_score=float((batch * batch_size + i) % 100),
-                is_active=True
+                is_active=True,
             )
             for i in range(batch_size)
         ]
@@ -1173,7 +1114,7 @@ def test_asset(db_session, test_tenant):
         identifier="single.example.com",
         type=AssetType.SUBDOMAIN,
         risk_score=50.0,
-        is_active=True
+        is_active=True,
     )
     db_session.add(asset)
     db_session.commit()
@@ -1191,7 +1132,7 @@ def test_service(db_session, test_asset):
         product="nginx",
         version="1.21.0",
         http_title="Test Service",
-        http_status=200
+        http_status=200,
     )
     db_session.add(service)
     db_session.commit()
@@ -1203,6 +1144,7 @@ def test_service(db_session, test_asset):
 def test_cert(db_session, test_asset):
     """Create single test certificate"""
     from datetime import datetime, timedelta
+
     cert = Certificate(
         asset_id=test_asset.id,
         common_name="single.example.com",
@@ -1211,7 +1153,7 @@ def test_cert(db_session, test_asset):
         not_before=datetime.now(timezone.utc) - timedelta(days=60),
         not_after=datetime.now(timezone.utc) + timedelta(days=60),
         is_wildcard=False,
-        is_self_signed=False
+        is_self_signed=False,
     )
     db_session.add(cert)
     db_session.commit()
@@ -1232,7 +1174,7 @@ def test_finding(db_session, test_asset):
         cvss_score=7.5,
         cve_id="CVE-2023-12345",
         evidence='{"proof": "test data"}',
-        status=FindingStatus.OPEN
+        status=FindingStatus.OPEN,
     )
     db_session.add(finding)
     db_session.commit()
@@ -1248,7 +1190,7 @@ def other_tenant_asset(db_session, other_tenant):
         identifier="other.example.com",
         type=AssetType.SUBDOMAIN,
         risk_score=50.0,
-        is_active=True
+        is_active=True,
     )
     db_session.add(asset)
     db_session.commit()
@@ -1259,13 +1201,7 @@ def other_tenant_asset(db_session, other_tenant):
 @pytest.fixture
 def other_tenant_service(db_session, other_tenant_asset):
     """Create service for other tenant"""
-    service = Service(
-        asset_id=other_tenant_asset.id,
-        port=443,
-        protocol="https",
-        product="nginx",
-        version="1.21.0"
-    )
+    service = Service(asset_id=other_tenant_asset.id, port=443, protocol="https", product="nginx", version="1.21.0")
     db_session.add(service)
     db_session.commit()
     db_session.refresh(service)
@@ -1276,6 +1212,7 @@ def other_tenant_service(db_session, other_tenant_asset):
 def other_tenant_cert(db_session, other_tenant_asset):
     """Create certificate for other tenant"""
     from datetime import datetime, timedelta
+
     cert = Certificate(
         asset_id=other_tenant_asset.id,
         common_name="other.example.com",
@@ -1284,7 +1221,7 @@ def other_tenant_cert(db_session, other_tenant_asset):
         not_before=datetime.now(timezone.utc) - timedelta(days=60),
         not_after=datetime.now(timezone.utc) + timedelta(days=60),
         is_wildcard=False,
-        is_self_signed=False
+        is_self_signed=False,
     )
     db_session.add(cert)
     db_session.commit()
@@ -1303,7 +1240,7 @@ def other_tenant_finding(db_session, other_tenant_asset):
         name="Other Tenant Vulnerability",
         severity=FindingSeverity.HIGH,
         cvss_score=7.5,
-        status=FindingStatus.OPEN
+        status=FindingStatus.OPEN,
     )
     db_session.add(finding)
     db_session.commit()
@@ -1314,7 +1251,7 @@ def other_tenant_finding(db_session, other_tenant_asset):
 @pytest.fixture
 def sample_nuclei_output():
     """Sample Nuclei JSON output for parsing tests"""
-    return '''[
+    return """[
   {
     "template": "CVE-2021-44228",
     "template-url": "https://cloud.projectdiscovery.io/templates/CVE-2021-44228",
@@ -1335,7 +1272,7 @@ def sample_nuclei_output():
     "cvss-score": 10.0,
     "cve-id": "CVE-2021-44228"
   }
-]'''
+]"""
 
 
 @pytest.fixture
@@ -1348,7 +1285,7 @@ def test_assets_with_tech(db_session, test_tenant):
             type=AssetType.SUBDOMAIN,
             risk_score=50.0,
             is_active=True,
-            raw_metadata='{"technologies": ["WordPress", "PHP"]}'
+            raw_metadata='{"technologies": ["WordPress", "PHP"]}',
         ),
         Asset(
             tenant_id=test_tenant.id,
@@ -1356,7 +1293,7 @@ def test_assets_with_tech(db_session, test_tenant):
             type=AssetType.SUBDOMAIN,
             risk_score=50.0,
             is_active=True,
-            raw_metadata='{"technologies": ["Drupal", "PHP"]}'
+            raw_metadata='{"technologies": ["Drupal", "PHP"]}',
         ),
         Asset(
             tenant_id=test_tenant.id,
@@ -1364,7 +1301,7 @@ def test_assets_with_tech(db_session, test_tenant):
             type=AssetType.SUBDOMAIN,
             risk_score=50.0,
             is_active=True,
-            raw_metadata='{"technologies": ["Apache", "Tomcat"]}'
+            raw_metadata='{"technologies": ["Apache", "Tomcat"]}',
         ),
     ]
     db_session.add_all(assets)
@@ -1378,6 +1315,7 @@ def test_assets_with_tech(db_session, test_tenant):
 def existing_finding(db_session, test_asset):
     """Create an existing finding for update tests"""
     from datetime import datetime, timedelta
+
     finding = Finding(
         asset_id=test_asset.id,
         tenant_id=test_asset.tenant_id,
@@ -1390,7 +1328,7 @@ def existing_finding(db_session, test_asset):
         evidence='{"initial": "data"}',
         status=FindingStatus.OPEN,
         first_seen=datetime.now(timezone.utc) - timedelta(days=7),
-        last_seen=datetime.now(timezone.utc) - timedelta(days=7)
+        last_seen=datetime.now(timezone.utc) - timedelta(days=7),
     )
     db_session.add(finding)
     db_session.commit()
@@ -1403,16 +1341,18 @@ def large_finding_set():
     """Generate 1000+ findings for bulk upsert performance tests"""
     findings = []
     for i in range(1500):
-        findings.append({
-            "template_id": f"nuclei-template-{i % 100}",
-            "name": f"Vulnerability {i}",
-            "severity": ["critical", "high", "medium", "low"][i % 4],
-            "cvss_score": float(3.0 + (i % 8)),
-            "cve_id": f"CVE-2023-{10000 + i}" if i % 3 == 0 else None,
-            "evidence": f'{{"finding": {i}}}',
-            "host": f"https://host{i % 50}.example.com",
-            "matched_at": f"https://host{i % 50}.example.com/path{i}"
-        })
+        findings.append(
+            {
+                "template_id": f"nuclei-template-{i % 100}",
+                "name": f"Vulnerability {i}",
+                "severity": ["critical", "high", "medium", "low"][i % 4],
+                "cvss_score": float(3.0 + (i % 8)),
+                "cve_id": f"CVE-2023-{10000 + i}" if i % 3 == 0 else None,
+                "evidence": f'{{"finding": {i}}}',
+                "host": f"https://host{i % 50}.example.com",
+                "matched_at": f"https://host{i % 50}.example.com/path{i}",
+            }
+        )
     return findings
 
 
@@ -1420,5 +1360,5 @@ def large_finding_set():
 def pytest_collection_modifyitems(config, items):
     """Automatically mark slow tests"""
     for item in items:
-        if 'performance' in item.nodeid or 'integration' in item.nodeid:
+        if "performance" in item.nodeid or "integration" in item.nodeid:
             item.add_marker(pytest.mark.slow)

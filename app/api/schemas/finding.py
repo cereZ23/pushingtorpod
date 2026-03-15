@@ -39,7 +39,7 @@ class FindingResponse(BaseModel):
     asset_identifier: Optional[str] = Field(None, description="Asset identifier")
     asset_type: Optional[str] = Field(None, description="Asset type")
 
-    @field_validator('evidence', mode='before')
+    @field_validator("evidence", mode="before")
     @classmethod
     def parse_evidence(cls, v: object) -> object:
         """Parse evidence from JSON string if stored as TEXT in DB."""
@@ -54,19 +54,19 @@ class FindingResponse(BaseModel):
                 return None
         return v
 
-    @field_validator('severity', mode='before')
+    @field_validator("severity", mode="before")
     @classmethod
     def parse_severity(cls, v: object) -> object:
         """Extract .value from SQLAlchemy enum if needed."""
-        if hasattr(v, 'value'):
+        if hasattr(v, "value"):
             return v.value
         return v
 
-    @field_validator('status', mode='before')
+    @field_validator("status", mode="before")
     @classmethod
     def parse_status(cls, v: object) -> object:
         """Extract .value from SQLAlchemy enum if needed."""
-        if hasattr(v, 'value'):
+        if hasattr(v, "value"):
             return v.value
         return v
 
@@ -85,7 +85,7 @@ class FindingResponse(BaseModel):
                 "evidence": {
                     "url": "https://api.example.com/vulnerable-endpoint",
                     "matched_at": "header",
-                    "matcher": "log4j-jndi"
+                    "matcher": "log4j-jndi",
                 },
                 "first_seen": "2024-01-15T10:00:00Z",
                 "last_seen": "2024-01-15T12:00:00Z",
@@ -93,9 +93,9 @@ class FindingResponse(BaseModel):
                 "fingerprint": None,
                 "occurrence_count": 1,
                 "asset_identifier": "api.example.com",
-                "asset_type": "subdomain"
+                "asset_type": "subdomain",
             }
-        }
+        },
     )
 
 
@@ -122,7 +122,7 @@ class FindingListRequest(BaseModel):
                 "source": "nuclei",
                 "min_cvss_score": 7.0,
                 "sort_by": "cvss_score",
-                "sort_order": "desc"
+                "sort_order": "desc",
             }
         }
     )
@@ -135,12 +135,7 @@ class FindingUpdate(BaseModel):
     notes: Optional[str] = Field(None, description="Notes/comments")
 
     model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "status": "suppressed",
-                "notes": "False positive - WAF rule triggered"
-            }
-        }
+        json_schema_extra={"example": {"status": "suppressed", "notes": "False positive - WAF rule triggered"}}
     )
 
 
@@ -172,30 +167,14 @@ class FindingStatsResponse(BaseModel):
         json_schema_extra={
             "example": {
                 "total_findings": 235,
-                "by_severity": {
-                    "critical": 5,
-                    "high": 25,
-                    "medium": 80,
-                    "low": 100,
-                    "info": 25
-                },
-                "by_status": {
-                    "open": 180,
-                    "suppressed": 30,
-                    "fixed": 25
-                },
-                "by_source": {
-                    "nuclei": 215,
-                    "manual": 20
-                },
+                "by_severity": {"critical": 5, "high": 25, "medium": 80, "low": 100, "info": 25},
+                "by_status": {"open": 180, "suppressed": 30, "fixed": 25},
+                "by_source": {"nuclei": 215, "manual": 20},
                 "open_findings": 180,
                 "critical_open": 5,
                 "high_open": 20,
                 "average_cvss": 6.4,
-                "top_cves": [
-                    {"cve_id": "CVE-2024-1234", "count": 8},
-                    {"cve_id": "CVE-2024-5678", "count": 5}
-                ]
+                "top_cves": [{"cve_id": "CVE-2024-1234", "count": 8}, {"cve_id": "CVE-2024-5678", "count": 5}],
             }
         }
     )
@@ -213,13 +192,6 @@ class SeverityDistribution(BaseModel):
 
     model_config = ConfigDict(
         json_schema_extra={
-            "example": {
-                "date": "2024-01-15T00:00:00Z",
-                "critical": 5,
-                "high": 25,
-                "medium": 80,
-                "low": 100,
-                "info": 25
-            }
+            "example": {"date": "2024-01-15T00:00:00Z", "critical": 5, "high": 25, "medium": 80, "low": 100, "info": 25}
         }
     )

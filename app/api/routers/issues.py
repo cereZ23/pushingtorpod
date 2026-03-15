@@ -84,11 +84,7 @@ def _get_issue_or_404(
     db: Session,
 ) -> Issue:
     """Fetch an issue scoped to the tenant, or raise 404."""
-    issue = (
-        db.query(Issue)
-        .filter(Issue.id == issue_id, Issue.tenant_id == tenant_id)
-        .first()
-    )
+    issue = db.query(Issue).filter(Issue.id == issue_id, Issue.tenant_id == tenant_id).first()
     if not issue:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -156,12 +152,7 @@ def _cascade_findings_status(
       - closed:          linked findings -> fixed
       - open (reopen):   linked closed/suppressed findings -> open, clear resolved
     """
-    finding_ids = [
-        row[0]
-        for row in db.query(IssueFinding.finding_id)
-        .filter(IssueFinding.issue_id == issue.id)
-        .all()
-    ]
+    finding_ids = [row[0] for row in db.query(IssueFinding.finding_id).filter(IssueFinding.issue_id == issue.id).all()]
 
     if not finding_ids:
         return
@@ -208,9 +199,7 @@ def _cascade_findings_status(
 def list_issues(
     tenant_id: int,
     severity: Optional[str] = Query(None, description="Filter by severity"),
-    status_filter: Optional[str] = Query(
-        None, alias="status", description="Filter by issue status"
-    ),
+    status_filter: Optional[str] = Query(None, alias="status", description="Filter by issue status"),
     assigned_to: Optional[int] = Query(None, description="Filter by assigned user"),
     project_id: Optional[int] = Query(None, description="Filter by project"),
     search: Optional[str] = Query(None, description="Search in title, description, root_cause"),
@@ -446,8 +435,7 @@ def update_issue(
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
-                    f"Invalid transition from '{current_status_value}' to "
-                    f"'{new_status_value}'. Allowed: {allowed}"
+                    f"Invalid transition from '{current_status_value}' to '{new_status_value}'. Allowed: {allowed}"
                 ),
             )
 
@@ -652,11 +640,7 @@ def list_activities(
     # Validate the issue belongs to the tenant
     _get_issue_or_404(issue_id, tenant_id, db)
 
-    query = (
-        db.query(IssueActivity)
-        .filter(IssueActivity.issue_id == issue_id)
-        .order_by(IssueActivity.created_at.desc())
-    )
+    query = db.query(IssueActivity).filter(IssueActivity.issue_id == issue_id).order_by(IssueActivity.created_at.desc())
 
     total = query.count()
     query = pagination.paginate_query(query)

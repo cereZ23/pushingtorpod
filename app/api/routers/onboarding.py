@@ -45,7 +45,7 @@ class OnboardingRequest(BaseModel):
                 "company_name": "Less Is More",
                 "email": "admin@lessismore.fun",
                 "password": "SecurePass123!",
-                "domains": ["lessismore.fun"]
+                "domains": ["lessismore.fun"],
             }
         }
 
@@ -65,15 +65,15 @@ class OnboardingResponse(BaseModel):
 def generate_slug(name: str) -> str:
     """Generate URL-safe slug from company name"""
     slug = name.lower()
-    slug = re.sub(r'[^a-z0-9]+', '-', slug)
-    slug = slug.strip('-')
+    slug = re.sub(r"[^a-z0-9]+", "-", slug)
+    slug = slug.strip("-")
     return slug
 
 
 def validate_domain(domain: str) -> bool:
     """Validate domain format"""
     # Basic domain validation
-    pattern = r'^([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}$'
+    pattern = r"^([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}$"
     return bool(re.match(pattern, domain.lower()))
 
 
@@ -111,10 +111,7 @@ def register_organization(
         # 1. Validate all domains
         for domain in body.domains:
             if not validate_domain(domain):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid domain format: {domain}"
-                )
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid domain format: {domain}")
 
         # 2. Generate slug and check uniqueness
         base_slug = generate_slug(body.company_name)
@@ -128,16 +125,10 @@ def register_organization(
         # 3. Check if email already exists
         existing_user = db.query(User).filter(User.email == body.email).first()
         if existing_user:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email address already registered"
-            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email address already registered")
 
         # 4. Create tenant
-        tenant = Tenant(
-            name=body.company_name,
-            slug=slug
-        )
+        tenant = Tenant(name=body.company_name, slug=slug)
         db.add(tenant)
         db.flush()  # Get tenant ID without committing
 
@@ -145,7 +136,7 @@ def register_organization(
 
         # 5. Create admin user with unique username
         # Generate unique username from email (handle duplicates)
-        base_username = body.email.split('@')[0]
+        base_username = body.email.split("@")[0]
         username = base_username
         counter = 1
 
@@ -159,7 +150,7 @@ def register_organization(
             username=username,
             hashed_password=User.hash_password(body.password),
             is_active=True,
-            is_superuser=False
+            is_superuser=False,
         )
         db.add(user)
         db.flush()
@@ -167,23 +158,13 @@ def register_organization(
         logger.info(f"Created user: {user.email} (ID: {user.id})")
 
         # 6. Create tenant membership (owner role)
-        membership = TenantMembership(
-            user_id=user.id,
-            tenant_id=tenant.id,
-            role='owner',
-            is_active=True
-        )
+        membership = TenantMembership(user_id=user.id, tenant_id=tenant.id, role="owner", is_active=True)
         db.add(membership)
 
         # 7. Add seed domains
         domains_added = 0
         for domain in body.domains:
-            seed = Seed(
-                tenant_id=tenant.id,
-                type='domain',
-                value=domain.lower().strip(),
-                enabled=True
-            )
+            seed = Seed(tenant_id=tenant.id, type="domain", value=domain.lower().strip(), enabled=True)
             db.add(seed)
             domains_added += 1
 
@@ -205,19 +186,19 @@ def register_organization(
             # Build complete pipeline: Discovery → Enrichment → Nuclei → Risk Scoring
             # This ensures new customers get full reconnaissance including vulnerability detection
             complete_pipeline = chain(
-                run_tenant_discovery.si(tenant.id),                      # 1. Subdomain discovery (Amass + Subfinder + DNSx)
-                run_enrichment_pipeline.si(                              # 2. Enrichment (HTTPx, Naabu, TLSx, Katana)
+                run_tenant_discovery.si(tenant.id),  # 1. Subdomain discovery (Amass + Subfinder + DNSx)
+                run_enrichment_pipeline.si(  # 2. Enrichment (HTTPx, Naabu, TLSx, Katana)
                     tenant_id=tenant.id,
                     asset_ids=None,  # All assets
-                    priority='high',
-                    force_refresh=True
+                    priority="high",
+                    force_refresh=True,
                 ),
-                run_nuclei_scan.si(                                      # 3. Vulnerability scanning
+                run_nuclei_scan.si(  # 3. Vulnerability scanning
                     tenant_id=tenant.id,
                     asset_ids=None,  # All assets
-                    severity=['critical', 'high', 'medium', 'low']
+                    severity=["critical", "high", "medium", "low"],
                 ),
-                calculate_comprehensive_risk_scores.si(tenant.id)        # 4. Calculate risk scores
+                calculate_comprehensive_risk_scores.si(tenant.id),  # 4. Calculate risk scores
             )
 
             # Execute pipeline asynchronously
@@ -246,7 +227,7 @@ def register_organization(
             user_id=user.id,
             domains_added=domains_added,
             scan_triggered=scan_triggered,
-            message=f"Successfully registered {tenant.name}! Your initial scan has been started and will complete in 1-2 hours."
+            message=f"Successfully registered {tenant.name}! Your initial scan has been started and will complete in 1-2 hours.",
         )
 
     except HTTPException:
@@ -258,17 +239,11 @@ def register_organization(
         # Rollback and log unexpected errors
         db.rollback()
         logger.error(f"Onboarding failed: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Registration failed: {str(e)}"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Registration failed: {str(e)}")
 
 
 @router.get("/check-availability/{slug}")
-def check_slug_availability(
-    slug: str,
-    db: Session = Depends(get_db)
-):
+def check_slug_availability(slug: str, db: Session = Depends(get_db)):
     """
     Check if tenant slug is available
 

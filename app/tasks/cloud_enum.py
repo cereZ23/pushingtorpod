@@ -51,10 +51,11 @@ def run_cloudlist(tenant_id: int, provider_config: list[dict]) -> list[dict]:
     all_assets: list[dict] = []
 
     for config in provider_config:
-        provider = config.get('provider', 'unknown')
+        provider = config.get("provider", "unknown")
         logger.info(
             "Running cloudlist for provider %s (tenant %d)",
-            provider, tenant_id,
+            provider,
+            tenant_id,
         )
 
         try:
@@ -62,19 +63,27 @@ def run_cloudlist(tenant_id: int, provider_config: list[dict]) -> list[dict]:
             all_assets.extend(assets)
             logger.info(
                 "cloudlist found %d assets from %s (tenant %d)",
-                len(assets), provider, tenant_id,
+                len(assets),
+                provider,
+                tenant_id,
             )
         except Exception as exc:
             logger.error(
                 "cloudlist failed for provider %s (tenant %d): %s",
-                provider, tenant_id, exc,
+                provider,
+                tenant_id,
+                exc,
             )
 
     try:
-        store_raw_output(tenant_id, 'cloudlist', {
-            'providers_scanned': len(provider_config),
-            'total_assets': len(all_assets),
-        })
+        store_raw_output(
+            tenant_id,
+            "cloudlist",
+            {
+                "providers_scanned": len(provider_config),
+                "total_assets": len(all_assets),
+            },
+        )
     except Exception as exc:
         logger.warning("Failed to store cloudlist raw output (tenant %d): %s", tenant_id, exc)
 
@@ -93,7 +102,7 @@ def _run_cloudlist_provider(tenant_id: int, config: dict) -> list[dict]:
     Returns:
         List of asset dicts from this provider.
     """
-    provider = config.get('provider', 'unknown')
+    provider = config.get("provider", "unknown")
 
     # Build cloudlist provider config YAML
     provider_yaml = _build_provider_config(config)
@@ -103,16 +112,18 @@ def _run_cloudlist_provider(tenant_id: int, config: dict) -> list[dict]:
 
     try:
         with SecureToolExecutor(tenant_id) as executor:
-            config_file = executor.create_input_file('provider.yaml', provider_yaml)
-            output_file = 'cloudlist_output.json'
+            config_file = executor.create_input_file("provider.yaml", provider_yaml)
+            output_file = "cloudlist_output.json"
 
             returncode, stdout, stderr = executor.execute(
-                'cloudlist',
+                "cloudlist",
                 [
-                    '-pc', config_file,
-                    '-json',
-                    '-silent',
-                    '-o', output_file,
+                    "-pc",
+                    config_file,
+                    "-json",
+                    "-silent",
+                    "-o",
+                    output_file,
                 ],
                 timeout=settings.cloudlist_timeout,
             )
@@ -122,20 +133,22 @@ def _run_cloudlist_provider(tenant_id: int, config: dict) -> list[dict]:
 
             output_content = executor.read_output_file(output_file)
             assets = []
-            for line in output_content.split('\n'):
+            for line in output_content.split("\n"):
                 line = line.strip()
                 if not line:
                     continue
                 try:
                     entry = json.loads(line)
-                    assets.append({
-                        'ip': entry.get('ip', ''),
-                        'hostname': entry.get('host', entry.get('hostname', '')),
-                        'provider': provider,
-                        'service': entry.get('service', ''),
-                        'region': entry.get('region', ''),
-                        'source': 'cloudlist',
-                    })
+                    assets.append(
+                        {
+                            "ip": entry.get("ip", ""),
+                            "hostname": entry.get("host", entry.get("hostname", "")),
+                            "provider": provider,
+                            "service": entry.get("service", ""),
+                            "region": entry.get("region", ""),
+                            "source": "cloudlist",
+                        }
+                    )
                 except json.JSONDecodeError:
                     continue
 
@@ -155,32 +168,26 @@ def _build_provider_config(config: dict) -> str:
     Returns:
         YAML string for cloudlist -pc flag.
     """
-    provider = config.get('provider', '')
+    provider = config.get("provider", "")
 
-    if provider == 'aws':
+    if provider == "aws":
         return (
             f"- provider: aws\n"
             f"  aws_access_key: {config.get('aws_access_key', '')}\n"
             f"  aws_secret_key: {config.get('aws_secret_key', '')}\n"
             f"  aws_session_token: {config.get('aws_session_token', '')}\n"
         )
-    elif provider == 'gcp':
-        return (
-            f"- provider: gcp\n"
-            f"  gcp_service_account_key: {config.get('gcp_service_account_key', '')}\n"
-        )
-    elif provider == 'azure':
+    elif provider == "gcp":
+        return f"- provider: gcp\n  gcp_service_account_key: {config.get('gcp_service_account_key', '')}\n"
+    elif provider == "azure":
         return (
             f"- provider: azure\n"
             f"  tenant_id: {config.get('azure_tenant_id', '')}\n"
             f"  client_id: {config.get('azure_client_id', '')}\n"
             f"  client_secret: {config.get('azure_client_secret', '')}\n"
         )
-    elif provider == 'do':
-        return (
-            f"- provider: digitalocean\n"
-            f"  digitalocean_token: {config.get('do_token', '')}\n"
-        )
+    elif provider == "do":
+        return f"- provider: digitalocean\n  digitalocean_token: {config.get('do_token', '')}\n"
 
     logger.warning("Unsupported cloudlist provider: %s", provider)
-    return ''
+    return ""

@@ -10,7 +10,7 @@ from typing import List, Optional, Any, Generic, TypeVar
 from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 class ErrorResponse(BaseModel):
@@ -21,13 +21,7 @@ class ErrorResponse(BaseModel):
     status_code: int = Field(..., description="HTTP status code")
 
     model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "error": "NotFound",
-                "detail": "Asset not found",
-                "status_code": 404
-            }
-        }
+        json_schema_extra={"example": {"error": "NotFound", "detail": "Asset not found", "status_code": 404}}
     )
 
 
@@ -39,13 +33,7 @@ class SuccessResponse(BaseModel):
     data: Optional[Any] = Field(None, description="Optional response data")
 
     model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "success": True,
-                "message": "Operation completed successfully",
-                "data": None
-            }
-        }
+        json_schema_extra={"example": {"success": True, "message": "Operation completed successfully", "data": None}}
     )
 
 
@@ -63,15 +51,7 @@ class PaginatedResponse(BaseModel, Generic[T]):
     total_pages: int = Field(..., description="Total number of pages")
 
     model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "items": [],
-                "total": 100,
-                "page": 1,
-                "page_size": 50,
-                "total_pages": 2
-            }
-        }
+        json_schema_extra={"example": {"items": [], "total": 100, "page": 1, "page_size": 50, "total_pages": 2}}
     )
 
 
@@ -88,8 +68,8 @@ class HealthCheck(BaseModel):
                 "services": {
                     "database": {"status": "connected"},
                     "redis": {"status": "connected"},
-                    "minio": {"status": "connected"}
-                }
+                    "minio": {"status": "connected"},
+                },
             }
         }
     )
@@ -114,10 +94,7 @@ class BulkOperationResult(BaseModel):
             "example": {
                 "success_count": 95,
                 "failure_count": 5,
-                "errors": [
-                    "Asset 'example.com' already exists",
-                    "Invalid domain format: 'not-a-domain'"
-                ]
+                "errors": ["Asset 'example.com' already exists", "Invalid domain format: 'not-a-domain'"],
             }
         }
     )
@@ -137,7 +114,7 @@ class TaskResponse(BaseModel):
                 "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
                 "status": "queued",
                 "message": "Nuclei scan queued for tenant 2",
-                "data": None
+                "data": None,
             }
         }
     )

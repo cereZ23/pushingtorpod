@@ -129,15 +129,18 @@ def evaluate_alert_policies(
 
             triggered += 1
             alerts_created = _create_and_send_alerts(
-                db, policy, matching, tenant_id, tenant_logger,
+                db,
+                policy,
+                matching,
+                tenant_id,
+                tenant_logger,
             )
             total_alerts += alerts_created
 
         db.commit()
 
         tenant_logger.info(
-            "Alert evaluation complete: %d policies, %d triggered, "
-            "%d alerts created, %d findings checked",
+            "Alert evaluation complete: %d policies, %d triggered, %d alerts created, %d findings checked",
             len(policies),
             triggered,
             total_alerts,
@@ -167,6 +170,7 @@ def evaluate_alert_policies(
 # ---------------------------------------------------------------------------
 # Policy condition matching
 # ---------------------------------------------------------------------------
+
 
 def _evaluate_policy(
     policy: AlertPolicy,
@@ -210,11 +214,7 @@ def _evaluate_policy(
 
     for finding in findings:
         # -- Severity gate --
-        sev_value = (
-            finding.severity.value
-            if isinstance(finding.severity, FindingSeverity)
-            else str(finding.severity)
-        )
+        sev_value = finding.severity.value if isinstance(finding.severity, FindingSeverity) else str(finding.severity)
         if SEVERITY_RANK.get(sev_value, 0) < min_rank:
             continue
 
@@ -222,9 +222,7 @@ def _evaluate_policy(
         if asset_types:
             asset = asset_cache.get(finding.asset_id)
             if asset:
-                asset_type_str = (
-                    asset.type.value if hasattr(asset.type, "value") else str(asset.type)
-                )
+                asset_type_str = asset.type.value if hasattr(asset.type, "value") else str(asset.type)
                 if asset_type_str not in asset_types:
                     continue
 
@@ -235,9 +233,7 @@ def _evaluate_policy(
         # -- Template ID prefix filter --
         if template_ids:
             tid = finding.template_id or ""
-            if not any(
-                tid.startswith(prefix.rstrip("*")) for prefix in template_ids
-            ):
+            if not any(tid.startswith(prefix.rstrip("*")) for prefix in template_ids):
                 continue
 
         matching.append(finding)
@@ -248,6 +244,7 @@ def _evaluate_policy(
 # ---------------------------------------------------------------------------
 # Alert creation & channel delivery
 # ---------------------------------------------------------------------------
+
 
 def _create_and_send_alerts(
     db,
@@ -312,15 +309,15 @@ def _create_and_send_alerts(
                 break
 
             if _is_finding_in_cooldown(
-                db, tenant_id, policy.id, finding.id, policy.cooldown_minutes,
+                db,
+                tenant_id,
+                policy.id,
+                finding.id,
+                policy.cooldown_minutes,
             ):
                 continue
 
-            sev = (
-                finding.severity.value
-                if isinstance(finding.severity, FindingSeverity)
-                else str(finding.severity)
-            )
+            sev = finding.severity.value if isinstance(finding.severity, FindingSeverity) else str(finding.severity)
             asset = finding.asset
 
             alert = Alert(
@@ -355,8 +352,12 @@ def _create_and_send_alerts(
 # Cooldown checks
 # ---------------------------------------------------------------------------
 
+
 def _is_policy_in_cooldown(
-    db, tenant_id: int, policy_id: int, cooldown_minutes: int,
+    db,
+    tenant_id: int,
+    policy_id: int,
+    cooldown_minutes: int,
 ) -> bool:
     """Return True if the policy fired within its cooldown window."""
     if cooldown_minutes <= 0:
@@ -375,7 +376,11 @@ def _is_policy_in_cooldown(
 
 
 def _is_finding_in_cooldown(
-    db, tenant_id: int, policy_id: int, finding_id: int, cooldown_minutes: int,
+    db,
+    tenant_id: int,
+    policy_id: int,
+    finding_id: int,
+    cooldown_minutes: int,
 ) -> bool:
     """Return True if this specific finding already triggered an alert."""
     if cooldown_minutes <= 0:
@@ -398,6 +403,7 @@ def _is_finding_in_cooldown(
 # Channel delivery
 # ---------------------------------------------------------------------------
 
+
 def _deliver_to_channels(
     policy: AlertPolicy,
     alert: Alert,
@@ -413,7 +419,7 @@ def _deliver_to_channels(
     """
     channels_sent: list[str] = []
 
-    for channel_config in (policy.channels or []):
+    for channel_config in policy.channels or []:
         channel_type = channel_config.get("type", "")
         try:
             _send_via_channel(channel_config, alert, tenant_logger)
@@ -505,7 +511,7 @@ def _send_email_notification(recipient: str, alert: Alert) -> None:
     html = f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #1e293b;">{alert.title}</h2>
-        <p style="color: #475569; white-space: pre-line;">{alert.body or ''}</p>
+        <p style="color: #475569; white-space: pre-line;">{alert.body or ""}</p>
         <hr style="border: none; border-top: 1px solid #e2e8f0;">
         <p style="color: #94a3b8; font-size: 12px;">
             Severity: {alert.severity} | Event: {alert.event_type} | EASM Platform
@@ -646,6 +652,7 @@ def _send_pagerduty_event(routing_key: str, alert: Alert) -> None:
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
+
 
 def _highest_severity(findings: list[Finding]) -> str:
     """Return the highest severity string across a list of findings."""

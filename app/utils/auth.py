@@ -18,19 +18,17 @@ from app.models.auth import User, APIKey, TenantMembership
 
 class AuthenticationError(Exception):
     """Raised when authentication fails"""
+
     pass
 
 
 class AuthorizationError(Exception):
     """Raised when authorization fails"""
+
     pass
 
 
-def create_access_token(
-    user_id: int,
-    email: str,
-    expires_delta: Optional[timedelta] = None
-) -> str:
+def create_access_token(user_id: int, email: str, expires_delta: Optional[timedelta] = None) -> str:
     """
     Create JWT access token
 
@@ -45,23 +43,17 @@ def create_access_token(
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(
-            minutes=settings.jwt_access_token_expire_minutes
-        )
+        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_access_token_expire_minutes)
 
     to_encode = {
         "sub": str(user_id),
         "email": email,
         "exp": expire,
         "iat": datetime.now(timezone.utc),
-        "type": "access"
+        "type": "access",
     }
 
-    encoded_jwt = jwt.encode(
-        to_encode,
-        settings.jwt_secret_key,
-        algorithm=settings.jwt_algorithm
-    )
+    encoded_jwt = jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
     return encoded_jwt
 
 
@@ -83,14 +75,10 @@ def create_refresh_token(user_id: int, email: str) -> str:
         "email": email,
         "exp": expire,
         "iat": datetime.now(timezone.utc),
-        "type": "refresh"
+        "type": "refresh",
     }
 
-    encoded_jwt = jwt.encode(
-        to_encode,
-        settings.jwt_secret_key,
-        algorithm=settings.jwt_algorithm
-    )
+    encoded_jwt = jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
     return encoded_jwt
 
 
@@ -108,11 +96,7 @@ def verify_token(token: str) -> Dict[str, Any]:
         AuthenticationError: If token is invalid or expired
     """
     try:
-        payload = jwt.decode(
-            token,
-            settings.jwt_secret_key,
-            algorithms=[settings.jwt_algorithm]
-        )
+        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
         return payload
     except JWTError as e:
         raise AuthenticationError(f"Invalid token: {str(e)}")
@@ -200,10 +184,7 @@ def verify_api_key(db: Session, api_key: str) -> tuple[User, int]:
     hashed_key = hash_api_key(api_key)
 
     # Find API key in database
-    api_key_obj = db.query(APIKey).filter_by(
-        key=hashed_key,
-        is_active=True
-    ).first()
+    api_key_obj = db.query(APIKey).filter_by(key=hashed_key, is_active=True).first()
 
     if not api_key_obj:
         raise AuthenticationError("Invalid API key")
@@ -224,12 +205,7 @@ def verify_api_key(db: Session, api_key: str) -> tuple[User, int]:
     return user, api_key_obj.tenant_id
 
 
-def check_tenant_access(
-    db: Session,
-    user: User,
-    tenant_id: int,
-    required_permission: str = "read"
-) -> bool:
+def check_tenant_access(db: Session, user: User, tenant_id: int, required_permission: str = "read") -> bool:
     """
     Check if user has access to a tenant with required permission
 
@@ -250,20 +226,14 @@ def check_tenant_access(
         return True
 
     # Check tenant membership
-    membership = db.query(TenantMembership).filter_by(
-        user_id=user.id,
-        tenant_id=tenant_id,
-        is_active=True
-    ).first()
+    membership = db.query(TenantMembership).filter_by(user_id=user.id, tenant_id=tenant_id, is_active=True).first()
 
     if not membership:
         raise AuthorizationError(f"User does not have access to tenant {tenant_id}")
 
     # Check permission level
     if not membership.has_permission(required_permission):
-        raise AuthorizationError(
-            f"User does not have '{required_permission}' permission for tenant {tenant_id}"
-        )
+        raise AuthorizationError(f"User does not have '{required_permission}' permission for tenant {tenant_id}")
 
     return True
 
@@ -295,12 +265,7 @@ def authenticate_user(db: Session, email: str, password: str) -> User:
 
 
 def create_user(
-    db: Session,
-    email: str,
-    username: str,
-    password: str,
-    full_name: Optional[str] = None,
-    is_superuser: bool = False
+    db: Session, email: str, username: str, password: str, full_name: Optional[str] = None, is_superuser: bool = False
 ) -> User:
     """
     Create a new user
@@ -320,9 +285,7 @@ def create_user(
         ValueError: If user already exists
     """
     # Check if user exists
-    existing = db.query(User).filter(
-        (User.email == email) | (User.username == username)
-    ).first()
+    existing = db.query(User).filter((User.email == email) | (User.username == username)).first()
 
     if existing:
         raise ValueError("User with this email or username already exists")
@@ -333,7 +296,7 @@ def create_user(
         username=username,
         hashed_password=User.hash_password(password),
         full_name=full_name,
-        is_superuser=is_superuser
+        is_superuser=is_superuser,
     )
 
     db.add(user)

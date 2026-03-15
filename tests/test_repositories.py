@@ -9,6 +9,7 @@ Tests cover:
 - Query optimization
 - Multi-tenant isolation
 """
+
 import pytest
 from unittest.mock import MagicMock, patch, call
 from datetime import datetime, timedelta
@@ -55,22 +56,16 @@ class TestAssetRepositoryBasicOperations:
         """Test getting asset by tenant, identifier, and type"""
         mock_db = MagicMock()
         mock_asset = MagicMock()
-        mock_asset.identifier = 'example.com'
+        mock_asset.identifier = "example.com"
 
         mock_db.query.return_value.filter_by.return_value.first.return_value = mock_asset
 
         repo = AssetRepository(mock_db)
-        result = repo.get_by_identifier(
-            tenant_id=1,
-            identifier='example.com',
-            asset_type=AssetType.DOMAIN
-        )
+        result = repo.get_by_identifier(tenant_id=1, identifier="example.com", asset_type=AssetType.DOMAIN)
 
         assert result == mock_asset
         mock_db.query.return_value.filter_by.assert_called_once_with(
-            tenant_id=1,
-            identifier='example.com',
-            type=AssetType.DOMAIN
+            tenant_id=1, identifier="example.com", type=AssetType.DOMAIN
         )
 
     def test_get_by_identifier_not_found(self):
@@ -79,7 +74,7 @@ class TestAssetRepositoryBasicOperations:
         mock_db.query.return_value.filter_by.return_value.first.return_value = None
 
         repo = AssetRepository(mock_db)
-        result = repo.get_by_identifier(1, 'nonexistent.com', AssetType.DOMAIN)
+        result = repo.get_by_identifier(1, "nonexistent.com", AssetType.DOMAIN)
 
         assert result is None
 
@@ -170,7 +165,7 @@ class TestAssetRepositoryQueryOperations:
 class TestAssetRepositoryBulkOperations:
     """Test bulk operations for performance"""
 
-    @patch('app.repositories.asset_repository.insert')
+    @patch("app.repositories.asset_repository.insert")
     def test_bulk_upsert_creates_records(self, mock_insert):
         """Test bulk upsert creates new records"""
         mock_db = MagicMock()
@@ -179,19 +174,19 @@ class TestAssetRepositoryBulkOperations:
         mock_db.execute.return_value = mock_result
 
         assets_data = [
-            {'identifier': 'sub1.example.com', 'type': AssetType.SUBDOMAIN, 'raw_metadata': '{}'},
-            {'identifier': 'sub2.example.com', 'type': AssetType.SUBDOMAIN, 'raw_metadata': '{}'},
-            {'identifier': 'sub3.example.com', 'type': AssetType.SUBDOMAIN, 'raw_metadata': '{}'},
+            {"identifier": "sub1.example.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"},
+            {"identifier": "sub2.example.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"},
+            {"identifier": "sub3.example.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"},
         ]
 
         repo = AssetRepository(mock_db)
         result = repo.bulk_upsert(tenant_id=1, assets_data=assets_data)
 
-        assert result['created'] == 3
-        assert result['total_processed'] == 3
+        assert result["created"] == 3
+        assert result["total_processed"] == 3
         mock_db.commit.assert_called_once()
 
-    @patch('app.repositories.asset_repository.insert')
+    @patch("app.repositories.asset_repository.insert")
     def test_bulk_upsert_empty_list(self, mock_insert):
         """Test bulk upsert with empty list"""
         mock_db = MagicMock()
@@ -199,11 +194,11 @@ class TestAssetRepositoryBulkOperations:
         repo = AssetRepository(mock_db)
         result = repo.bulk_upsert(tenant_id=1, assets_data=[])
 
-        assert result['created'] == 0
-        assert result['updated'] == 0
+        assert result["created"] == 0
+        assert result["updated"] == 0
         mock_db.execute.assert_not_called()
 
-    @patch('app.repositories.asset_repository.insert')
+    @patch("app.repositories.asset_repository.insert")
     def test_bulk_upsert_includes_tenant_id(self, mock_insert):
         """Test bulk upsert includes tenant_id in all records"""
         mock_db = MagicMock()
@@ -215,8 +210,8 @@ class TestAssetRepositoryBulkOperations:
         mock_insert.return_value = mock_stmt
 
         assets_data = [
-            {'identifier': 'sub1.example.com', 'type': AssetType.SUBDOMAIN, 'raw_metadata': '{}'},
-            {'identifier': 'sub2.example.com', 'type': AssetType.SUBDOMAIN, 'raw_metadata': '{}'},
+            {"identifier": "sub1.example.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"},
+            {"identifier": "sub2.example.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"},
         ]
 
         repo = AssetRepository(mock_db)
@@ -226,9 +221,9 @@ class TestAssetRepositoryBulkOperations:
         call_args = mock_insert.return_value.values.call_args
         records = call_args[0][0]
 
-        assert all(record['tenant_id'] == 5 for record in records)
+        assert all(record["tenant_id"] == 5 for record in records)
 
-    @patch('app.repositories.asset_repository.insert')
+    @patch("app.repositories.asset_repository.insert")
     def test_bulk_upsert_sets_timestamps(self, mock_insert):
         """Test bulk upsert sets first_seen and last_seen"""
         mock_db = MagicMock()
@@ -239,9 +234,7 @@ class TestAssetRepositoryBulkOperations:
         mock_stmt.returning.return_value = mock_stmt
         mock_insert.return_value = mock_stmt
 
-        assets_data = [
-            {'identifier': 'test.com', 'type': AssetType.DOMAIN, 'raw_metadata': '{}'}
-        ]
+        assets_data = [{"identifier": "test.com", "type": AssetType.DOMAIN, "raw_metadata": "{}"}]
 
         repo = AssetRepository(mock_db)
         repo.bulk_upsert(tenant_id=1, assets_data=assets_data)
@@ -249,17 +242,17 @@ class TestAssetRepositoryBulkOperations:
         call_args = mock_insert.return_value.values.call_args
         records = call_args[0][0]
 
-        assert 'first_seen' in records[0]
-        assert 'last_seen' in records[0]
+        assert "first_seen" in records[0]
+        assert "last_seen" in records[0]
 
     def test_create_batch(self):
         """Test creating multiple assets in batch"""
         mock_db = MagicMock()
 
         assets = [
-            Asset(tenant_id=1, identifier='test1.com', type=AssetType.DOMAIN),
-            Asset(tenant_id=1, identifier='test2.com', type=AssetType.DOMAIN),
-            Asset(tenant_id=1, identifier='test3.com', type=AssetType.DOMAIN),
+            Asset(tenant_id=1, identifier="test1.com", type=AssetType.DOMAIN),
+            Asset(tenant_id=1, identifier="test2.com", type=AssetType.DOMAIN),
+            Asset(tenant_id=1, identifier="test3.com", type=AssetType.DOMAIN),
         ]
 
         repo = AssetRepository(mock_db)
@@ -282,7 +275,7 @@ class TestAssetRepositoryBulkOperations:
 
         query_mock.update.assert_called_once()
         update_args = query_mock.update.call_args[0][0]
-        assert update_args['is_active'] == False
+        assert update_args["is_active"] == False
         mock_db.commit.assert_called_once()
 
 
@@ -327,11 +320,7 @@ class TestEventRepositoryBasicOperations:
         mock_db = MagicMock()
 
         repo = EventRepository(mock_db)
-        event = repo.create_event(
-            asset_id=1,
-            kind=EventKind.NEW_ASSET,
-            payload={'test': 'data'}
-        )
+        event = repo.create_event(asset_id=1, kind=EventKind.NEW_ASSET, payload={"test": "data"})
 
         assert event.asset_id == 1
         assert event.kind == EventKind.NEW_ASSET
@@ -343,12 +332,8 @@ class TestEventRepositoryBasicOperations:
         mock_db = MagicMock()
 
         repo = EventRepository(mock_db)
-        payload = {'domain': 'example.com', 'ips': ['1.2.3.4', '5.6.7.8']}
-        event = repo.create_event(
-            asset_id=1,
-            kind=EventKind.NEW_ASSET,
-            payload=payload
-        )
+        payload = {"domain": "example.com", "ips": ["1.2.3.4", "5.6.7.8"]}
+        event = repo.create_event(asset_id=1, kind=EventKind.NEW_ASSET, payload=payload)
 
         # Payload should be JSON string
         assert isinstance(event.payload, str)
@@ -360,9 +345,9 @@ class TestEventRepositoryBasicOperations:
         mock_db = MagicMock()
 
         events = [
-            Event(asset_id=1, kind=EventKind.NEW_ASSET, payload='{}'),
-            Event(asset_id=2, kind=EventKind.OPEN_PORT, payload='{}'),
-            Event(asset_id=3, kind=EventKind.NEW_CERT, payload='{}'),
+            Event(asset_id=1, kind=EventKind.NEW_ASSET, payload="{}"),
+            Event(asset_id=2, kind=EventKind.OPEN_PORT, payload="{}"),
+            Event(asset_id=3, kind=EventKind.NEW_CERT, payload="{}"),
         ]
 
         repo = EventRepository(mock_db)
@@ -409,7 +394,7 @@ class TestEventRepositoryBasicOperations:
 class TestEventRepositoryQueryOperations:
     """Test event query operations"""
 
-    @patch('app.repositories.asset_repository.datetime')
+    @patch("app.repositories.asset_repository.datetime")
     def test_get_recent_by_tenant(self, mock_datetime):
         """Test getting recent events for a tenant"""
         mock_db = MagicMock()
@@ -431,7 +416,7 @@ class TestEventRepositoryQueryOperations:
         assert result == mock_events
         query_mock.join.assert_called_once_with(Asset)
 
-    @patch('app.repositories.asset_repository.datetime')
+    @patch("app.repositories.asset_repository.datetime")
     def test_get_recent_by_tenant_with_event_kinds(self, mock_datetime):
         """Test filtering by event kinds"""
         mock_db = MagicMock()
@@ -446,11 +431,7 @@ class TestEventRepositoryQueryOperations:
         query_mock.all.return_value = []
 
         repo = EventRepository(mock_db)
-        repo.get_recent_by_tenant(
-            tenant_id=1,
-            hours=24,
-            event_kinds=[EventKind.NEW_ASSET, EventKind.OPEN_PORT]
-        )
+        repo.get_recent_by_tenant(tenant_id=1, hours=24, event_kinds=[EventKind.NEW_ASSET, EventKind.OPEN_PORT])
 
         # Should have two filter calls
         assert query_mock.filter.call_count == 2
@@ -473,14 +454,14 @@ class TestRepositoryMultiTenantIsolation:
 
         # All these should filter by tenant_id
         repo.get_by_tenant(tenant_id=1)
-        repo.get_by_identifier(tenant_id=1, identifier='test.com', asset_type=AssetType.DOMAIN)
+        repo.get_by_identifier(tenant_id=1, identifier="test.com", asset_type=AssetType.DOMAIN)
         repo.get_critical_assets(tenant_id=1)
 
         # Verify tenant_id is in all filter calls
         calls = query_mock.filter_by.call_args_list
         assert len(calls) >= 3
 
-    @patch('app.repositories.asset_repository.insert')
+    @patch("app.repositories.asset_repository.insert")
     def test_bulk_upsert_tenant_isolation(self, mock_insert):
         """Test bulk upsert enforces tenant isolation"""
         mock_db = MagicMock()
@@ -492,8 +473,8 @@ class TestRepositoryMultiTenantIsolation:
         mock_insert.return_value = mock_stmt
 
         assets_data = [
-            {'identifier': 'test1.com', 'type': AssetType.DOMAIN, 'raw_metadata': '{}'},
-            {'identifier': 'test2.com', 'type': AssetType.DOMAIN, 'raw_metadata': '{}'},
+            {"identifier": "test1.com", "type": AssetType.DOMAIN, "raw_metadata": "{}"},
+            {"identifier": "test2.com", "type": AssetType.DOMAIN, "raw_metadata": "{}"},
         ]
 
         repo = AssetRepository(mock_db)
@@ -504,7 +485,7 @@ class TestRepositoryMultiTenantIsolation:
         # Verify all records have tenant_id=1
         call_args = mock_insert.return_value.values.call_args
         records = call_args[0][0]
-        assert all(record['tenant_id'] == 1 for record in records)
+        assert all(record["tenant_id"] == 1 for record in records)
 
     def test_event_queries_join_asset_for_tenant_filter(self):
         """Test event queries join with Asset for tenant filtering"""
@@ -525,15 +506,13 @@ class TestRepositoryMultiTenantIsolation:
 class TestRepositoryErrorHandling:
     """Test error handling in repositories"""
 
-    @patch('app.repositories.asset_repository.insert')
+    @patch("app.repositories.asset_repository.insert")
     def test_bulk_upsert_database_error(self, mock_insert):
         """Test bulk upsert handles database errors"""
         mock_db = MagicMock()
         mock_db.execute.side_effect = Exception("Database connection error")
 
-        assets_data = [
-            {'identifier': 'test.com', 'type': AssetType.DOMAIN, 'raw_metadata': '{}'}
-        ]
+        assets_data = [{"identifier": "test.com", "type": AssetType.DOMAIN, "raw_metadata": "{}"}]
 
         repo = AssetRepository(mock_db)
 
@@ -551,8 +530,4 @@ class TestRepositoryErrorHandling:
             pass
 
         with pytest.raises(TypeError):
-            repo.create_event(
-                asset_id=1,
-                kind=EventKind.NEW_ASSET,
-                payload={'obj': NonSerializable()}
-            )
+            repo.create_event(asset_id=1, kind=EventKind.NEW_ASSET, payload={"obj": NonSerializable()})

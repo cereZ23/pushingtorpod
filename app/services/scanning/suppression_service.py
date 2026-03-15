@@ -44,7 +44,7 @@ class SuppressionService:
         """
         self.db = db
         self.tenant_id = tenant_id
-        self.logger = TenantLoggerAdapter(logger, {'tenant_id': tenant_id}) if tenant_id else logger
+        self.logger = TenantLoggerAdapter(logger, {"tenant_id": tenant_id}) if tenant_id else logger
 
     def should_suppress(self, finding: Dict) -> tuple[bool, Optional[str]]:
         """
@@ -83,7 +83,7 @@ class SuppressionService:
         pattern: str,
         reason: str,
         expires_at: Optional[datetime] = None,
-        is_global: bool = False
+        is_global: bool = False,
     ) -> Dict:
         """
         Create a new suppression rule
@@ -115,7 +115,7 @@ class SuppressionService:
             is_active=True,
             is_global=is_global,
             expires_at=expires_at,
-            created_at=datetime.now(timezone.utc)
+            created_at=datetime.now(timezone.utc),
         )
 
         self.db.add(suppression)
@@ -127,10 +127,7 @@ class SuppressionService:
         return self._suppression_to_dict(suppression)
 
     def update_suppression(
-        self,
-        suppression_id: int,
-        is_active: Optional[bool] = None,
-        expires_at: Optional[datetime] = None
+        self, suppression_id: int, is_active: Optional[bool] = None, expires_at: Optional[datetime] = None
     ) -> Optional[Dict]:
         """
         Update suppression rule
@@ -195,11 +192,7 @@ class SuppressionService:
 
         return True
 
-    def list_suppressions(
-        self,
-        include_global: bool = True,
-        include_expired: bool = False
-    ) -> List[Dict]:
+    def list_suppressions(self, include_global: bool = True, include_expired: bool = False) -> List[Dict]:
         """
         List suppression rules
 
@@ -214,22 +207,14 @@ class SuppressionService:
 
         # Filter by tenant
         if include_global:
-            query = query.filter(
-                or_(
-                    Suppression.tenant_id == self.tenant_id,
-                    Suppression.is_global == True
-                )
-            )
+            query = query.filter(or_(Suppression.tenant_id == self.tenant_id, Suppression.is_global == True))
         else:
             query = query.filter(Suppression.tenant_id == self.tenant_id)
 
         # Filter expired
         if not include_expired:
             query = query.filter(
-                or_(
-                    Suppression.expires_at.is_(None),
-                    Suppression.expires_at > datetime.now(timezone.utc)
-                )
+                or_(Suppression.expires_at.is_(None), Suppression.expires_at > datetime.now(timezone.utc))
             )
 
         suppressions = query.order_by(Suppression.created_at.desc()).all()
@@ -253,14 +238,13 @@ class SuppressionService:
             should_suppress, reason = self.should_suppress(finding)
 
             if should_suppress:
-                finding['suppression_reason'] = reason
+                finding["suppression_reason"] = reason
                 suppressed.append(finding)
             else:
                 unsuppressed.append(finding)
 
         self.logger.info(
-            f"Filtered {len(findings)} findings: "
-            f"{len(unsuppressed)} unsuppressed, {len(suppressed)} suppressed"
+            f"Filtered {len(findings)} findings: {len(unsuppressed)} unsuppressed, {len(suppressed)} suppressed"
         )
 
         return unsuppressed, suppressed
@@ -277,14 +261,8 @@ class SuppressionService:
         query = self.db.query(Suppression).filter(
             and_(
                 Suppression.is_active == True,
-                or_(
-                    Suppression.expires_at.is_(None),
-                    Suppression.expires_at > now
-                ),
-                or_(
-                    Suppression.tenant_id == self.tenant_id,
-                    Suppression.is_global == True
-                )
+                or_(Suppression.expires_at.is_(None), Suppression.expires_at > now),
+                or_(Suppression.tenant_id == self.tenant_id, Suppression.is_global == True),
             )
         )
 
@@ -307,16 +285,16 @@ class SuppressionService:
         # Get value to match against
         value = None
 
-        if pattern_type == 'template_id':
-            value = finding.get('template_id', '')
-        elif pattern_type == 'url':
-            value = finding.get('matched_at', '')
-        elif pattern_type == 'host':
-            value = finding.get('host', '')
-        elif pattern_type == 'severity':
-            value = finding.get('severity', '')
-        elif pattern_type == 'name':
-            value = finding.get('name', '')
+        if pattern_type == "template_id":
+            value = finding.get("template_id", "")
+        elif pattern_type == "url":
+            value = finding.get("matched_at", "")
+        elif pattern_type == "host":
+            value = finding.get("host", "")
+        elif pattern_type == "severity":
+            value = finding.get("severity", "")
+        elif pattern_type == "name":
+            value = finding.get("name", "")
         else:
             return False
 
@@ -333,39 +311,39 @@ class SuppressionService:
     def _suppression_to_dict(self, suppression) -> Dict:
         """Convert Suppression object to dict"""
         return {
-            'id': suppression.id,
-            'tenant_id': suppression.tenant_id,
-            'name': suppression.name,
-            'pattern_type': suppression.pattern_type,
-            'pattern': suppression.pattern,
-            'reason': suppression.reason,
-            'is_active': suppression.is_active,
-            'is_global': suppression.is_global,
-            'priority': suppression.priority,
-            'expires_at': suppression.expires_at.isoformat() if suppression.expires_at else None,
-            'created_at': suppression.created_at.isoformat() if suppression.created_at else None,
-            'updated_at': suppression.updated_at.isoformat() if suppression.updated_at else None
+            "id": suppression.id,
+            "tenant_id": suppression.tenant_id,
+            "name": suppression.name,
+            "pattern_type": suppression.pattern_type,
+            "pattern": suppression.pattern,
+            "reason": suppression.reason,
+            "is_active": suppression.is_active,
+            "is_global": suppression.is_global,
+            "priority": suppression.priority,
+            "expires_at": suppression.expires_at.isoformat() if suppression.expires_at else None,
+            "created_at": suppression.created_at.isoformat() if suppression.created_at else None,
+            "updated_at": suppression.updated_at.isoformat() if suppression.updated_at else None,
         }
 
 
 # Common suppression patterns
 COMMON_SUPPRESSIONS = [
     {
-        'name': 'Suppress DNS CAA records on development',
-        'pattern_type': 'template_id',
-        'pattern': r'dns-caa-.*',
-        'reason': 'Development environments do not require CAA records'
+        "name": "Suppress DNS CAA records on development",
+        "pattern_type": "template_id",
+        "pattern": r"dns-caa-.*",
+        "reason": "Development environments do not require CAA records",
     },
     {
-        'name': 'Suppress localhost findings',
-        'pattern_type': 'host',
-        'pattern': r'^(localhost|127\.0\.0\.1)$',
-        'reason': 'Localhost findings are not relevant'
+        "name": "Suppress localhost findings",
+        "pattern_type": "host",
+        "pattern": r"^(localhost|127\.0\.0\.1)$",
+        "reason": "Localhost findings are not relevant",
     },
     {
-        'name': 'Suppress test/staging environments',
-        'pattern_type': 'url',
-        'pattern': r'(test|staging|dev)\.',
-        'reason': 'Test environments may have intentional vulnerabilities'
-    }
+        "name": "Suppress test/staging environments",
+        "pattern_type": "url",
+        "pattern": r"(test|staging|dev)\.",
+        "reason": "Test environments may have intentional vulnerabilities",
+    },
 ]

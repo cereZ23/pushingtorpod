@@ -43,8 +43,7 @@ def fetch_certificate(host: str, port: int = 443, timeout: float = 10.0) -> Opti
                     return None
 
                 return _parse_cert(cert_bin, tls_version, cipher, host, port)
-    except (socket.timeout, socket.gaierror, ConnectionRefusedError,
-            ConnectionResetError, OSError, ssl.SSLError) as e:
+    except (socket.timeout, socket.gaierror, ConnectionRefusedError, ConnectionResetError, OSError, ssl.SSLError) as e:
         logger.debug(f"Cannot fetch cert from {host}:{port}: {e}")
         return None
 
@@ -219,8 +218,7 @@ def harvest_certificates(self, tenant_id: int) -> dict:
         db.commit()
 
         tenant_logger.info(
-            f"Certificate harvest complete: {total_created} new, "
-            f"{total_updated} updated, {total_errors} errors"
+            f"Certificate harvest complete: {total_created} new, {total_updated} updated, {total_errors} errors"
         )
 
         return {

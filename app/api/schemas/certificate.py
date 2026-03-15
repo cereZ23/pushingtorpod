@@ -56,9 +56,9 @@ class CertificateResponse(BaseModel):
                 "is_wildcard": True,
                 "has_weak_signature": False,
                 "first_seen": "2024-01-01T00:00:00Z",
-                "last_seen": "2024-01-15T12:00:00Z"
+                "last_seen": "2024-01-15T12:00:00Z",
             }
-        }
+        },
     )
 
 
@@ -84,7 +84,7 @@ class CertificateListRequest(BaseModel):
                 "is_self_signed": False,
                 "issuer": "Let's Encrypt",
                 "sort_by": "days_until_expiry",
-                "sort_order": "asc"
+                "sort_order": "asc",
             }
         }
     )
@@ -111,17 +111,8 @@ class CertificateHealthResponse(BaseModel):
                 "self_signed": 8,
                 "weak_signature": 2,
                 "wildcard": 125,
-                "by_issuer": {
-                    "Let's Encrypt": 380,
-                    "DigiCert": 45,
-                    "Self-signed": 8,
-                    "Other": 17
-                },
-                "by_key_size": {
-                    "2048": 400,
-                    "4096": 45,
-                    "1024": 5
-                }
+                "by_issuer": {"Let's Encrypt": 380, "DigiCert": 45, "Self-signed": 8, "Other": 17},
+                "by_key_size": {"2048": 400, "4096": 45, "1024": 5},
             }
         }
     )

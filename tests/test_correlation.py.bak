@@ -52,7 +52,6 @@ def tenant_logger():
 
 # ── _highest_severity ────────────────────────────────────────────────
 
-
 class TestHighestSeverity:
     def test_critical_wins(self):
         assert _highest_severity(["low", "critical", "medium"]) == "critical"
@@ -71,7 +70,6 @@ class TestHighestSeverity:
 
 
 # ── _dedup_findings ──────────────────────────────────────────────────
-
 
 class TestDedupFindings:
     def test_no_duplicates_returns_all(self, tenant_logger):
@@ -97,7 +95,6 @@ class TestDedupFindings:
 
 
 # ── _cluster_findings ────────────────────────────────────────────────
-
 
 class TestClusterFindings:
     def test_rule1_cve_grouping(self, tenant_logger):

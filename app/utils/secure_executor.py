@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 class ToolExecutionError(Exception):
     """Raised when tool execution fails"""
+
     pass
 
 
@@ -43,8 +44,8 @@ class SecureToolExecutor:
 
     # Paths allowed outside the temp directory (read-only resources)
     SAFE_PATH_PREFIXES = (
-        '/home/appuser/nuclei-templates',
-        '/app/data/',
+        "/home/appuser/nuclei-templates",
+        "/app/data/",
     )
 
     def __init__(self, tenant_id: int):
@@ -64,12 +65,9 @@ class SecureToolExecutor:
         """Create isolated temporary directory for tenant"""
         if settings.tool_temp_dir:
             settings.tool_temp_dir.mkdir(parents=True, exist_ok=True)
-            self.temp_dir = Path(tempfile.mkdtemp(
-                prefix=f'tenant_{self.tenant_id}_',
-                dir=settings.tool_temp_dir
-            ))
+            self.temp_dir = Path(tempfile.mkdtemp(prefix=f"tenant_{self.tenant_id}_", dir=settings.tool_temp_dir))
         else:
-            self.temp_dir = Path(tempfile.mkdtemp(prefix=f'tenant_{self.tenant_id}_'))
+            self.temp_dir = Path(tempfile.mkdtemp(prefix=f"tenant_{self.tenant_id}_"))
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -77,6 +75,7 @@ class SecureToolExecutor:
         if self.temp_dir and self.temp_dir.exists():
             try:
                 import shutil
+
                 shutil.rmtree(self.temp_dir)
                 logger.debug(f"Cleaned up temp dir: {self.temp_dir}")
             except Exception as e:
@@ -115,13 +114,13 @@ class SecureToolExecutor:
             safe_arg = str(arg).strip()
 
             # Block command injection attempts
-            dangerous_chars = [';', '&', '|', '$', '`', '\n', '\r']
+            dangerous_chars = [";", "&", "|", "$", "`", "\n", "\r"]
             if any(char in safe_arg for char in dangerous_chars):
                 logger.warning(f"Rejecting argument with dangerous characters: {safe_arg}")
                 continue
 
             # Validate file paths
-            if safe_arg.startswith('/') or safe_arg.startswith('./'):
+            if safe_arg.startswith("/") or safe_arg.startswith("./"):
                 # Allow pre-approved safe paths (read-only resources like templates)
                 if any(safe_arg.startswith(prefix) for prefix in self.SAFE_PATH_PREFIXES):
                     sanitized.append(safe_arg)
@@ -162,7 +161,7 @@ class SecureToolExecutor:
         args: List[str],
         timeout: Optional[int] = None,
         capture_output: bool = True,
-        stdin_data: Optional[str] = None
+        stdin_data: Optional[str] = None,
     ) -> Tuple[int, str, str]:
         """
         Execute tool with security controls.
@@ -189,10 +188,10 @@ class SecureToolExecutor:
         cmd = [tool] + safe_args
 
         env = {
-            'PATH': '/usr/local/pd-tools:/usr/local/bin:/usr/bin:/bin',
-            'HOME': str(self.temp_dir) if self.temp_dir else '/tmp',
-            'LANG': 'C.UTF-8',
-            'NUCLEI_TEMPLATES': '/home/appuser/nuclei-templates',
+            "PATH": "/usr/local/pd-tools:/usr/local/bin:/usr/bin:/bin",
+            "HOME": str(self.temp_dir) if self.temp_dir else "/tmp",
+            "LANG": "C.UTF-8",
+            "NUCLEI_TEMPLATES": "/home/appuser/nuclei-templates",
         }
 
         timeout = timeout or self.timeout
@@ -203,7 +202,7 @@ class SecureToolExecutor:
         timed_out = False
 
         try:
-            preexec_fn = self._preexec_new_pgrp if os.name == 'posix' else None
+            preexec_fn = self._preexec_new_pgrp if os.name == "posix" else None
 
             proc = subprocess.Popen(
                 cmd,
@@ -212,7 +211,7 @@ class SecureToolExecutor:
                 stderr=subprocess.PIPE if capture_output else subprocess.DEVNULL,
                 text=True,
                 env=env,
-                cwd=str(self.temp_dir) if self.temp_dir else '/tmp',
+                cwd=str(self.temp_dir) if self.temp_dir else "/tmp",
                 preexec_fn=preexec_fn,
                 shell=False,
             )
@@ -245,7 +244,7 @@ class SecureToolExecutor:
             if timed_out:
                 raise ToolExecutionError(f"Execution timed out after {timeout}s")
 
-            return proc.returncode, stdout or '', stderr or ''
+            return proc.returncode, stdout or "", stderr or ""
 
         except ToolExecutionError:
             raise
@@ -291,7 +290,7 @@ class SecureToolExecutor:
         file_path = self.temp_dir / safe_filename
 
         try:
-            file_path.write_text(content, encoding='utf-8')
+            file_path.write_text(content, encoding="utf-8")
             logger.debug(f"Created input file: {file_path}")
             return str(file_path)
         except Exception as e:
@@ -325,11 +324,9 @@ class SecureToolExecutor:
             # Check file size to prevent reading huge files
             file_size = file_path.stat().st_size
             if file_size > self.max_output_size:
-                raise ToolExecutionError(
-                    f"Output file too large: {file_size} bytes (max: {self.max_output_size})"
-                )
+                raise ToolExecutionError(f"Output file too large: {file_size} bytes (max: {self.max_output_size})")
 
-            content = file_path.read_text(encoding='utf-8')
+            content = file_path.read_text(encoding="utf-8")
             logger.debug(f"Read output file: {file_path} ({file_size} bytes)")
             return content
         except UnicodeDecodeError:

@@ -198,9 +198,7 @@ class TestJiraProvider:
 
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "fields": {"status": {"name": "Done", "statusCategory": {"key": "done"}}}
-        }
+        mock_response.json.return_value = {"fields": {"status": {"name": "Done", "statusCategory": {"key": "done"}}}}
 
         mock_client = MagicMock()
         mock_client.request.return_value = mock_response
@@ -340,9 +338,7 @@ class TestJiraProvider:
         # Second call: GET (status fetch in update_ticket)
         status_response = MagicMock()
         status_response.status_code = 200
-        status_response.json.return_value = {
-            "fields": {"status": {"name": "In Progress"}}
-        }
+        status_response.json.return_value = {"fields": {"status": {"name": "In Progress"}}}
 
         mock_client = MagicMock()
         mock_client.request.side_effect = [update_response, status_response]
@@ -449,8 +445,11 @@ class TestServiceNowProvider:
         provider._client = mock_client
 
         data = TicketData(
-            title="Test", description="Test", severity="low",
-            finding_id=1, tenant_id=1,
+            title="Test",
+            description="Test",
+            severity="low",
+            finding_id=1,
+            tenant_id=1,
         )
 
         with pytest.raises(RuntimeError, match="ServiceNow incident creation failed"):
@@ -461,9 +460,7 @@ class TestServiceNowProvider:
 
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "result": [{"state": "2", "number": "INC0012345"}]
-        }
+        mock_response.json.return_value = {"result": [{"state": "2", "number": "INC0012345"}]}
 
         mock_client = MagicMock()
         mock_client.request.return_value = mock_response
@@ -496,9 +493,7 @@ class TestServiceNowProvider:
         # First call: lookup sys_id
         lookup_response = MagicMock()
         lookup_response.status_code = 200
-        lookup_response.json.return_value = {
-            "result": [{"sys_id": "abc123"}]
-        }
+        lookup_response.json.return_value = {"result": [{"sys_id": "abc123"}]}
 
         # Second call: PATCH with work_notes
         patch_response = MagicMock()
@@ -518,9 +513,7 @@ class TestServiceNowProvider:
         # First call: lookup sys_id
         lookup_response = MagicMock()
         lookup_response.status_code = 200
-        lookup_response.json.return_value = {
-            "result": [{"sys_id": "abc123"}]
-        }
+        lookup_response.json.return_value = {"result": [{"sys_id": "abc123"}]}
 
         # Second call: PATCH state to resolved
         patch_response = MagicMock()
@@ -589,9 +582,7 @@ class TestServiceNowProvider:
         # Patch
         patch_response = MagicMock()
         patch_response.status_code = 200
-        patch_response.json.return_value = {
-            "result": {"state": "2", "number": "INC0012345"}
-        }
+        patch_response.json.return_value = {"result": {"state": "2", "number": "INC0012345"}}
 
         mock_client = MagicMock()
         mock_client.request.side_effect = [lookup_response, patch_response]
@@ -683,6 +674,7 @@ class TestTicketSyncService:
     @pytest.fixture
     def sync_service(self, mock_db):
         from app.services.ticketing.sync_service import TicketSyncService
+
         return TicketSyncService(mock_db, "test-secret-key-xxxxxxxxxxxxxxxxxx")
 
     def test_create_ticket_for_finding_no_config(self, sync_service, mock_db):
@@ -815,11 +807,14 @@ class TestProviderConfigValidation:
         from app.api.routers.tickets import _validate_provider_config
 
         # Should not raise
-        _validate_provider_config("jira", {
-            "url": "https://company.atlassian.net",
-            "email": "user@company.com",
-            "api_token": "token123",
-        })
+        _validate_provider_config(
+            "jira",
+            {
+                "url": "https://company.atlassian.net",
+                "email": "user@company.com",
+                "api_token": "token123",
+            },
+        )
 
     def test_jira_missing_fields(self):
         from app.api.routers.tickets import _validate_provider_config
@@ -835,22 +830,28 @@ class TestProviderConfigValidation:
         from fastapi import HTTPException
 
         with pytest.raises(HTTPException) as exc_info:
-            _validate_provider_config("jira", {
-                "url": "not-a-url",
-                "email": "t@t.com",
-                "api_token": "token",
-            })
+            _validate_provider_config(
+                "jira",
+                {
+                    "url": "not-a-url",
+                    "email": "t@t.com",
+                    "api_token": "token",
+                },
+            )
         assert exc_info.value.status_code == 422
         assert "http" in str(exc_info.value.detail).lower()
 
     def test_servicenow_valid_config(self):
         from app.api.routers.tickets import _validate_provider_config
 
-        _validate_provider_config("servicenow", {
-            "instance": "company",
-            "username": "admin",
-            "password": "pass",
-        })
+        _validate_provider_config(
+            "servicenow",
+            {
+                "instance": "company",
+                "username": "admin",
+                "password": "pass",
+            },
+        )
 
     def test_servicenow_missing_fields(self):
         from app.api.routers.tickets import _validate_provider_config

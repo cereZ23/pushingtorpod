@@ -145,9 +145,7 @@ def get_geomap_assets(
         geo_asset_ids.append(asset.id)
 
     # Batch query: count findings per asset grouped by severity
-    findings_map: dict[int, dict[str, int]] = defaultdict(
-        lambda: {s.value: 0 for s in FindingSeverity}
-    )
+    findings_map: dict[int, dict[str, int]] = defaultdict(lambda: {s.value: 0 for s in FindingSeverity})
 
     if geo_asset_ids:
         severity_counts = (

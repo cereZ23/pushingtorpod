@@ -46,16 +46,16 @@ THUMB_HEIGHT = 240
 SCREENSHOT_TIMEOUT = 30000  # 30s per page
 MAX_SCREENSHOTS_PER_RUN = 200
 BATCH_SIZE = 10  # Concurrent browser pages
-NAVIGATION_WAIT = 'networkidle'
+NAVIGATION_WAIT = "networkidle"
 
 # HTTP status codes that indicate a screenshottable page
 SCREENSHOTTABLE_STATUS_CODES = {200, 301, 302, 403, 401, 500}
 
 
 @celery.task(
-    name='app.tasks.visual_recon.run_visual_recon',
+    name="app.tasks.visual_recon.run_visual_recon",
     soft_time_limit=1800,  # 30 minutes soft limit
-    time_limit=2100,       # 35 minutes hard limit
+    time_limit=2100,  # 35 minutes hard limit
 )
 def run_visual_recon(
     tenant_id: int,
@@ -83,7 +83,7 @@ def run_visual_recon(
     from app.database import SessionLocal
 
     db = SessionLocal()
-    tenant_logger = TenantLoggerAdapter(logger, {'tenant_id': tenant_id})
+    tenant_logger = TenantLoggerAdapter(logger, {"tenant_id": tenant_id})
 
     try:
         tenant_logger.info(
@@ -98,25 +98,21 @@ def run_visual_recon(
         if not targets:
             tenant_logger.info("No screenshottable targets found, skipping visual recon")
             return {
-                'screenshots_taken': 0,
-                'errors': 0,
-                'skipped': 0,
-                'status': 'no_targets',
+                "screenshots_taken": 0,
+                "errors": 0,
+                "skipped": 0,
+                "status": "no_targets",
             }
 
         # Enforce max screenshots per run
         if len(targets) > MAX_SCREENSHOTS_PER_RUN:
-            tenant_logger.info(
-                f"Capping targets from {len(targets)} to {MAX_SCREENSHOTS_PER_RUN}"
-            )
+            tenant_logger.info(f"Capping targets from {len(targets)} to {MAX_SCREENSHOTS_PER_RUN}")
             targets = targets[:MAX_SCREENSHOTS_PER_RUN]
 
         tenant_logger.info(f"Capturing screenshots for {len(targets)} targets")
 
         # Run async screenshot capture from sync Celery context
-        stats = asyncio.run(
-            _capture_screenshots(tenant_id, targets, tenant_logger)
-        )
+        stats = asyncio.run(_capture_screenshots(tenant_id, targets, tenant_logger))
 
         tenant_logger.info(
             f"Visual recon complete: {stats['screenshots_taken']} taken, "
@@ -128,11 +124,11 @@ def run_visual_recon(
     except Exception as e:
         tenant_logger.error(f"Visual recon failed: {e}", exc_info=True)
         return {
-            'screenshots_taken': 0,
-            'errors': 1,
-            'skipped': 0,
-            'status': 'failed',
-            'error': str(e),
+            "screenshots_taken": 0,
+            "errors": 1,
+            "skipped": 0,
+            "status": "failed",
+            "error": str(e),
         }
     finally:
         db.close()
@@ -181,11 +177,11 @@ def _build_target_list(
     seen_urls = set()
 
     for service, asset in results:
-        scheme = 'https' if service.has_tls else 'http'
+        scheme = "https" if service.has_tls else "http"
         port = service.port
 
         # Build URL, omitting default ports
-        if (scheme == 'https' and port == 443) or (scheme == 'http' and port == 80):
+        if (scheme == "https" and port == 443) or (scheme == "http" and port == 80):
             url = f"{scheme}://{asset.identifier}"
         else:
             url = f"{scheme}://{asset.identifier}:{port}"
@@ -195,12 +191,14 @@ def _build_target_list(
             continue
         seen_urls.add(url)
 
-        targets.append({
-            'url': url,
-            'asset_id': asset.id,
-            'service_id': service.id,
-            'port': port,
-        })
+        targets.append(
+            {
+                "url": url,
+                "asset_id": asset.id,
+                "service_id": service.id,
+                "port": port,
+            }
+        )
 
     tenant_logger.info(f"Built {len(targets)} screenshot targets from database")
     return targets
@@ -233,72 +231,68 @@ async def _capture_screenshots(
             "Install with: pip install playwright && playwright install chromium"
         )
         return {
-            'screenshots_taken': 0,
-            'errors': 0,
-            'skipped': len(targets),
-            'status': 'playwright_not_installed',
+            "screenshots_taken": 0,
+            "errors": 0,
+            "skipped": len(targets),
+            "status": "playwright_not_installed",
         }
 
-    stats = {'screenshots_taken': 0, 'errors': 0, 'skipped': 0}
+    stats = {"screenshots_taken": 0, "errors": 0, "skipped": 0}
 
     async with async_playwright() as p:
         try:
             browser = await p.chromium.launch(
                 headless=True,
                 args=[
-                    '--no-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu',
-                    '--disable-extensions',
-                    '--disable-background-networking',
-                    '--disable-sync',
-                    '--disable-translate',
-                    '--mute-audio',
-                    '--no-first-run',
-                    '--disable-default-apps',
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-extensions",
+                    "--disable-background-networking",
+                    "--disable-sync",
+                    "--disable-translate",
+                    "--mute-audio",
+                    "--no-first-run",
+                    "--disable-default-apps",
                 ],
             )
         except Exception as e:
             tenant_logger.error(
-                f"Failed to launch Chromium: {e}. "
-                "Ensure Playwright browsers are installed: playwright install chromium"
+                f"Failed to launch Chromium: {e}. Ensure Playwright browsers are installed: playwright install chromium"
             )
             return {
-                'screenshots_taken': 0,
-                'errors': 1,
-                'skipped': len(targets),
-                'status': 'browser_launch_failed',
-                'error': str(e),
+                "screenshots_taken": 0,
+                "errors": 1,
+                "skipped": len(targets),
+                "status": "browser_launch_failed",
+                "error": str(e),
             }
 
         context = await browser.new_context(
-            viewport={'width': VIEWPORT_WIDTH, 'height': VIEWPORT_HEIGHT},
+            viewport={"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT},
             ignore_https_errors=True,
-            user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
-                       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 EASM-VisualRecon/1.0',
+            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 EASM-VisualRecon/1.0",
         )
 
         # Process in batches to control concurrency
         for batch_start in range(0, len(targets), BATCH_SIZE):
-            batch = targets[batch_start:batch_start + BATCH_SIZE]
-            tasks = [
-                _screenshot_page(context, target, tenant_id, tenant_logger)
-                for target in batch
-            ]
+            batch = targets[batch_start : batch_start + BATCH_SIZE]
+            tasks = [_screenshot_page(context, target, tenant_id, tenant_logger) for target in batch]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for result in results:
                 if isinstance(result, Exception):
-                    stats['errors'] += 1
+                    stats["errors"] += 1
                     tenant_logger.debug(f"Screenshot batch exception: {result}")
                 elif result is True:
-                    stats['screenshots_taken'] += 1
+                    stats["screenshots_taken"] += 1
                 else:
-                    stats['skipped'] += 1
+                    stats["skipped"] += 1
 
         await browser.close()
 
-    stats['status'] = 'completed'
+    stats["status"] = "completed"
     return stats
 
 
@@ -323,7 +317,7 @@ async def _screenshot_page(
         True if screenshot was captured and stored, False if skipped
     """
     page = await context.new_page()
-    url = target['url']
+    url = target["url"]
 
     try:
         response = await page.goto(
@@ -337,15 +331,15 @@ async def _screenshot_page(
             return False
 
         # Full-size screenshot (viewport only, not full page scroll)
-        screenshot_bytes = await page.screenshot(full_page=False, type='png')
+        screenshot_bytes = await page.screenshot(full_page=False, type="png")
 
         # Generate thumbnail
         thumb_bytes = _generate_thumbnail(screenshot_bytes)
 
         # Build storage paths
-        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
-        asset_id = target['asset_id']
-        port = target['port']
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        asset_id = target["asset_id"]
+        port = target["port"]
 
         full_path = f"screenshots/{asset_id}/{port}_{timestamp}.png"
         thumb_path = f"screenshots/{asset_id}/{port}_{timestamp}_thumb.png"
@@ -359,8 +353,8 @@ async def _screenshot_page(
 
         # Update database records
         _update_screenshot_metadata(
-            asset_id=target['asset_id'],
-            service_id=target.get('service_id'),
+            asset_id=target["asset_id"],
+            service_id=target.get("service_id"),
             full_path=full_path,
             thumb_path=thumb_path,
             page_title=page_title,
@@ -396,13 +390,10 @@ def _generate_thumbnail(screenshot_bytes: bytes) -> bytes:
         img = Image.open(BytesIO(screenshot_bytes))
         img.thumbnail((THUMB_WIDTH, THUMB_HEIGHT), Image.LANCZOS)
         buf = BytesIO()
-        img.save(buf, format='PNG', optimize=True)
+        img.save(buf, format="PNG", optimize=True)
         return buf.getvalue()
     except ImportError:
-        logger.warning(
-            "Pillow not installed, returning full screenshot as thumbnail. "
-            "Install with: pip install Pillow"
-        )
+        logger.warning("Pillow not installed, returning full screenshot as thumbnail. Install with: pip install Pillow")
         return screenshot_bytes
 
 
@@ -422,7 +413,7 @@ def _store_screenshot(tenant_id: int, object_path: str, data: bytes) -> None:
 
     try:
         client = get_minio_client()
-        bucket_name = f'tenant-{tenant_id}'
+        bucket_name = f"tenant-{tenant_id}"
         ensure_bucket_exists(client, bucket_name)
 
         client.put_object(
@@ -430,7 +421,7 @@ def _store_screenshot(tenant_id: int, object_path: str, data: bytes) -> None:
             object_path,
             BytesIO(data),
             length=len(data),
-            content_type='image/png',
+            content_type="image/png",
         )
     except Exception as e:
         logger.warning(f"Failed to store screenshot to MinIO ({object_path}): {e}")
@@ -476,21 +467,21 @@ def _update_screenshot_metadata(
             except (json.JSONDecodeError, TypeError):
                 meta = {}
 
-            if 'screenshots' not in meta:
-                meta['screenshots'] = []
+            if "screenshots" not in meta:
+                meta["screenshots"] = []
 
             screenshot_entry = {
-                'full': full_path,
-                'thumb': thumb_path,
-                'service_id': service_id,
-                'captured_at': datetime.now(timezone.utc).isoformat(),
+                "full": full_path,
+                "thumb": thumb_path,
+                "service_id": service_id,
+                "captured_at": datetime.now(timezone.utc).isoformat(),
             }
             if page_title:
-                screenshot_entry['page_title'] = page_title[:500]
+                screenshot_entry["page_title"] = page_title[:500]
             if http_status is not None:
-                screenshot_entry['http_status'] = http_status
+                screenshot_entry["http_status"] = http_status
 
-            meta['screenshots'].append(screenshot_entry)
+            meta["screenshots"].append(screenshot_entry)
 
             # Store back as JSON string (raw_metadata is Text column)
             asset.raw_metadata = json.dumps(meta, default=str)
@@ -528,7 +519,7 @@ def get_screenshot_url(tenant_id: int, object_path: str) -> str | None:
 
     try:
         client = get_minio_client()
-        bucket_name = f'tenant-{tenant_id}'
+        bucket_name = f"tenant-{tenant_id}"
         url = client.presigned_get_object(
             bucket_name,
             object_path,

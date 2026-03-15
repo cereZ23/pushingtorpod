@@ -36,10 +36,7 @@ def run_alterx(domains: list[str], tenant_id: int) -> list[str]:
         return []
 
     validator = DomainValidator()
-    validated = [
-        d.strip().lower() for d in domains
-        if validator.validate_domain(d)[0]
-    ]
+    validated = [d.strip().lower() for d in domains if validator.validate_domain(d)[0]]
 
     if not validated:
         logger.warning("No valid domains after validation for alterx (tenant %d)", tenant_id)
@@ -47,18 +44,19 @@ def run_alterx(domains: list[str], tenant_id: int) -> list[str]:
 
     try:
         with SecureToolExecutor(tenant_id) as executor:
-            input_content = '\n'.join(validated)
-            input_file = executor.create_input_file('subdomains.txt', input_content)
-            output_file = 'permutations.txt'
+            input_content = "\n".join(validated)
+            input_file = executor.create_input_file("subdomains.txt", input_content)
+            output_file = "permutations.txt"
 
             logger.info(
                 "Running alterx for %d subdomains (tenant %d)",
-                len(validated), tenant_id,
+                len(validated),
+                tenant_id,
             )
 
             returncode, stdout, stderr = executor.execute(
-                'alterx',
-                ['-l', input_file, '-silent', '-o', output_file],
+                "alterx",
+                ["-l", input_file, "-silent", "-o", output_file],
                 timeout=settings.alterx_timeout,
             )
 
@@ -66,10 +64,7 @@ def run_alterx(domains: list[str], tenant_id: int) -> list[str]:
                 logger.warning("alterx warning (tenant %d): %s", tenant_id, stderr)
 
             output_content = executor.read_output_file(output_file)
-            candidates = [
-                line.strip() for line in output_content.split('\n')
-                if line.strip()
-            ]
+            candidates = [line.strip() for line in output_content.split("\n") if line.strip()]
 
             # Cap candidates to avoid spending excessive time in puredns.
             # 268k candidates at 300/s = ~15 min just for DNS queries;
@@ -78,20 +73,27 @@ def run_alterx(domains: list[str], tenant_id: int) -> list[str]:
             if len(candidates) > MAX_CANDIDATES:
                 logger.info(
                     "alterx generated %d candidates, capping to %d (tenant %d)",
-                    len(candidates), MAX_CANDIDATES, tenant_id,
+                    len(candidates),
+                    MAX_CANDIDATES,
+                    tenant_id,
                 )
                 candidates = candidates[:MAX_CANDIDATES]
 
             logger.info(
                 "alterx generated %d permutation candidates (tenant %d)",
-                len(candidates), tenant_id,
+                len(candidates),
+                tenant_id,
             )
 
             try:
-                store_raw_output(tenant_id, 'alterx', {
-                    'input_count': len(validated),
-                    'candidates_count': len(candidates),
-                })
+                store_raw_output(
+                    tenant_id,
+                    "alterx",
+                    {
+                        "input_count": len(validated),
+                        "candidates_count": len(candidates),
+                    },
+                )
             except Exception as exc:
                 logger.warning("Failed to store alterx raw output (tenant %d): %s", tenant_id, exc)
 
@@ -130,12 +132,12 @@ def run_puredns(
 
     try:
         with SecureToolExecutor(tenant_id) as executor:
-            input_content = '\n'.join(candidates)
-            input_file = executor.create_input_file('candidates.txt', input_content)
-            output_file = 'resolved.txt'
+            input_content = "\n".join(candidates)
+            input_file = executor.create_input_file("candidates.txt", input_content)
+            output_file = "resolved.txt"
 
             # Copy resolvers file into temp dir so SecureToolExecutor allows access
-            local_resolvers = 'resolvers.txt'
+            local_resolvers = "resolvers.txt"
             src_resolvers = Path(resolvers_path)
             if src_resolvers.is_file():
                 dst_resolvers = Path(executor.temp_dir) / local_resolvers
@@ -143,26 +145,32 @@ def run_puredns(
             else:
                 logger.warning(
                     "Resolvers file not found at %s, puredns will use defaults (tenant %d)",
-                    resolvers_path, tenant_id,
+                    resolvers_path,
+                    tenant_id,
                 )
                 local_resolvers = None
 
             logger.info(
                 "Running puredns resolve for %d candidates (tenant %d, rate=%d)",
-                len(candidates), tenant_id, rate,
+                len(candidates),
+                tenant_id,
+                rate,
             )
 
             args = [
-                'resolve', input_file,
-                '--rate-limit', str(rate),
-                '-q',
-                '-w', output_file,
+                "resolve",
+                input_file,
+                "--rate-limit",
+                str(rate),
+                "-q",
+                "-w",
+                output_file,
             ]
             if local_resolvers:
-                args.extend(['-r', local_resolvers])
+                args.extend(["-r", local_resolvers])
 
             returncode, stdout, stderr = executor.execute(
-                'puredns',
+                "puredns",
                 args,
                 timeout=settings.puredns_timeout,
             )
@@ -171,22 +179,25 @@ def run_puredns(
                 logger.warning("puredns warning (tenant %d): %s", tenant_id, stderr)
 
             output_content = executor.read_output_file(output_file)
-            resolved = [
-                line.strip() for line in output_content.split('\n')
-                if line.strip()
-            ]
+            resolved = [line.strip() for line in output_content.split("\n") if line.strip()]
 
             logger.info(
                 "puredns validated %d / %d candidates (tenant %d)",
-                len(resolved), len(candidates), tenant_id,
+                len(resolved),
+                len(candidates),
+                tenant_id,
             )
 
             try:
-                store_raw_output(tenant_id, 'puredns', {
-                    'input_count': len(candidates),
-                    'resolved_count': len(resolved),
-                    'rate': rate,
-                })
+                store_raw_output(
+                    tenant_id,
+                    "puredns",
+                    {
+                        "input_count": len(candidates),
+                        "resolved_count": len(resolved),
+                        "rate": rate,
+                    },
+                )
             except Exception as exc:
                 logger.warning("Failed to store puredns raw output (tenant %d): %s", tenant_id, exc)
 

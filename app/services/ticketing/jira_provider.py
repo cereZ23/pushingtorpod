@@ -78,9 +78,7 @@ class JiraProvider(TicketingProvider):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _request_with_retry(
-        self, method: str, path: str, **kwargs
-    ) -> httpx.Response:
+    def _request_with_retry(self, method: str, path: str, **kwargs) -> httpx.Response:
         """
         Execute an HTTP request with exponential-backoff retries
         on transient errors (5xx, timeouts, connection errors).
@@ -107,15 +105,11 @@ class JiraProvider(TicketingProvider):
                 return response
             except (httpx.TimeoutException, httpx.ConnectError) as exc:
                 last_exc = exc
-                logger.warning(
-                    "Jira request failed on attempt %d: %s", attempt + 1, exc
-                )
+                logger.warning("Jira request failed on attempt %d: %s", attempt + 1, exc)
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(_RETRY_BACKOFF_SECONDS[attempt])
 
-        raise ConnectionError(
-            f"Jira request failed after {_MAX_RETRIES} attempts: {last_exc}"
-        )
+        raise ConnectionError(f"Jira request failed after {_MAX_RETRIES} attempts: {last_exc}")
 
     @staticmethod
     def _build_adf_description(data: TicketData) -> dict:
@@ -168,8 +162,7 @@ class JiraProvider(TicketingProvider):
         paragraphs.append(
             _paragraph(
                 _text_node(
-                    f"Created automatically by EASM Platform "
-                    f"(finding_id={data.finding_id}, tenant_id={data.tenant_id})"
+                    f"Created automatically by EASM Platform (finding_id={data.finding_id}, tenant_id={data.tenant_id})"
                 )
             )
         )
@@ -216,9 +209,7 @@ class JiraProvider(TicketingProvider):
                 response.status_code,
                 error_detail,
             )
-            raise RuntimeError(
-                f"Jira issue creation failed ({response.status_code}): {error_detail}"
-            )
+            raise RuntimeError(f"Jira issue creation failed ({response.status_code}): {error_detail}")
 
         result_data = response.json()
         issue_key = result_data["key"]
@@ -240,9 +231,7 @@ class JiraProvider(TicketingProvider):
         PUT /rest/api/3/issue/{issueIdOrKey}
         """
         payload = {"fields": data}
-        response = self._request_with_retry(
-            "PUT", f"/issue/{external_id}", json=payload
-        )
+        response = self._request_with_retry("PUT", f"/issue/{external_id}", json=payload)
 
         if response.status_code not in (200, 204):
             error_detail = response.text[:500]
@@ -252,9 +241,7 @@ class JiraProvider(TicketingProvider):
                 response.status_code,
                 error_detail,
             )
-            raise RuntimeError(
-                f"Jira issue update failed ({response.status_code}): {error_detail}"
-            )
+            raise RuntimeError(f"Jira issue update failed ({response.status_code}): {error_detail}")
 
         # Fetch current state after update
         current_status = self.get_ticket_status(external_id)
@@ -273,9 +260,7 @@ class JiraProvider(TicketingProvider):
 
         GET /rest/api/3/issue/{issueIdOrKey}?fields=status
         """
-        response = self._request_with_retry(
-            "GET", f"/issue/{external_id}", params={"fields": "status"}
-        )
+        response = self._request_with_retry("GET", f"/issue/{external_id}", params={"fields": "status"})
 
         if response.status_code != 200:
             logger.error(
@@ -283,9 +268,7 @@ class JiraProvider(TicketingProvider):
                 external_id,
                 response.status_code,
             )
-            raise RuntimeError(
-                f"Jira status fetch failed ({response.status_code})"
-            )
+            raise RuntimeError(f"Jira status fetch failed ({response.status_code})")
 
         data = response.json()
         return data["fields"]["status"]["name"]
@@ -297,21 +280,13 @@ class JiraProvider(TicketingProvider):
         Jira groups statuses into categories: 'new', 'indeterminate', 'done'.
         This is more reliable for mapping than the raw status name.
         """
-        response = self._request_with_retry(
-            "GET", f"/issue/{external_id}", params={"fields": "status"}
-        )
+        response = self._request_with_retry("GET", f"/issue/{external_id}", params={"fields": "status"})
 
         if response.status_code != 200:
-            raise RuntimeError(
-                f"Jira status fetch failed ({response.status_code})"
-            )
+            raise RuntimeError(f"Jira status fetch failed ({response.status_code})")
 
         data = response.json()
-        category_key = (
-            data["fields"]["status"]
-            .get("statusCategory", {})
-            .get("key", "indeterminate")
-        )
+        category_key = data["fields"]["status"].get("statusCategory", {}).get("key", "indeterminate")
         return self.JIRA_STATUS_CATEGORY_MAP.get(category_key, "in_progress")
 
     def add_comment(self, external_id: str, comment: str) -> bool:
@@ -356,9 +331,7 @@ class JiraProvider(TicketingProvider):
         2. POST /rest/api/3/issue/{id}/transitions - execute transition
         """
         # Step 1: Discover available transitions
-        response = self._request_with_retry(
-            "GET", f"/issue/{external_id}/transitions"
-        )
+        response = self._request_with_retry("GET", f"/issue/{external_id}/transitions")
 
         if response.status_code != 200:
             logger.error(
@@ -375,19 +348,14 @@ class JiraProvider(TicketingProvider):
         done_keywords = {"done", "closed", "resolved", "complete", "fixed"}
         for transition in transitions:
             name_lower = transition.get("name", "").lower()
-            to_category = (
-                transition.get("to", {})
-                .get("statusCategory", {})
-                .get("key", "")
-            )
+            to_category = transition.get("to", {}).get("statusCategory", {}).get("key", "")
             if to_category == "done" or name_lower in done_keywords:
                 close_transition_id = transition["id"]
                 break
 
         if close_transition_id is None:
             logger.warning(
-                "No close/done transition found for Jira issue %s. "
-                "Available transitions: %s",
+                "No close/done transition found for Jira issue %s. Available transitions: %s",
                 external_id,
                 [t["name"] for t in transitions],
             )
@@ -400,9 +368,7 @@ class JiraProvider(TicketingProvider):
 
         # Try to set resolution if available
         if resolution:
-            transition_payload["fields"] = {
-                "resolution": {"name": resolution}
-            }
+            transition_payload["fields"] = {"resolution": {"name": resolution}}
 
         response = self._request_with_retry(
             "POST",
@@ -444,9 +410,7 @@ class JiraProvider(TicketingProvider):
                     user_info.get("displayName", user_info.get("emailAddress", "unknown")),
                 )
                 return True
-            logger.error(
-                "Jira connection test failed: %d", response.status_code
-            )
+            logger.error("Jira connection test failed: %d", response.status_code)
             return False
         except Exception as exc:
             logger.error("Jira connection test error: %s", exc)

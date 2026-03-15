@@ -22,13 +22,15 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-@celery.task(name='app.tasks.discovery.run_full_discovery')
+
+@celery.task(name="app.tasks.discovery.run_full_discovery")
 def run_full_discovery():
     """
     Orchestrator task - triggers discovery for all active tenants
     Each tenant runs in complete isolation with dedicated queues
     """
     from app.database import SessionLocal
+
     db = SessionLocal()
 
     try:
@@ -39,19 +41,20 @@ def run_full_discovery():
             # Each tenant gets isolated execution
             run_tenant_discovery.apply_async(
                 args=[tenant.id],
-                queue=f'tenant_{tenant.id}',  # Tenant-specific queue for isolation
-                routing_key=f'tenant.{tenant.id}.discovery'
+                queue=f"tenant_{tenant.id}",  # Tenant-specific queue for isolation
+                routing_key=f"tenant.{tenant.id}.discovery",
             )
 
         logger.info(f"Successfully queued discovery for {len(tenants)} tenants")
-        return {'tenants_queued': len(tenants)}
+        return {"tenants_queued": len(tenants)}
     except Exception as e:
         logger.error(f"Failed to orchestrate discovery: {e}", exc_info=True)
         raise
     finally:
         db.close()
 
-@celery.task(name='app.tasks.discovery.run_tenant_discovery')
+
+@celery.task(name="app.tasks.discovery.run_tenant_discovery")
 def run_tenant_discovery(tenant_id: int):
     """
     Run complete discovery pipeline for a single tenant
@@ -61,15 +64,16 @@ def run_tenant_discovery(tenant_id: int):
     for improved subdomain coverage (30-50% more findings)
     """
     from app.database import SessionLocal
+
     db = SessionLocal()
 
     try:
         tenant = db.query(Tenant).filter_by(id=tenant_id).first()
         if not tenant:
             logger.warning(f"Tenant {tenant_id} not found, skipping discovery")
-            return {'error': 'tenant_not_found'}
+            return {"error": "tenant_not_found"}
 
-        tenant_logger = TenantLoggerAdapter(logger, {'tenant_id': tenant_id})
+        tenant_logger = TenantLoggerAdapter(logger, {"tenant_id": tenant_id})
         tenant_logger.info(f"Starting isolated discovery for tenant: {tenant.name}")
 
         # Run discovery chain with proper error handling
@@ -84,27 +88,24 @@ def run_tenant_discovery(tenant_id: int):
                 collect_seeds.si(tenant_id),
                 run_parallel_enumeration.s(tenant_id),
                 run_dnsx.s(tenant_id),
-                process_discovery_results.s(tenant_id)
+                process_discovery_results.s(tenant_id),
             ).apply_async()  # Use default queue
 
             tenant_logger.info("Discovery chain started successfully (with Amass)")
             return {
-                'tenant_id': tenant_id,
-                'tenant_name': tenant.name,
-                'status': 'started',
-                'enhancement': 'amass_enabled' if settings.discovery_amass_enabled else 'subfinder_only'
+                "tenant_id": tenant_id,
+                "tenant_name": tenant.name,
+                "status": "started",
+                "enhancement": "amass_enabled" if settings.discovery_amass_enabled else "subfinder_only",
             }
         except Exception as e:
             tenant_logger.error(f"Error starting discovery chain: {e}", exc_info=True)
-            return {
-                'tenant_id': tenant_id,
-                'status': 'failed',
-                'error': str(e)
-            }
+            return {"tenant_id": tenant_id, "status": "failed", "error": str(e)}
     finally:
         db.close()
 
-@celery.task(name='app.tasks.discovery.run_parallel_enumeration')
+
+@celery.task(name="app.tasks.discovery.run_parallel_enumeration")
 def run_parallel_enumeration(seed_data: dict, tenant_id: int):
     """
     Run Subfinder and Amass in parallel, then merge results
@@ -130,10 +131,7 @@ def run_parallel_enumeration(seed_data: dict, tenant_id: int):
         # Merge results
         merged = merge_discovery_results(subfinder_result, amass_result, tenant_id)
 
-        logger.info(
-            f"Parallel enumeration complete (tenant {tenant_id}): "
-            f"{merged['stats']['total']} total subdomains"
-        )
+        logger.info(f"Parallel enumeration complete (tenant {tenant_id}): {merged['stats']['total']} total subdomains")
 
         return merged
     else:
@@ -141,9 +139,10 @@ def run_parallel_enumeration(seed_data: dict, tenant_id: int):
         logger.info(f"Amass disabled, running Subfinder only (tenant {tenant_id})")
         subfinder_result = run_subfinder(seed_data, tenant_id)
         # Return merged results with empty amass data
-        return merge_discovery_results(subfinder_result, {'subdomains': []}, tenant_id)
+        return merge_discovery_results(subfinder_result, {"subdomains": []}, tenant_id)
 
-@celery.task(name='app.tasks.discovery.watch_critical_assets')
+
+@celery.task(name="app.tasks.discovery.watch_critical_assets")
 def watch_critical_assets():
     """
     Monitor critical assets (high risk score) more frequently
@@ -179,7 +178,7 @@ def watch_critical_assets():
             critical_assets = asset_repo.get_critical_assets(
                 tenant_id=tenant.id,
                 risk_threshold=50.0,
-                eager_load_relations=False  # We only need IDs, not relationships
+                eager_load_relations=False,  # We only need IDs, not relationships
             )
 
             if critical_assets:
@@ -194,36 +193,33 @@ def watch_critical_assets():
             # Quick DNS check for these assets
             quick_dns_check.apply_async(args=[tenant_id, asset_ids])
 
-        return {
-            'critical_assets_checked': total_critical_assets,
-            'tenants_with_critical_assets': len(tenant_assets)
-        }
+        return {"critical_assets_checked": total_critical_assets, "tenants_with_critical_assets": len(tenant_assets)}
     finally:
         db.close()
 
-@celery.task(name='app.tasks.discovery.quick_dns_check')
+
+@celery.task(name="app.tasks.discovery.quick_dns_check")
 def quick_dns_check(tenant_id: int, asset_ids: list):
     """Quick DNS check for specific assets"""
     from app.database import SessionLocal
+
     db = SessionLocal()
 
     try:
-        assets = db.query(Asset).filter(
-            Asset.id.in_(asset_ids),
-            Asset.tenant_id == tenant_id
-        ).all()
+        assets = db.query(Asset).filter(Asset.id.in_(asset_ids), Asset.tenant_id == tenant_id).all()
 
         if not assets:
-            return {'checked': 0}
+            return {"checked": 0}
 
         # Run dnsx on these specific assets
         result = run_dnsx_for_assets(tenant_id, assets)
 
-        return {'checked': len(assets), 'resolved': len(result.get('resolved', []))}
+        return {"checked": len(assets), "resolved": len(result.get("resolved", []))}
     finally:
         db.close()
 
-@celery.task(name='app.tasks.discovery.collect_seeds')
+
+@celery.task(name="app.tasks.discovery.collect_seeds")
 def collect_seeds(tenant_id: int):
     """
     Collect seeds from database and optionally run uncover
@@ -231,32 +227,28 @@ def collect_seeds(tenant_id: int):
     Returns dict with domains, asns, ip_ranges, keywords
     """
     from app.database import SessionLocal
+
     db = SessionLocal()
 
     try:
         tenant = db.query(Tenant).filter_by(id=tenant_id).first()
         if not tenant:
             logger.warning(f"Tenant {tenant_id} not found in collect_seeds")
-            return {'domains': [], 'asns': [], 'ip_ranges': [], 'keywords': []}
+            return {"domains": [], "asns": [], "ip_ranges": [], "keywords": []}
 
         seeds = db.query(Seed).filter_by(tenant_id=tenant_id, enabled=True).all()
 
-        seed_data = {
-            'domains': [],
-            'asns': [],
-            'ip_ranges': [],
-            'keywords': []
-        }
+        seed_data = {"domains": [], "asns": [], "ip_ranges": [], "keywords": []}
 
         for seed in seeds:
-            if seed.type == 'domain':
-                seed_data['domains'].append(seed.value)
-            elif seed.type == 'asn':
-                seed_data['asns'].append(seed.value)
-            elif seed.type == 'ip_range':
-                seed_data['ip_ranges'].append(seed.value)
-            elif seed.type == 'keyword':
-                seed_data['keywords'].append(seed.value)
+            if seed.type == "domain":
+                seed_data["domains"].append(seed.value)
+            elif seed.type == "asn":
+                seed_data["asns"].append(seed.value)
+            elif seed.type == "ip_range":
+                seed_data["ip_ranges"].append(seed.value)
+            elif seed.type == "keyword":
+                seed_data["keywords"].append(seed.value)
 
         logger.info(
             f"Collected seeds for tenant {tenant_id}: {len(seed_data['domains'])} domains, "
@@ -264,10 +256,10 @@ def collect_seeds(tenant_id: int):
         )
 
         # Run uncover if keywords are present and API keys configured
-        if seed_data['keywords'] and tenant.osint_api_keys:
+        if seed_data["keywords"] and tenant.osint_api_keys:
             try:
-                uncover_results = run_uncover(tenant_id, seed_data['keywords'])
-                seed_data['domains'].extend(uncover_results)
+                uncover_results = run_uncover(tenant_id, seed_data["keywords"])
+                seed_data["domains"].extend(uncover_results)
                 logger.info(f"Uncover discovered {len(uncover_results)} additional domains for tenant {tenant_id}")
             except Exception as e:
                 logger.error(f"Uncover failed for tenant {tenant_id}: {e}", exc_info=True)
@@ -275,6 +267,7 @@ def collect_seeds(tenant_id: int):
         return seed_data
     finally:
         db.close()
+
 
 def run_uncover(tenant_id: int, keywords: List[str]) -> List[str]:
     """
@@ -299,7 +292,7 @@ def run_uncover(tenant_id: int, keywords: List[str]) -> List[str]:
         with SecureToolExecutor(tenant_id) as executor:
             for keyword in keywords:
                 # Sanitize keyword - only allow alphanumeric, spaces, hyphens, underscores
-                safe_keyword = ''.join(c for c in keyword if c.isalnum() or c in ' -_')
+                safe_keyword = "".join(c for c in keyword if c.isalnum() or c in " -_")
                 if not safe_keyword:
                     logger.warning(f"Skipping invalid keyword: {keyword}")
                     continue
@@ -310,22 +303,16 @@ def run_uncover(tenant_id: int, keywords: List[str]) -> List[str]:
                 # Prevents command injection through keyword parameter
                 try:
                     returncode, stdout, stderr = executor.execute(
-                        'uncover',
-                        [
-                            '-q', f'org:"{safe_keyword}"',
-                            '-e', 'shodan,censys',
-                            '-silent'
-                        ],
-                        timeout=300
+                        "uncover", ["-q", f'org:"{safe_keyword}"', "-e", "shodan,censys", "-silent"], timeout=300
                     )
 
                     if returncode != 0:
                         logger.warning(f"Uncover returned non-zero exit code for keyword '{safe_keyword}': {stderr}")
 
                     # Parse stdout for results
-                    for line in stdout.split('\n'):
+                    for line in stdout.split("\n"):
                         line = line.strip()
-                        if line and not line.startswith('#'):
+                        if line and not line.startswith("#"):
                             results.append(line)
 
                 except ToolExecutionError as e:
@@ -336,7 +323,7 @@ def run_uncover(tenant_id: int, keywords: List[str]) -> List[str]:
         results = list(set(results))
 
         # Store raw output in MinIO
-        store_raw_output(tenant_id, 'uncover', {'keywords': keywords, 'results': results})
+        store_raw_output(tenant_id, "uncover", {"keywords": keywords, "results": results})
 
         logger.info(f"Uncover completed for tenant {tenant_id}: {len(results)} unique results")
         return results
@@ -345,7 +332,8 @@ def run_uncover(tenant_id: int, keywords: List[str]) -> List[str]:
         logger.error(f"Uncover error for tenant {tenant_id}: {e}", exc_info=True)
         return results
 
-@celery.task(name='app.tasks.discovery.run_subfinder')
+
+@celery.task(name="app.tasks.discovery.run_subfinder")
 def run_subfinder(seed_data: dict, tenant_id: int):
     """
     Run subfinder for subdomain enumeration using secure executor
@@ -359,15 +347,15 @@ def run_subfinder(seed_data: dict, tenant_id: int):
     """
     from app.utils.secure_executor import SecureToolExecutor, ToolExecutionError
 
-    if not seed_data.get('domains'):
+    if not seed_data.get("domains"):
         logger.info(f"No domains to scan for tenant {tenant_id}")
-        return {'subdomains': [], 'tenant_id': tenant_id}
+        return {"subdomains": [], "tenant_id": tenant_id}
 
     # SECURITY: Validate all domains before processing (Sprint 2 - Critical Vulnerability Fix #2)
     validator = DomainValidator()
     validated_domains = []
 
-    for domain in seed_data['domains']:
+    for domain in seed_data["domains"]:
         is_valid, error_msg = validator.validate_domain(domain)
         if is_valid:
             # Domain is already normalized to lowercase by validator
@@ -377,31 +365,27 @@ def run_subfinder(seed_data: dict, tenant_id: int):
 
     if not validated_domains:
         logger.warning(f"No valid domains after validation for Subfinder (tenant {tenant_id})")
-        return {'subdomains': [], 'tenant_id': tenant_id}
+        return {"subdomains": [], "tenant_id": tenant_id}
 
-    logger.info(f"Validated {len(validated_domains)}/{len(seed_data['domains'])} domains for Subfinder (tenant {tenant_id})")
+    logger.info(
+        f"Validated {len(validated_domains)}/{len(seed_data['domains'])} domains for Subfinder (tenant {tenant_id})"
+    )
 
     try:
         # Use secure executor with automatic cleanup
         with SecureToolExecutor(tenant_id) as executor:
             # Create input file securely with validated domains
-            domains_content = '\n'.join(validated_domains)
-            input_file = executor.create_input_file('domains.txt', domains_content)
-            output_file = 'subdomains.txt'
+            domains_content = "\n".join(validated_domains)
+            input_file = executor.create_input_file("domains.txt", domains_content)
+            output_file = "subdomains.txt"
 
             # Execute subfinder with resource limits
             logger.info(f"Running subfinder for {len(validated_domains)} validated domains (tenant {tenant_id})")
 
             returncode, stdout, stderr = executor.execute(
-                'subfinder',
-                [
-                    '-dL', input_file,
-                    '-all',
-                    '-recursive',
-                    '-silent',
-                    '-o', output_file
-                ],
-                timeout=settings.discovery_subfinder_timeout
+                "subfinder",
+                ["-dL", input_file, "-all", "-recursive", "-silent", "-o", output_file],
+                timeout=settings.discovery_subfinder_timeout,
             )
 
             if returncode != 0:
@@ -409,32 +393,27 @@ def run_subfinder(seed_data: dict, tenant_id: int):
 
             # Read results securely
             output_content = executor.read_output_file(output_file)
-            subdomains = [line.strip() for line in output_content.split('\n') if line.strip()]
+            subdomains = [line.strip() for line in output_content.split("\n") if line.strip()]
 
             logger.info(f"Subfinder found {len(subdomains)} subdomains (tenant {tenant_id})")
 
             # Store raw output (non-blocking)
             try:
-                store_raw_output(tenant_id, 'subfinder', {
-                    'input_domains': validated_domains,
-                    'subdomains': subdomains
-                })
+                store_raw_output(tenant_id, "subfinder", {"input_domains": validated_domains, "subdomains": subdomains})
             except Exception as e:
                 logger.warning(f"Failed to store subfinder raw output (tenant {tenant_id}): {e}")
 
-            return {
-                'subdomains': subdomains,
-                'tenant_id': tenant_id
-            }
+            return {"subdomains": subdomains, "tenant_id": tenant_id}
 
     except ToolExecutionError as e:
         logger.error(f"Subfinder execution error (tenant {tenant_id}): {e}", exc_info=True)
-        return {'subdomains': [], 'tenant_id': tenant_id, 'error': str(e)}
+        return {"subdomains": [], "tenant_id": tenant_id, "error": str(e)}
     except Exception as e:
         logger.error(f"Subfinder unexpected error (tenant {tenant_id}): {e}", exc_info=True)
-        return {'subdomains': [], 'tenant_id': tenant_id, 'error': str(e)}
+        return {"subdomains": [], "tenant_id": tenant_id, "error": str(e)}
 
-@celery.task(name='app.tasks.discovery.run_amass')
+
+@celery.task(name="app.tasks.discovery.run_amass")
 def run_amass(seed_data: dict, tenant_id: int):
     """
     Run OWASP Amass for comprehensive subdomain enumeration using secure executor
@@ -454,20 +433,20 @@ def run_amass(seed_data: dict, tenant_id: int):
     """
     from app.utils.secure_executor import SecureToolExecutor, ToolExecutionError
 
-    if not seed_data.get('domains'):
+    if not seed_data.get("domains"):
         logger.info(f"No domains to scan with Amass for tenant {tenant_id}")
-        return {'subdomains': [], 'tenant_id': tenant_id, 'source': 'amass'}
+        return {"subdomains": [], "tenant_id": tenant_id, "source": "amass"}
 
     # Check if Amass is enabled
     if not settings.discovery_amass_enabled:
         logger.info(f"Amass is disabled, skipping (tenant {tenant_id})")
-        return {'subdomains': [], 'tenant_id': tenant_id, 'source': 'amass', 'skipped': True}
+        return {"subdomains": [], "tenant_id": tenant_id, "source": "amass", "skipped": True}
 
     # SECURITY: Validate all domains before processing (Sprint 2 - Critical Vulnerability Fix #2)
     validator = DomainValidator()
     validated_domains = []
 
-    for domain in seed_data['domains']:
+    for domain in seed_data["domains"]:
         is_valid, error_msg = validator.validate_domain(domain)
         if is_valid:
             # Domain is already normalized to lowercase by validator
@@ -477,9 +456,11 @@ def run_amass(seed_data: dict, tenant_id: int):
 
     if not validated_domains:
         logger.warning(f"No valid domains after validation for Amass (tenant {tenant_id})")
-        return {'subdomains': [], 'tenant_id': tenant_id, 'source': 'amass'}
+        return {"subdomains": [], "tenant_id": tenant_id, "source": "amass"}
 
-    logger.info(f"Validated {len(validated_domains)}/{len(seed_data['domains'])} domains for Amass (tenant {tenant_id})")
+    logger.info(
+        f"Validated {len(validated_domains)}/{len(seed_data['domains'])} domains for Amass (tenant {tenant_id})"
+    )
 
     try:
         with SecureToolExecutor(tenant_id) as executor:
@@ -487,7 +468,7 @@ def run_amass(seed_data: dict, tenant_id: int):
 
             # Run Amass for each domain (Amass works best with single domain at a time)
             for domain in validated_domains:
-                output_file = f'amass_{domain}.json'
+                output_file = f"amass_{domain}.json"
 
                 logger.info(f"Running Amass for domain: {domain} (tenant {tenant_id})")
 
@@ -495,14 +476,16 @@ def run_amass(seed_data: dict, tenant_id: int):
                 # Passive mode is faster and doesn't generate traffic to target
                 # Amass v4 outputs text to stdout (no -json flag in v4)
                 returncode, stdout, stderr = executor.execute(
-                    'amass',
+                    "amass",
                     [
-                        'enum',
-                        '-passive',  # Passive enumeration only
-                        '-d', domain,
-                        '-timeout', '60'  # 60 second timeout
+                        "enum",
+                        "-passive",  # Passive enumeration only
+                        "-d",
+                        domain,
+                        "-timeout",
+                        "60",  # 60 second timeout
                     ],
-                    timeout=settings.discovery_amass_timeout
+                    timeout=settings.discovery_amass_timeout,
                 )
 
                 if returncode != 0:
@@ -511,15 +494,15 @@ def run_amass(seed_data: dict, tenant_id: int):
                 # Parse text output from stdout (Amass v4 format: "subdomain (FQDN) --> record --> ...")
                 # Extract FQDNs from lines like: "www.example.com (FQDN) --> cname_record --> ..."
                 try:
-                    for line in stdout.strip().split('\n'):
-                        if not line.strip() or '(FQDN)' not in line:
+                    for line in stdout.strip().split("\n"):
+                        if not line.strip() or "(FQDN)" not in line:
                             continue
 
                         # Extract the FQDN before " (FQDN)"
                         try:
-                            fqdn = line.split(' (FQDN)')[0].strip()
+                            fqdn = line.split(" (FQDN)")[0].strip()
                             # Validate it's actually a subdomain of our target domain
-                            if fqdn and (fqdn.endswith(f'.{domain}') or fqdn == domain):
+                            if fqdn and (fqdn.endswith(f".{domain}") or fqdn == domain):
                                 all_subdomains.append(fqdn)
                         except Exception as pe:
                             logger.debug(f"Failed to parse Amass line: {line[:100]}")
@@ -535,29 +518,30 @@ def run_amass(seed_data: dict, tenant_id: int):
 
             # Store raw output (non-blocking)
             try:
-                store_raw_output(tenant_id, 'amass', {
-                    'input_domains': validated_domains,
-                    'subdomains': unique_subdomains,
-                    'total_found': len(all_subdomains),
-                    'unique_found': len(unique_subdomains)
-                })
+                store_raw_output(
+                    tenant_id,
+                    "amass",
+                    {
+                        "input_domains": validated_domains,
+                        "subdomains": unique_subdomains,
+                        "total_found": len(all_subdomains),
+                        "unique_found": len(unique_subdomains),
+                    },
+                )
             except Exception as e:
                 logger.warning(f"Failed to store amass raw output (tenant {tenant_id}): {e}")
 
-            return {
-                'subdomains': unique_subdomains,
-                'tenant_id': tenant_id,
-                'source': 'amass'
-            }
+            return {"subdomains": unique_subdomains, "tenant_id": tenant_id, "source": "amass"}
 
     except ToolExecutionError as e:
         logger.error(f"Amass execution error (tenant {tenant_id}): {e}", exc_info=True)
-        return {'subdomains': [], 'tenant_id': tenant_id, 'source': 'amass', 'error': str(e)}
+        return {"subdomains": [], "tenant_id": tenant_id, "source": "amass", "error": str(e)}
     except Exception as e:
         logger.error(f"Amass unexpected error (tenant {tenant_id}): {e}", exc_info=True)
-        return {'subdomains': [], 'tenant_id': tenant_id, 'source': 'amass', 'error': str(e)}
+        return {"subdomains": [], "tenant_id": tenant_id, "source": "amass", "error": str(e)}
 
-@celery.task(name='app.tasks.discovery.merge_discovery_results')
+
+@celery.task(name="app.tasks.discovery.merge_discovery_results")
 def merge_discovery_results(subfinder_result: dict, amass_result: dict, tenant_id: int):
     """
     Merge results from Subfinder and Amass, removing duplicates
@@ -573,8 +557,8 @@ def merge_discovery_results(subfinder_result: dict, amass_result: dict, tenant_i
     Returns:
         Dict with merged subdomains and statistics
     """
-    subfinder_subs = set(subfinder_result.get('subdomains', []))
-    amass_subs = set(amass_result.get('subdomains', []))
+    subfinder_subs = set(subfinder_result.get("subdomains", []))
+    amass_subs = set(amass_result.get("subdomains", []))
 
     # Merge and deduplicate
     all_subdomains = list(subfinder_subs | amass_subs)
@@ -596,31 +580,38 @@ def merge_discovery_results(subfinder_result: dict, amass_result: dict, tenant_i
 
     # Store merge statistics (non-blocking - S3 errors won't crash pipeline)
     try:
-        store_raw_output(tenant_id, 'discovery_merge', {
-            'subfinder_count': len(subfinder_subs),
-            'amass_count': len(amass_subs),
-            'total_unique': len(all_subdomains),
-            'overlap_count': len(overlap),
-            'unique_to_subfinder': len(unique_to_subfinder),
-            'unique_to_amass': len(unique_to_amass),
-            'coverage_improvement': round((len(unique_to_amass) / len(subfinder_subs) * 100) if subfinder_subs else 0, 2)
-        })
+        store_raw_output(
+            tenant_id,
+            "discovery_merge",
+            {
+                "subfinder_count": len(subfinder_subs),
+                "amass_count": len(amass_subs),
+                "total_unique": len(all_subdomains),
+                "overlap_count": len(overlap),
+                "unique_to_subfinder": len(unique_to_subfinder),
+                "unique_to_amass": len(unique_to_amass),
+                "coverage_improvement": round(
+                    (len(unique_to_amass) / len(subfinder_subs) * 100) if subfinder_subs else 0, 2
+                ),
+            },
+        )
     except Exception as e:
         logger.warning(f"Failed to store raw output for merge (tenant {tenant_id}): {e}")
 
     return {
-        'subdomains': all_subdomains,
-        'tenant_id': tenant_id,
-        'stats': {
-            'subfinder': len(subfinder_subs),
-            'amass': len(amass_subs),
-            'total': len(all_subdomains),
-            'overlap': len(overlap),
-            'unique_to_amass': len(unique_to_amass)
-        }
+        "subdomains": all_subdomains,
+        "tenant_id": tenant_id,
+        "stats": {
+            "subfinder": len(subfinder_subs),
+            "amass": len(amass_subs),
+            "total": len(all_subdomains),
+            "overlap": len(overlap),
+            "unique_to_amass": len(unique_to_amass),
+        },
     }
 
-@celery.task(name='app.tasks.discovery.merge_discovery_results_task')
+
+@celery.task(name="app.tasks.discovery.merge_discovery_results_task")
 def merge_discovery_results_task(results: list, tenant_id: int):
     """
     Celery task wrapper for merge_discovery_results
@@ -636,13 +627,14 @@ def merge_discovery_results_task(results: list, tenant_id: int):
         Merged discovery results
     """
     # Extract results from the list
-    subfinder_result = results[0] if len(results) > 0 else {'subdomains': []}
-    amass_result = results[1] if len(results) > 1 else {'subdomains': []}
+    subfinder_result = results[0] if len(results) > 0 else {"subdomains": []}
+    amass_result = results[1] if len(results) > 1 else {"subdomains": []}
 
     # Call the merge function
     return merge_discovery_results(subfinder_result, amass_result, tenant_id)
 
-@celery.task(name='app.tasks.discovery.run_dnsx')
+
+@celery.task(name="app.tasks.discovery.run_dnsx")
 def run_dnsx(subfinder_result: dict, tenant_id: int):
     """
     Run dnsx for DNS resolution using secure executor
@@ -656,34 +648,41 @@ def run_dnsx(subfinder_result: dict, tenant_id: int):
     """
     from app.utils.secure_executor import SecureToolExecutor, ToolExecutionError
 
-    subdomains = subfinder_result.get('subdomains', [])
+    subdomains = subfinder_result.get("subdomains", [])
 
     if not subdomains:
         logger.info(f"No subdomains to resolve for tenant {tenant_id}")
-        return {'resolved': [], 'tenant_id': tenant_id}
+        return {"resolved": [], "tenant_id": tenant_id}
 
     try:
         # Use secure executor with automatic cleanup
         with SecureToolExecutor(tenant_id) as executor:
             # Create input file securely
-            subdomains_content = '\n'.join(subdomains)
-            input_file = executor.create_input_file('subdomains.txt', subdomains_content)
-            output_file = 'dnsx_results.json'
+            subdomains_content = "\n".join(subdomains)
+            input_file = executor.create_input_file("subdomains.txt", subdomains_content)
+            output_file = "dnsx_results.json"
 
             # Execute dnsx with resource limits
             logger.info(f"Running dnsx for {len(subdomains)} subdomains (tenant {tenant_id})")
 
             returncode, stdout, stderr = executor.execute(
-                'dnsx',
+                "dnsx",
                 [
-                    '-l', input_file,
-                    '-a', '-aaaa', '-cname', '-mx', '-ns', '-txt',
-                    '-resp',
-                    '-json',
-                    '-silent',
-                    '-o', output_file
+                    "-l",
+                    input_file,
+                    "-a",
+                    "-aaaa",
+                    "-cname",
+                    "-mx",
+                    "-ns",
+                    "-txt",
+                    "-resp",
+                    "-json",
+                    "-silent",
+                    "-o",
+                    output_file,
                 ],
-                timeout=settings.discovery_dnsx_timeout
+                timeout=settings.discovery_dnsx_timeout,
             )
 
             if returncode != 0:
@@ -693,7 +692,7 @@ def run_dnsx(subfinder_result: dict, tenant_id: int):
             output_content = executor.read_output_file(output_file)
             resolved_records = []
 
-            for line in output_content.split('\n'):
+            for line in output_content.split("\n"):
                 line = line.strip()
                 if line:
                     try:
@@ -705,21 +704,19 @@ def run_dnsx(subfinder_result: dict, tenant_id: int):
 
             # Store raw output (non-blocking)
             try:
-                store_raw_output(tenant_id, 'dnsx', resolved_records)
+                store_raw_output(tenant_id, "dnsx", resolved_records)
             except Exception as e:
                 logger.warning(f"Failed to store dnsx raw output (tenant {tenant_id}): {e}")
 
-            return {
-                'resolved': resolved_records,
-                'tenant_id': tenant_id
-            }
+            return {"resolved": resolved_records, "tenant_id": tenant_id}
 
     except ToolExecutionError as e:
         logger.error(f"Dnsx execution error (tenant {tenant_id}): {e}", exc_info=True)
-        return {'resolved': [], 'tenant_id': tenant_id, 'error': str(e)}
+        return {"resolved": [], "tenant_id": tenant_id, "error": str(e)}
     except Exception as e:
         logger.error(f"Dnsx unexpected error (tenant {tenant_id}): {e}", exc_info=True)
-        return {'resolved': [], 'tenant_id': tenant_id, 'error': str(e)}
+        return {"resolved": [], "tenant_id": tenant_id, "error": str(e)}
+
 
 def run_dnsx_for_assets(tenant_id: int, assets: list) -> Dict:
     """
@@ -740,45 +737,38 @@ def run_dnsx_for_assets(tenant_id: int, assets: list) -> Dict:
         # Use secure executor with automatic cleanup
         with SecureToolExecutor(tenant_id) as executor:
             # Create input file securely
-            hosts_content = '\n'.join(identifiers)
-            input_file = executor.create_input_file('critical_assets.txt', hosts_content)
-            output_file = 'quick_dnsx.json'
+            hosts_content = "\n".join(identifiers)
+            input_file = executor.create_input_file("critical_assets.txt", hosts_content)
+            output_file = "quick_dnsx.json"
 
             logger.debug(f"Running quick dnsx check for {len(identifiers)} assets (tenant {tenant_id})")
 
             returncode, stdout, stderr = executor.execute(
-                'dnsx',
-                [
-                    '-l', input_file,
-                    '-a', '-resp',
-                    '-json',
-                    '-silent',
-                    '-o', output_file
-                ],
-                timeout=300
+                "dnsx", ["-l", input_file, "-a", "-resp", "-json", "-silent", "-o", output_file], timeout=300
             )
 
             # Read results securely
             output_content = executor.read_output_file(output_file)
             resolved_records = []
 
-            for line in output_content.split('\n'):
+            for line in output_content.split("\n"):
                 if line.strip():
                     try:
                         resolved_records.append(json.loads(line))
                     except json.JSONDecodeError:
                         pass
 
-            return {'resolved': resolved_records}
+            return {"resolved": resolved_records}
 
     except ToolExecutionError as e:
         logger.error(f"Quick dnsx check failed for tenant {tenant_id}: {e}")
-        return {'resolved': []}
+        return {"resolved": []}
     except Exception as e:
         logger.error(f"Quick dnsx check failed for tenant {tenant_id}: {e}")
-        return {'resolved': []}
+        return {"resolved": []}
 
-@celery.task(name='app.tasks.discovery.process_discovery_results')
+
+@celery.task(name="app.tasks.discovery.process_discovery_results")
 def process_discovery_results(dnsx_result: dict, tenant_id: int):
     """
     Process discovery results with batch operations for performance
@@ -801,7 +791,7 @@ def process_discovery_results(dnsx_result: dict, tenant_id: int):
     db = SessionLocal()
 
     try:
-        resolved = dnsx_result.get('resolved', [])
+        resolved = dnsx_result.get("resolved", [])
         logger.info(f"Processing {len(resolved)} resolved records for tenant {tenant_id} in batches of {BATCH_SIZE}")
 
         asset_repo = AssetRepository(db)
@@ -813,7 +803,7 @@ def process_discovery_results(dnsx_result: dict, tenant_id: int):
 
         # Process in batches to avoid long transactions
         for i in range(0, len(resolved), BATCH_SIZE):
-            batch = resolved[i:i + BATCH_SIZE]
+            batch = resolved[i : i + BATCH_SIZE]
             batch_num = i // BATCH_SIZE + 1
             total_batches = (len(resolved) + BATCH_SIZE - 1) // BATCH_SIZE
             logger.debug(f"Processing batch {batch_num}/{total_batches} for tenant {tenant_id}")
@@ -821,7 +811,7 @@ def process_discovery_results(dnsx_result: dict, tenant_id: int):
             # Prepare batch data
             assets_data = []
             for record in batch:
-                host = record.get('host')
+                host = record.get("host")
                 if not host:
                     continue
 
@@ -829,37 +819,33 @@ def process_discovery_results(dnsx_result: dict, tenant_id: int):
                 asset_type = AssetType.SUBDOMAIN
 
                 # Check if it's an IP
-                if all(c.isdigit() or c == '.' for c in host):
+                if all(c.isdigit() or c == "." for c in host):
                     asset_type = AssetType.IP
                 # Check if it's a domain (no subdomain parts)
-                elif host.count('.') == 1:
+                elif host.count(".") == 1:
                     asset_type = AssetType.DOMAIN
 
-                assets_data.append({
-                    'identifier': host,
-                    'type': asset_type,
-                    'raw_metadata': json.dumps(record)
-                })
+                assets_data.append({"identifier": host, "type": asset_type, "raw_metadata": json.dumps(record)})
 
             # Bulk upsert assets
             result = asset_repo.bulk_upsert(tenant_id, assets_data)
-            total_created += result['created']
+            total_created += result["created"]
 
             # OPTIMIZATION: Fetch all assets in this batch with a single query instead of N queries
             # This eliminates the N+1 query problem - 1 query per batch instead of 1 query per asset
             identifiers_by_type = {}
             for data in assets_data:
-                key = data['type']
+                key = data["type"]
                 if key not in identifiers_by_type:
                     identifiers_by_type[key] = []
-                identifiers_by_type[key].append(data['identifier'])
+                identifiers_by_type[key].append(data["identifier"])
 
             # Bulk fetch all assets for this batch using a single query with IN clause
             asset_lookup = asset_repo.get_by_identifiers_bulk(tenant_id, identifiers_by_type)
 
             # Now check which assets are new and create events
             for data in assets_data:
-                lookup_key = (data['identifier'], data['type'])
+                lookup_key = (data["identifier"], data["type"])
                 asset = asset_lookup.get(lookup_key)
 
                 if asset:
@@ -867,11 +853,9 @@ def process_discovery_results(dnsx_result: dict, tenant_id: int):
                     if asset.first_seen and asset.last_seen:
                         time_diff = (asset.last_seen - asset.first_seen).total_seconds()
                         if time_diff < 2:  # Newly created
-                            new_asset_events.append(Event(
-                                asset_id=asset.id,
-                                kind=EventKind.NEW_ASSET,
-                                payload=data['raw_metadata']
-                            ))
+                            new_asset_events.append(
+                                Event(asset_id=asset.id, kind=EventKind.NEW_ASSET, payload=data["raw_metadata"])
+                            )
 
         # Batch create events for new assets
         if new_asset_events:
@@ -882,11 +866,11 @@ def process_discovery_results(dnsx_result: dict, tenant_id: int):
         logger.info(f"Discovery complete: ~{total_created} assets processed (tenant {tenant_id})")
 
         return {
-            'assets_processed': total_created,
-            'new_asset_events': len(new_asset_events),
-            'total_resolved': len(resolved),
-            'tenant_id': tenant_id,
-            'batches_processed': (len(resolved) + BATCH_SIZE - 1) // BATCH_SIZE
+            "assets_processed": total_created,
+            "new_asset_events": len(new_asset_events),
+            "total_resolved": len(resolved),
+            "tenant_id": tenant_id,
+            "batches_processed": (len(resolved) + BATCH_SIZE - 1) // BATCH_SIZE,
         }
 
     except Exception as e:

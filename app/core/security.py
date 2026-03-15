@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 pwd_context = CryptContext(
     schemes=["bcrypt"],
     deprecated="auto",
-    bcrypt__rounds=12  # Cost factor for bcrypt (higher = slower but more secure)
+    bcrypt__rounds=12,  # Cost factor for bcrypt (higher = slower but more secure)
 )
 
 
@@ -55,7 +55,7 @@ class SecurityKeys:
         self.public_key = None
         self.secret_key = None
 
-        if self.algorithm.startswith('RS'):
+        if self.algorithm.startswith("RS"):
             # RSA keys for production (asymmetric)
             self._load_or_generate_rsa_keys()
         else:
@@ -73,15 +73,10 @@ class SecurityKeys:
                 passphrase = settings.jwt_private_key_passphrase
                 with open(private_key_path, "rb") as f:
                     self.private_key = serialization.load_pem_private_key(
-                        f.read(),
-                        password=passphrase.encode() if passphrase else None,
-                        backend=default_backend()
+                        f.read(), password=passphrase.encode() if passphrase else None, backend=default_backend()
                     )
                 with open(public_key_path, "rb") as f:
-                    self.public_key = serialization.load_pem_public_key(
-                        f.read(),
-                        backend=default_backend()
-                    )
+                    self.public_key = serialization.load_pem_public_key(f.read(), backend=default_backend())
                 logger.info("Loaded RSA keys from disk")
                 # Warn if key files have overly permissive permissions
                 self._check_key_permissions(private_key_path, public_key_path)
@@ -105,11 +100,7 @@ class SecurityKeys:
     def _generate_rsa_keys(self, private_path: Path, public_path: Path):
         """Generate new RSA key pair"""
         # Generate private key
-        private_key = rsa.generate_private_key(
-            public_exponent=65537,
-            key_size=2048,
-            backend=default_backend()
-        )
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
 
         # Generate public key
         public_key = private_key.public_key()
@@ -119,22 +110,23 @@ class SecurityKeys:
 
         passphrase = settings.jwt_private_key_passphrase
         enc_algo = (
-            serialization.BestAvailableEncryption(passphrase.encode())
-            if passphrase
-            else serialization.NoEncryption()
+            serialization.BestAvailableEncryption(passphrase.encode()) if passphrase else serialization.NoEncryption()
         )
         with open(private_path, "wb") as f:
-            f.write(private_key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=enc_algo,
-            ))
+            f.write(
+                private_key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=enc_algo,
+                )
+            )
 
         with open(public_path, "wb") as f:
-            f.write(public_key.public_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PublicFormat.SubjectPublicKeyInfo
-            ))
+            f.write(
+                public_key.public_bytes(
+                    encoding=serialization.Encoding.PEM, format=serialization.PublicFormat.SubjectPublicKeyInfo
+                )
+            )
 
         # Set restrictive permissions on generated key files
         os.chmod(private_path, 0o600)
@@ -151,24 +143,26 @@ class SecurityKeys:
         if priv_mode & 0o077:
             logger.warning(
                 "RSA private key %s has permissive mode %03o — should be 600",
-                private_path, priv_mode,
+                private_path,
+                priv_mode,
             )
         pub_mode = os.stat(public_path).st_mode & 0o777
         if pub_mode & 0o002:
             logger.warning(
                 "RSA public key %s is world-writable (mode %03o) — should be 644",
-                public_path, pub_mode,
+                public_path,
+                pub_mode,
             )
 
     def get_signing_key(self):
         """Get key for signing JWTs"""
-        if self.algorithm.startswith('RS'):
+        if self.algorithm.startswith("RS"):
             return self.private_key
         return self.secret_key
 
     def get_verification_key(self):
         """Get key for verifying JWTs"""
-        if self.algorithm.startswith('RS'):
+        if self.algorithm.startswith("RS"):
             return self.public_key
         return self.secret_key
 
@@ -186,13 +180,14 @@ def get_redis_client() -> redis.Redis:
         password=settings.redis_password,
         decode_responses=True,
         socket_connect_timeout=2,
-        socket_timeout=2
+        socket_timeout=2,
     )
 
 
 # ===========================
 # Password Security Functions
 # ===========================
+
 
 def hash_password(password: str) -> str:
     """
@@ -243,6 +238,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 # ===========================
 # API Key Functions
 # ===========================
+
 
 def generate_api_key(prefix: str = "easm") -> Tuple[str, str]:
     """
@@ -313,6 +309,7 @@ def generate_api_key_simple(length: int = 32) -> str:
 # Cryptographic Utilities
 # ===========================
 
+
 def constant_time_compare(a: str, b: str) -> bool:
     """
     Constant-time string comparison
@@ -370,6 +367,7 @@ def hash_token(token: str) -> str:
 # ===========================
 # Initialization
 # ===========================
+
 
 def initialize_security():
     """

@@ -13,9 +13,9 @@ from .jwt_auth import JWTManager, get_current_user, require_permission
 # from .multitenancy import TenantIsolation, get_tenant_context  # Module not yet implemented
 
 __all__ = [
-    'JWTManager',
-    'get_current_user',
-    'require_permission',
+    "JWTManager",
+    "get_current_user",
+    "require_permission",
     # 'APISecurityMiddleware',
     # 'setup_security',
     # 'TenantIsolation',

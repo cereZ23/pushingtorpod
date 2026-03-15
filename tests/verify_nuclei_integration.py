@@ -13,18 +13,22 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+
 def test_imports():
     """Test that all Nuclei-related modules import correctly"""
     print("Testing module imports...")
 
     try:
         from app.services.scanning.nuclei_service import NucleiService, calculate_risk_score_from_findings
+
         print("  ✅ nuclei_service imports successfully")
 
         from app.services.scanning.template_manager import TemplateManager, template_manager
+
         print("  ✅ template_manager imports successfully")
 
         from app.services.scanning.suppression_service import SuppressionService, COMMON_SUPPRESSIONS
+
         print("  ✅ suppression_service imports successfully")
 
         from app.tasks.scanning import (
@@ -32,11 +36,13 @@ def test_imports():
             scan_single_asset,
             scan_critical_assets,
             update_nuclei_templates,
-            update_asset_risk_scores
+            update_asset_risk_scores,
         )
+
         print("  ✅ scanning tasks import successfully")
 
         from app.repositories.finding_repository import FindingRepository
+
         print("  ✅ finding_repository imports successfully")
 
         return True
@@ -55,13 +61,13 @@ def test_nuclei_service_structure():
     service = NucleiService(tenant_id=1)
 
     required_methods = [
-        'scan_urls',
-        'scan_asset',
-        'parse_nuclei_result',
-        '_validate_urls',
-        '_build_nuclei_args',
-        '_parse_nuclei_output',
-        '_calculate_stats'
+        "scan_urls",
+        "scan_asset",
+        "parse_nuclei_result",
+        "_validate_urls",
+        "_build_nuclei_args",
+        "_parse_nuclei_output",
+        "_calculate_stats",
     ]
 
     for method in required_methods:
@@ -83,13 +89,13 @@ def test_template_manager_structure():
     manager = TemplateManager()
 
     required_methods = [
-        'list_templates',
-        'update_templates',
-        'get_template_info',
-        'validate_template',
-        'get_categories',
-        'get_recommended_templates',
-        'get_template_stats'
+        "list_templates",
+        "update_templates",
+        "get_template_info",
+        "validate_template",
+        "get_categories",
+        "get_recommended_templates",
+        "get_template_stats",
     ]
 
     for method in required_methods:
@@ -101,7 +107,7 @@ def test_template_manager_structure():
 
     # Test categories
     categories = manager.get_categories()
-    expected_categories = ['cves', 'exposed-panels', 'misconfigurations']
+    expected_categories = ["cves", "exposed-panels", "misconfigurations"]
 
     for cat in expected_categories:
         if cat in categories:
@@ -121,12 +127,12 @@ def test_suppression_service_structure():
 
     # Can't instantiate without DB, but can check class structure
     required_methods = [
-        'should_suppress',
-        'create_suppression',
-        'update_suppression',
-        'delete_suppression',
-        'list_suppressions',
-        'filter_findings'
+        "should_suppress",
+        "create_suppression",
+        "update_suppression",
+        "delete_suppression",
+        "list_suppressions",
+        "filter_findings",
     ]
 
     for method in required_methods:
@@ -149,23 +155,22 @@ def test_risk_scoring():
     test_cases = [
         # (findings, expected_score)
         ([], 0.0),
-        ([{'severity': 'critical'}], 3.0),
-        ([{'severity': 'high'}], 2.0),
-        ([{'severity': 'medium'}], 1.0),
-        ([{'severity': 'low'}], 0.5),
-        ([{'severity': 'info'}], 0.1),
-        ([
-            {'severity': 'critical'},
-            {'severity': 'high'},
-            {'severity': 'medium'}
-        ], 6.0),
-        ([
-            {'severity': 'critical'},
-            {'severity': 'critical'},
-            {'severity': 'critical'},
-            {'severity': 'high'},
-            {'severity': 'high'}
-        ], 10.0),  # Should cap at 10.0
+        ([{"severity": "critical"}], 3.0),
+        ([{"severity": "high"}], 2.0),
+        ([{"severity": "medium"}], 1.0),
+        ([{"severity": "low"}], 0.5),
+        ([{"severity": "info"}], 0.1),
+        ([{"severity": "critical"}, {"severity": "high"}, {"severity": "medium"}], 6.0),
+        (
+            [
+                {"severity": "critical"},
+                {"severity": "critical"},
+                {"severity": "critical"},
+                {"severity": "high"},
+                {"severity": "high"},
+            ],
+            10.0,
+        ),  # Should cap at 10.0
     ]
 
     all_passed = True
@@ -200,14 +205,14 @@ def test_nuclei_result_parsing():
             "classification": {
                 "cvss-metrics": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H",
                 "cvss-score": 10.0,
-                "cve-id": ["CVE-2021-44228"]
-            }
+                "cve-id": ["CVE-2021-44228"],
+            },
         },
         "matcher-name": "version-check",
         "type": "http",
         "host": "https://example.com",
         "matched-at": "https://example.com/api/login",
-        "timestamp": "2024-01-01T12:00:00Z"
+        "timestamp": "2024-01-01T12:00:00Z",
     }
 
     finding = service.parse_nuclei_result(sample_result)
@@ -218,14 +223,14 @@ def test_nuclei_result_parsing():
 
     # Validate parsed fields
     checks = [
-        (finding['template_id'] == "CVE-2021-44228", "template_id"),
-        (finding['name'] == "Apache Log4j RCE", "name"),
-        (finding['severity'] == "critical", "severity"),
-        (finding['cvss_score'] == 10.0, "cvss_score"),
-        (finding['cve_id'] == "CVE-2021-44228", "cve_id"),
-        (finding['matched_at'] == "https://example.com/api/login", "matched_at"),
-        (finding['host'] == "example.com", "host"),
-        (finding['source'] == "nuclei", "source"),
+        (finding["template_id"] == "CVE-2021-44228", "template_id"),
+        (finding["name"] == "Apache Log4j RCE", "name"),
+        (finding["severity"] == "critical", "severity"),
+        (finding["cvss_score"] == 10.0, "cvss_score"),
+        (finding["cve_id"] == "CVE-2021-44228", "cve_id"),
+        (finding["matched_at"] == "https://example.com/api/login", "matched_at"),
+        (finding["host"] == "example.com", "host"),
+        (finding["source"] == "nuclei", "source"),
     ]
 
     all_passed = True
@@ -247,7 +252,7 @@ def test_config():
 
     checks = [
         (settings.feature_nuclei_enabled, "feature_nuclei_enabled"),
-        ('nuclei' in settings.tool_allowed_tools, "nuclei in allowed_tools"),
+        ("nuclei" in settings.tool_allowed_tools, "nuclei in allowed_tools"),
         (settings.discovery_nuclei_timeout > 0, "nuclei_timeout configured"),
     ]
 
@@ -285,6 +290,7 @@ def main():
         except Exception as e:
             print(f"\n❌ {name} test raised exception: {e}")
             import traceback
+
             traceback.print_exc()
             results[name] = False
 

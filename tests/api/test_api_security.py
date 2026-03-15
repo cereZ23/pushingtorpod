@@ -5,6 +5,7 @@ Tests for API security including authentication, authorization, input validation
 and protection against common attacks.
 Total: 10 tests
 """
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -16,14 +17,13 @@ class TestAPISecurity:
     def test_jwt_tampering_detected(self, api_client, test_user):
         """Test that tampered JWT tokens are rejected"""
         # Get valid token
-        login_response = api_client.post("/api/v1/auth/login", json={
-            "username": test_user.username,
-            "password": "testpass123"
-        })
+        login_response = api_client.post(
+            "/api/v1/auth/login", json={"username": test_user.username, "password": "testpass123"}
+        )
         valid_token = login_response.json()["access_token"]
 
         # Tamper with token (change last character)
-        tampered_token = valid_token[:-1] + ('A' if valid_token[-1] != 'A' else 'B')
+        tampered_token = valid_token[:-1] + ("A" if valid_token[-1] != "A" else "B")
 
         # Try to use tampered token
         api_client.headers = {"Authorization": f"Bearer {tampered_token}"}
@@ -54,10 +54,7 @@ class TestAPISecurity:
 
         for payload in sql_injection_payloads:
             # Try SQL injection in search parameter
-            response = authenticated_client.get(
-                f"/api/v1/tenants/{test_tenant.id}/assets",
-                params={"search": payload}
-            )
+            response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/assets", params={"search": payload})
 
             # Should either sanitize input or return safe error
             assert response.status_code in [200, 400, 422]
@@ -82,11 +79,7 @@ class TestAPISecurity:
         for payload in xss_payloads:
             # Try to create seed with XSS payload
             response = authenticated_client.post(
-                f"/api/v1/tenants/{test_tenant.id}/seeds",
-                json={
-                    "type": "domain",
-                    "identifier": payload
-                }
+                f"/api/v1/tenants/{test_tenant.id}/seeds", json={"type": "domain", "identifier": payload}
             )
 
             # Should reject invalid input
@@ -113,10 +106,7 @@ class TestAPISecurity:
         ]
 
         for payload in ssrf_payloads:
-            response = authenticated_client.post(
-                f"/api/v1/tenants/{test_tenant.id}/seeds",
-                json=payload
-            )
+            response = authenticated_client.post(f"/api/v1/tenants/{test_tenant.id}/seeds", json=payload)
 
             # Should reject internal/private IPs and hostnames
             assert response.status_code in [400, 422]
@@ -126,10 +116,9 @@ class TestAPISecurity:
     def test_rate_limiting_enforced(self, api_client, test_user):
         """Test rate limiting is enforced on API endpoints"""
         # Login
-        login_response = api_client.post("/api/v1/auth/login", json={
-            "username": test_user.username,
-            "password": "testpass123"
-        })
+        login_response = api_client.post(
+            "/api/v1/auth/login", json={"username": test_user.username, "password": "testpass123"}
+        )
         token = login_response.json()["access_token"]
         api_client.headers = {"Authorization": f"Bearer {token}"}
 
@@ -196,33 +185,23 @@ class TestAPISecurity:
         # User authenticated for test_tenant tries to access other_tenant resources
 
         # Test 1: List other tenant's assets
-        response1 = authenticated_client.get(
-            f"/api/v1/tenants/{other_tenant.id}/assets"
-        )
+        response1 = authenticated_client.get(f"/api/v1/tenants/{other_tenant.id}/assets")
         assert response1.status_code in [403, 404]
 
         # Test 2: Get specific asset from other tenant
         if other_tenant_assets:
             other_asset_id = other_tenant_assets[0].id
-            response2 = authenticated_client.get(
-                f"/api/v1/tenants/{other_tenant.id}/assets/{other_asset_id}"
-            )
+            response2 = authenticated_client.get(f"/api/v1/tenants/{other_tenant.id}/assets/{other_asset_id}")
             assert response2.status_code in [403, 404]
 
         # Test 3: Try to create seed for other tenant
         response3 = authenticated_client.post(
-            f"/api/v1/tenants/{other_tenant.id}/seeds",
-            json={
-                "type": "domain",
-                "identifier": "malicious.example.com"
-            }
+            f"/api/v1/tenants/{other_tenant.id}/seeds", json={"type": "domain", "identifier": "malicious.example.com"}
         )
         assert response3.status_code in [403, 404]
 
         # Test 4: Try to access other tenant's findings
-        response4 = authenticated_client.get(
-            f"/api/v1/tenants/{other_tenant.id}/findings"
-        )
+        response4 = authenticated_client.get(f"/api/v1/tenants/{other_tenant.id}/findings")
         assert response4.status_code in [403, 404]
 
     def test_unauthorized_access_blocked(self, api_client, test_tenant):
@@ -247,6 +226,7 @@ class TestAPISecurity:
 
 # ==================== Fixtures ====================
 
+
 @pytest.fixture
 def expired_token():
     """Generate an expired JWT token"""
@@ -255,9 +235,5 @@ def expired_token():
     from app.config import get_settings
 
     settings = get_settings()
-    payload = {
-        "sub": "testuser",
-        "exp": datetime.now(timezone.utc) - timedelta(days=1),
-        "type": "access"
-    }
+    payload = {"sub": "testuser", "exp": datetime.now(timezone.utc) - timedelta(days=1), "type": "access"}
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)

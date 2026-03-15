@@ -42,6 +42,7 @@ router = APIRouter(
 # Pydantic schemas
 # ---------------------------------------------------------------------------
 
+
 class TopIssueItem(BaseModel):
     """Single entry in the top issues list."""
 
@@ -221,6 +222,7 @@ SEVERITY_WEIGHT: Dict[str, int] = {
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _verify_tenant_exists(db: Session, tenant_id: int) -> None:
     """Raise 404 if the tenant does not exist."""
     exists = db.query(Tenant.id).filter(Tenant.id == tenant_id).first()
@@ -248,62 +250,72 @@ def _build_recommendations(
     medium = severity_counts.get("medium", 0)
 
     if critical > 0:
-        recommendations.append(RecommendationItem(
-            priority=priority,
-            title="Remediate critical vulnerabilities immediately",
-            description=(
-                f"{critical} critical finding(s) detected. These represent the highest risk "
-                "to the organization and should be patched or mitigated within 24 hours."
-            ),
-            affected_count=critical,
-        ))
+        recommendations.append(
+            RecommendationItem(
+                priority=priority,
+                title="Remediate critical vulnerabilities immediately",
+                description=(
+                    f"{critical} critical finding(s) detected. These represent the highest risk "
+                    "to the organization and should be patched or mitigated within 24 hours."
+                ),
+                affected_count=critical,
+            )
+        )
         priority += 1
 
     if high > 0:
-        recommendations.append(RecommendationItem(
-            priority=priority,
-            title="Address high-severity findings within SLA",
-            description=(
-                f"{high} high-severity finding(s) require attention. Schedule remediation "
-                "within the 7-day SLA window to prevent exploitation."
-            ),
-            affected_count=high,
-        ))
+        recommendations.append(
+            RecommendationItem(
+                priority=priority,
+                title="Address high-severity findings within SLA",
+                description=(
+                    f"{high} high-severity finding(s) require attention. Schedule remediation "
+                    "within the 7-day SLA window to prevent exploitation."
+                ),
+                affected_count=high,
+            )
+        )
         priority += 1
 
     if medium > 0:
-        recommendations.append(RecommendationItem(
-            priority=priority,
-            title="Plan remediation of medium-severity issues",
-            description=(
-                f"{medium} medium-severity finding(s) should be addressed in the next "
-                "sprint or maintenance cycle to reduce overall risk exposure."
-            ),
-            affected_count=medium,
-        ))
+        recommendations.append(
+            RecommendationItem(
+                priority=priority,
+                title="Plan remediation of medium-severity issues",
+                description=(
+                    f"{medium} medium-severity finding(s) should be addressed in the next "
+                    "sprint or maintenance cycle to reduce overall risk exposure."
+                ),
+                affected_count=medium,
+            )
+        )
         priority += 1
 
     if open_count > 0:
-        recommendations.append(RecommendationItem(
-            priority=priority,
-            title="Review and triage all open findings",
-            description=(
-                f"{open_count} finding(s) are currently open. Perform triage to suppress "
-                "false positives, assign ownership, and establish remediation timelines."
-            ),
-            affected_count=open_count,
-        ))
+        recommendations.append(
+            RecommendationItem(
+                priority=priority,
+                title="Review and triage all open findings",
+                description=(
+                    f"{open_count} finding(s) are currently open. Perform triage to suppress "
+                    "false positives, assign ownership, and establish remediation timelines."
+                ),
+                affected_count=open_count,
+            )
+        )
         priority += 1
 
-    recommendations.append(RecommendationItem(
-        priority=priority,
-        title="Maintain continuous monitoring",
-        description=(
-            "Ensure scheduled scans are active and alert policies are configured "
-            "for critical and high-severity event types to detect new exposures promptly."
-        ),
-        affected_count=0,
-    ))
+    recommendations.append(
+        RecommendationItem(
+            priority=priority,
+            title="Maintain continuous monitoring",
+            description=(
+                "Ensure scheduled scans are active and alert policies are configured "
+                "for critical and high-severity event types to detect new exposures promptly."
+            ),
+            affected_count=0,
+        )
+    )
 
     return recommendations
 
@@ -348,6 +360,7 @@ def _parse_evidence(evidence) -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.get("/executive", response_model=ExecutiveReportResponse)
 def generate_executive_report(
@@ -410,9 +423,7 @@ def generate_executive_report(
     asset_counts: Dict[str, int] = {}
     for asset_type in AssetType:
         count = (
-            db.query(func.count(Asset.id))
-            .filter(Asset.tenant_id == tenant_id, Asset.type == asset_type)
-            .scalar() or 0
+            db.query(func.count(Asset.id)).filter(Asset.tenant_id == tenant_id, Asset.type == asset_type).scalar() or 0
         )
         asset_counts[asset_type.value] = count
     total_assets = sum(asset_counts.values())
@@ -424,7 +435,8 @@ def generate_executive_report(
             db.query(func.count(Finding.id))
             .join(Asset)
             .filter(Asset.tenant_id == tenant_id, Finding.severity == severity)
-            .scalar() or 0
+            .scalar()
+            or 0
         )
         finding_counts_severity[severity.value] = count
 
@@ -435,7 +447,8 @@ def generate_executive_report(
             db.query(func.count(Finding.id))
             .join(Asset)
             .filter(Asset.tenant_id == tenant_id, Finding.status == finding_status)
-            .scalar() or 0
+            .scalar()
+            or 0
         )
         finding_counts_status[finding_status.value] = count
 
@@ -494,7 +507,8 @@ def generate_executive_report(
                 Finding.severity == severity,
                 Finding.status == FindingStatus.OPEN,
             )
-            .scalar() or 0
+            .scalar()
+            or 0
         )
         open_severity_counts[severity.value] = count
 
@@ -546,11 +560,7 @@ def generate_technical_report(
     """
     _verify_tenant_exists(db, tenant_id)
 
-    query = (
-        db.query(Finding, Asset.identifier, Asset.type)
-        .join(Asset)
-        .filter(Asset.tenant_id == tenant_id)
-    )
+    query = db.query(Finding, Asset.identifier, Asset.type).join(Asset).filter(Asset.tenant_id == tenant_id)
 
     if severity:
         try:
@@ -609,7 +619,9 @@ def generate_technical_report(
 @router.get("/export/pdf")
 def export_report_pdf(
     tenant_id: int,
-    report_type: str = Query(default="executive", regex="^(executive|technical|soc2|iso27001)$", description="Report type"),
+    report_type: str = Query(
+        default="executive", regex="^(executive|technical|soc2|iso27001)$", description="Report type"
+    ),
     severity: Optional[str] = Query(None, description="Filter by severity (technical only)"),
     finding_status: Optional[str] = Query(None, alias="status", description="Filter by status (technical only)"),
     limit: int = Query(default=500, ge=1, le=5000, description="Max findings (technical only)"),
@@ -673,7 +685,9 @@ def export_report_pdf(
 @router.get("/export/docx")
 def export_report_docx(
     tenant_id: int,
-    report_type: str = Query(default="executive", regex="^(executive|technical|soc2|iso27001)$", description="Report type"),
+    report_type: str = Query(
+        default="executive", regex="^(executive|technical|soc2|iso27001)$", description="Report type"
+    ),
     severity: Optional[str] = Query(None, description="Filter by severity (technical only)"),
     finding_status: Optional[str] = Query(None, alias="status", description="Filter by status (technical only)"),
     limit: int = Query(default=500, ge=1, le=5000, description="Max findings (technical only)"),
@@ -756,11 +770,7 @@ def export_findings_json(
     """
     _verify_tenant_exists(db, tenant_id)
 
-    query = (
-        db.query(Finding, Asset.identifier, Asset.type)
-        .join(Asset)
-        .filter(Asset.tenant_id == tenant_id)
-    )
+    query = db.query(Finding, Asset.identifier, Asset.type).join(Asset).filter(Asset.tenant_id == tenant_id)
 
     if severity:
         try:
@@ -846,11 +856,7 @@ def export_findings_csv(
     """
     _verify_tenant_exists(db, tenant_id)
 
-    query = (
-        db.query(Finding, Asset.identifier, Asset.type)
-        .join(Asset)
-        .filter(Asset.tenant_id == tenant_id)
-    )
+    query = db.query(Finding, Asset.identifier, Asset.type).join(Asset).filter(Asset.tenant_id == tenant_id)
 
     if severity:
         try:
@@ -892,20 +898,22 @@ def export_findings_csv(
     writer.writerow(csv_headers)
 
     for finding, asset_identifier, asset_type in results:
-        writer.writerow([
-            finding.id,
-            finding.name,
-            finding.severity.value,
-            finding.cvss_score or "",
-            finding.cve_id or "",
-            finding.template_id or "",
-            finding.source,
-            finding.status.value,
-            asset_identifier,
-            asset_type.value if asset_type else "",
-            finding.first_seen.isoformat() if finding.first_seen else "",
-            finding.last_seen.isoformat() if finding.last_seen else "",
-        ])
+        writer.writerow(
+            [
+                finding.id,
+                finding.name,
+                finding.severity.value,
+                finding.cvss_score or "",
+                finding.cve_id or "",
+                finding.template_id or "",
+                finding.source,
+                finding.status.value,
+                asset_identifier,
+                asset_type.value if asset_type else "",
+                finding.first_seen.isoformat() if finding.first_seen else "",
+                finding.last_seen.isoformat() if finding.last_seen else "",
+            ]
+        )
 
     csv_bytes = output.getvalue().encode("utf-8")
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -941,12 +949,7 @@ def export_assets_csv(
     """
     _verify_tenant_exists(db, tenant_id)
 
-    results = (
-        db.query(Asset)
-        .filter(Asset.tenant_id == tenant_id)
-        .order_by(Asset.last_seen.desc())
-        .all()
-    )
+    results = db.query(Asset).filter(Asset.tenant_id == tenant_id).order_by(Asset.last_seen.desc()).all()
 
     csv_headers = [
         "id",
@@ -965,17 +968,19 @@ def export_assets_csv(
     writer.writerow(csv_headers)
 
     for asset in results:
-        writer.writerow([
-            asset.id,
-            asset.identifier,
-            asset.type.value if asset.type else "",
-            asset.priority or "",
-            asset.risk_score or "",
-            asset.first_seen.isoformat() if asset.first_seen else "",
-            asset.last_seen.isoformat() if asset.last_seen else "",
-            asset.is_active,
-            asset.enrichment_status or "",
-        ])
+        writer.writerow(
+            [
+                asset.id,
+                asset.identifier,
+                asset.type.value if asset.type else "",
+                asset.priority or "",
+                asset.risk_score or "",
+                asset.first_seen.isoformat() if asset.first_seen else "",
+                asset.last_seen.isoformat() if asset.last_seen else "",
+                asset.is_active,
+                asset.enrichment_status or "",
+            ]
+        )
 
     csv_bytes = output.getvalue().encode("utf-8")
 

@@ -33,7 +33,7 @@ class APIError(Exception):
         message: str,
         status_code: int = 500,
         details: Optional[Dict[str, Any]] = None,
-        error_code: Optional[str] = None
+        error_code: Optional[str] = None,
     ):
         self.message = message
         self.status_code = status_code
@@ -47,10 +47,7 @@ class AuthenticationError(APIError):
 
     def __init__(self, message: str = "Authentication required", details: Optional[Dict] = None):
         super().__init__(
-            message=message,
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            details=details,
-            error_code="AUTH_REQUIRED"
+            message=message, status_code=status.HTTP_401_UNAUTHORIZED, details=details, error_code="AUTH_REQUIRED"
         )
 
 
@@ -62,7 +59,7 @@ class AuthorizationError(APIError):
             message=message,
             status_code=status.HTTP_403_FORBIDDEN,
             details=details,
-            error_code="INSUFFICIENT_PERMISSIONS"
+            error_code="INSUFFICIENT_PERMISSIONS",
         )
 
 
@@ -74,11 +71,7 @@ class NotFoundError(APIError):
         if resource_id:
             message = f"{resource} with ID '{resource_id}' not found"
 
-        super().__init__(
-            message=message,
-            status_code=status.HTTP_404_NOT_FOUND,
-            error_code="NOT_FOUND"
-        )
+        super().__init__(message=message, status_code=status.HTTP_404_NOT_FOUND, error_code="NOT_FOUND")
 
 
 class ValidationError(APIError):
@@ -89,7 +82,7 @@ class ValidationError(APIError):
             message=message,
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             details=details,
-            error_code="VALIDATION_ERROR"
+            error_code="VALIDATION_ERROR",
         )
 
 
@@ -101,7 +94,7 @@ class RateLimitError(APIError):
             message="Rate limit exceeded",
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             details={"retry_after": retry_after},
-            error_code="RATE_LIMIT_EXCEEDED"
+            error_code="RATE_LIMIT_EXCEEDED",
         )
 
 
@@ -109,11 +102,7 @@ class TenantError(APIError):
     """Tenant-related error"""
 
     def __init__(self, message: str = "Tenant access denied"):
-        super().__init__(
-            message=message,
-            status_code=status.HTTP_403_FORBIDDEN,
-            error_code="TENANT_ACCESS_DENIED"
-        )
+        super().__init__(message=message, status_code=status.HTTP_403_FORBIDDEN, error_code="TENANT_ACCESS_DENIED")
 
 
 def create_error_response(
@@ -121,7 +110,7 @@ def create_error_response(
     status_code: int = 500,
     error_code: str = "ERROR",
     details: Optional[Dict[str, Any]] = None,
-    include_trace: bool = False
+    include_trace: bool = False,
 ) -> JSONResponse:
     """
     Create standardized error response
@@ -154,15 +143,13 @@ def create_error_response(
     if include_trace:
         error_response["error"]["trace"] = traceback.format_exc()
 
-    return JSONResponse(
-        status_code=status_code,
-        content=error_response
-    )
+    return JSONResponse(status_code=status_code, content=error_response)
 
 
 # ===========================
 # Exception Handlers
 # ===========================
+
 
 async def api_error_handler(request: Request, exc: APIError) -> JSONResponse:
     """
@@ -184,14 +171,11 @@ async def api_error_handler(request: Request, exc: APIError) -> JSONResponse:
             "path": request.url.path,
             "method": request.method,
             "client_ip": request.client.host,
-        }
+        },
     )
 
     return create_error_response(
-        message=exc.message,
-        status_code=exc.status_code,
-        error_code=exc.error_code,
-        details=exc.details
+        message=exc.message, status_code=exc.status_code, error_code=exc.error_code, details=exc.details
     )
 
 
@@ -221,7 +205,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
             "path": request.url.path,
             "method": request.method,
             "client_ip": request.client.host,
-        }
+        },
     )
 
     # Audit log for authentication/authorization failures
@@ -234,15 +218,13 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
                 ip_address=request.client.host,
                 endpoint=request.url.path,
                 method=request.method,
-                severity="warning"
+                severity="warning",
             )
         except Exception as e:
             logger.error(f"Failed to log audit event: {e}")
 
     return create_error_response(
-        message=str(exc.detail),
-        status_code=exc.status_code,
-        error_code=f"HTTP_{exc.status_code}"
+        message=str(exc.detail), status_code=exc.status_code, error_code=f"HTTP_{exc.status_code}"
     )
 
 
@@ -268,11 +250,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         message = error["msg"]
         error_type = error["type"]
 
-        errors.append({
-            "field": field,
-            "message": message,
-            "type": error_type
-        })
+        errors.append({"field": field, "message": message, "type": error_type})
 
     logger.info(
         f"Validation Error: {len(errors)} errors",
@@ -281,14 +259,14 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "method": request.method,
             "errors": errors,
             "client_ip": request.client.host,
-        }
+        },
     )
 
     return create_error_response(
         message="Validation failed",
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         error_code="VALIDATION_ERROR",
-        details={"errors": errors}
+        details={"errors": errors},
     )
 
 
@@ -314,7 +292,7 @@ async def jwt_error_handler(request: Request, exc: InvalidTokenError) -> JSONRes
             "path": request.url.path,
             "method": request.method,
             "client_ip": request.client.host,
-        }
+        },
     )
 
     # Audit log
@@ -327,7 +305,7 @@ async def jwt_error_handler(request: Request, exc: InvalidTokenError) -> JSONRes
             endpoint=request.url.path,
             method=request.method,
             error_message=str(exc),
-            severity="warning"
+            severity="warning",
         )
     except Exception as e:
         logger.error(f"Failed to log audit event: {e}")
@@ -343,11 +321,7 @@ async def jwt_error_handler(request: Request, exc: InvalidTokenError) -> JSONRes
         message = "Authentication failed"
         error_code = "AUTH_FAILED"
 
-    return create_error_response(
-        message=message,
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        error_code=error_code
-    )
+    return create_error_response(message=message, status_code=status.HTTP_401_UNAUTHORIZED, error_code=error_code)
 
 
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -374,7 +348,7 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
             "path": request.url.path,
             "method": request.method,
             "client_ip": request.client.host,
-        }
+        },
     )
 
     # Audit log critical errors
@@ -387,7 +361,7 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
             endpoint=request.url.path,
             method=request.method,
             error_message=str(exc)[:500],
-            severity="critical"
+            severity="critical",
         )
     except Exception as e:
         logger.error(f"Failed to log audit event: {e}")
@@ -396,7 +370,7 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
     return create_error_response(
         message="An internal error occurred. Please try again later.",
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        error_code="INTERNAL_ERROR"
+        error_code="INTERNAL_ERROR",
     )
 
 

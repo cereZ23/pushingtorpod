@@ -20,9 +20,7 @@ class ExposedAssetItem(BaseModel):
     type: str = Field(..., description="Asset type")
     risk_score: float = Field(..., description="Current risk score (0-100)")
     open_findings_count: int = Field(..., description="Number of open findings")
-    highest_severity: Optional[str] = Field(
-        None, description="Highest severity among open findings"
-    )
+    highest_severity: Optional[str] = Field(None, description="Highest severity among open findings")
     services_count: int = Field(..., description="Number of exposed services")
     last_seen: Optional[datetime] = Field(None, description="Last time this asset was observed")
 
@@ -45,19 +43,11 @@ class ExposedAssetItem(BaseModel):
 class ExposureSummary(BaseModel):
     """Summary of the tenant's exposure posture."""
 
-    total_exposed_assets: int = Field(
-        ..., description="Total assets with at least one open finding"
-    )
+    total_exposed_assets: int = Field(..., description="Total assets with at least one open finding")
     total_assets: int = Field(..., description="Total assets for the tenant")
-    severity_breakdown: Dict[str, int] = Field(
-        ..., description="Number of exposed assets by highest severity"
-    )
-    exposure_score: float = Field(
-        ..., description="Overall exposure score (0-100)"
-    )
-    most_exposed: list[ExposedAssetItem] = Field(
-        ..., description="Top 10 most exposed assets by risk score"
-    )
+    severity_breakdown: Dict[str, int] = Field(..., description="Number of exposed assets by highest severity")
+    exposure_score: float = Field(..., description="Overall exposure score (0-100)")
+    most_exposed: list[ExposedAssetItem] = Field(..., description="Top 10 most exposed assets by risk score")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -107,9 +97,7 @@ class ExposureChangeItem(BaseModel):
     asset_identifier: str = Field(..., description="Related asset identifier")
     finding_name: str = Field(..., description="Finding name / title")
     severity: str = Field(..., description="Severity level")
-    change_type: str = Field(
-        ..., description="Type of change: new, resolved, or severity_changed"
-    )
+    change_type: str = Field(..., description="Type of change: new, resolved, or severity_changed")
     detected_at: datetime = Field(..., description="When the change was detected")
 
     model_config = ConfigDict(
@@ -131,12 +119,8 @@ class ExposureChanges(BaseModel):
     """Exposure changes within a given time window."""
 
     period: str = Field(..., description="Time period label (24h, 7d, 30d)")
-    new_exposures: list[ExposureChangeItem] = Field(
-        ..., description="Newly opened findings"
-    )
-    resolved_exposures: list[ExposureChangeItem] = Field(
-        ..., description="Recently resolved (fixed) findings"
-    )
+    new_exposures: list[ExposureChangeItem] = Field(..., description="Newly opened findings")
+    resolved_exposures: list[ExposureChangeItem] = Field(..., description="Recently resolved (fixed) findings")
     new_count: int = Field(..., description="Count of new exposures")
     resolved_count: int = Field(..., description="Count of resolved exposures")
 

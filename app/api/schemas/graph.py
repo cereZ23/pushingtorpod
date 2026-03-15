@@ -47,8 +47,7 @@ class GraphEdge(BaseModel):
     rel_type: str = Field(
         ...,
         description=(
-            "Relationship type "
-            "(resolves_to, cname_to, ns_for, mx_for, redirects_to, cert_covers, hosts, parent_domain)"
+            "Relationship type (resolves_to, cname_to, ns_for, mx_for, redirects_to, cert_covers, hosts, parent_domain)"
         ),
     )
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional edge metadata")
@@ -93,17 +92,11 @@ class MostConnectedNode(BaseModel):
 class GraphStats(BaseModel):
     """Aggregated statistics for the asset relationship graph."""
 
-    node_count_by_type: Dict[str, int] = Field(
-        ..., description="Number of nodes grouped by asset type"
-    )
-    edge_count_by_type: Dict[str, int] = Field(
-        ..., description="Number of edges grouped by relationship type"
-    )
+    node_count_by_type: Dict[str, int] = Field(..., description="Number of nodes grouped by asset type")
+    edge_count_by_type: Dict[str, int] = Field(..., description="Number of edges grouped by relationship type")
     total_nodes: int = Field(..., description="Total number of nodes")
     total_edges: int = Field(..., description="Total number of edges")
-    most_connected: list[MostConnectedNode] = Field(
-        ..., description="Top 10 most connected nodes"
-    )
+    most_connected: list[MostConnectedNode] = Field(..., description="Top 10 most connected nodes")
 
     model_config = ConfigDict(
         json_schema_extra={

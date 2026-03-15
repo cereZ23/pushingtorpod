@@ -4,6 +4,7 @@ Asset Endpoint Tests
 Tests for asset listing, filtering, search, creation, and tree hierarchy.
 Total: 12 tests
 """
+
 import pytest
 from datetime import datetime, timedelta
 from fastapi.testclient import TestClient
@@ -14,13 +15,10 @@ from app.models import Asset, AssetType
 class TestAssetEndpoints:
     """Test suite for asset endpoints"""
 
-    def test_list_assets_returns_paginated_results(
-        self, authenticated_client, test_tenant, many_assets
-    ):
+    def test_list_assets_returns_paginated_results(self, authenticated_client, test_tenant, many_assets):
         """Test listing assets returns paginated results"""
         response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/assets",
-            params={"limit": 10, "offset": 0}
+            f"/api/v1/tenants/{test_tenant.id}/assets", params={"limit": 10, "offset": 0}
         )
 
         assert response.status_code == 200
@@ -45,15 +43,10 @@ class TestAssetEndpoints:
             assert "type" in asset
             assert "risk_score" in asset
 
-    def test_list_assets_with_type_filter(
-        self, authenticated_client, test_tenant, mixed_type_assets
-    ):
+    def test_list_assets_with_type_filter(self, authenticated_client, test_tenant, mixed_type_assets):
         """Test filtering assets by type"""
         # Filter for subdomains only
-        response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/assets",
-            params={"type": "subdomain"}
-        )
+        response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/assets", params={"type": "subdomain"})
 
         assert response.status_code == 200
         data = response.json()
@@ -63,10 +56,7 @@ class TestAssetEndpoints:
             assert asset["type"] == "subdomain"
 
         # Filter for IPs
-        response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/assets",
-            params={"type": "ip"}
-        )
+        response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/assets", params={"type": "ip"})
 
         assert response.status_code == 200
         data = response.json()
@@ -74,14 +64,9 @@ class TestAssetEndpoints:
         for asset in data["items"]:
             assert asset["type"] == "ip"
 
-    def test_list_assets_with_priority_filter(
-        self, authenticated_client, test_tenant, priority_assets
-    ):
+    def test_list_assets_with_priority_filter(self, authenticated_client, test_tenant, priority_assets):
         """Test filtering assets by priority level"""
-        response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/assets",
-            params={"priority": "critical"}
-        )
+        response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/assets", params={"priority": "critical"})
 
         assert response.status_code == 200
         data = response.json()
@@ -90,16 +75,11 @@ class TestAssetEndpoints:
         for asset in data["items"]:
             assert asset.get("priority") == "critical" or asset.get("risk_score", 0) >= 75
 
-    def test_list_assets_with_search_query(
-        self, authenticated_client, test_tenant, searchable_assets
-    ):
+    def test_list_assets_with_search_query(self, authenticated_client, test_tenant, searchable_assets):
         """Test searching assets by identifier"""
         search_term = "production"
 
-        response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/assets",
-            params={"search": search_term}
-        )
+        response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/assets", params={"search": search_term})
 
         assert response.status_code == 200
         data = response.json()
@@ -126,13 +106,9 @@ class TestAssetEndpoints:
             # Should not see other tenant's identifiers
             assert not asset["identifier"].startswith("other")
 
-    def test_get_asset_by_id_returns_details(
-        self, authenticated_client, test_tenant, sample_asset
-    ):
+    def test_get_asset_by_id_returns_details(self, authenticated_client, test_tenant, sample_asset):
         """Test getting single asset by ID returns full details"""
-        response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/assets/{sample_asset.id}"
-        )
+        response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/assets/{sample_asset.id}")
 
         assert response.status_code == 200
         data = response.json()
@@ -153,21 +129,15 @@ class TestAssetEndpoints:
 
     def test_get_asset_not_found_returns_404(self, authenticated_client, test_tenant):
         """Test getting non-existent asset returns 404"""
-        response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/assets/99999"
-        )
+        response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/assets/99999")
 
         assert response.status_code == 404
         data = response.json()
         assert "detail" in data
 
-    def test_get_asset_tree_returns_hierarchy(
-        self, authenticated_client, test_tenant, hierarchical_assets
-    ):
+    def test_get_asset_tree_returns_hierarchy(self, authenticated_client, test_tenant, hierarchical_assets):
         """Test asset tree endpoint returns hierarchical structure"""
-        response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/assets/tree"
-        )
+        response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/assets/tree")
 
         assert response.status_code == 200
         data = response.json()
@@ -186,16 +156,9 @@ class TestAssetEndpoints:
 
     def test_create_asset_seed_success(self, authenticated_client, test_tenant):
         """Test creating a new asset seed successfully"""
-        seed_data = {
-            "type": "domain",
-            "identifier": "newseed.example.com",
-            "priority": "high"
-        }
+        seed_data = {"type": "domain", "identifier": "newseed.example.com", "priority": "high"}
 
-        response = authenticated_client.post(
-            f"/api/v1/tenants/{test_tenant.id}/seeds",
-            json=seed_data
-        )
+        response = authenticated_client.post(f"/api/v1/tenants/{test_tenant.id}/seeds", json=seed_data)
 
         assert response.status_code in [200, 201]
         data = response.json()
@@ -205,9 +168,7 @@ class TestAssetEndpoints:
         if "priority" in data:
             assert data["priority"] == seed_data["priority"]
 
-    def test_create_asset_seed_invalid_domain_rejected(
-        self, authenticated_client, test_tenant
-    ):
+    def test_create_asset_seed_invalid_domain_rejected(self, authenticated_client, test_tenant):
         """Test creating asset seed with invalid domain is rejected"""
         invalid_seeds = [
             {"type": "domain", "identifier": "not a valid domain!"},
@@ -217,17 +178,12 @@ class TestAssetEndpoints:
         ]
 
         for seed_data in invalid_seeds:
-            response = authenticated_client.post(
-                f"/api/v1/tenants/{test_tenant.id}/seeds",
-                json=seed_data
-            )
+            response = authenticated_client.post(f"/api/v1/tenants/{test_tenant.id}/seeds", json=seed_data)
 
             assert response.status_code in [400, 422]
 
     @pytest.mark.security
-    def test_create_asset_seed_internal_ip_blocked(
-        self, authenticated_client, test_tenant
-    ):
+    def test_create_asset_seed_internal_ip_blocked(self, authenticated_client, test_tenant):
         """Test creating asset seed with internal/private IP is blocked"""
         internal_ips = [
             {"type": "ip", "identifier": "127.0.0.1"},
@@ -238,10 +194,7 @@ class TestAssetEndpoints:
         ]
 
         for seed_data in internal_ips:
-            response = authenticated_client.post(
-                f"/api/v1/tenants/{test_tenant.id}/seeds",
-                json=seed_data
-            )
+            response = authenticated_client.post(f"/api/v1/tenants/{test_tenant.id}/seeds", json=seed_data)
 
             # Should reject internal IPs for security
             assert response.status_code in [400, 422]
@@ -254,8 +207,7 @@ class TestAssetEndpoints:
         performance_timer.start()
 
         response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/assets",
-            params={"limit": 100, "offset": 0}
+            f"/api/v1/tenants/{test_tenant.id}/assets", params={"limit": 100, "offset": 0}
         )
 
         elapsed = performance_timer.stop()
@@ -265,10 +217,7 @@ class TestAssetEndpoints:
         assert len(data["items"]) == 100
 
         # Should respond in under 500ms
-        performance_timer.assert_faster_than(
-            0.5,
-            f"Asset listing with 1000 records"
-        )
+        performance_timer.assert_faster_than(0.5, f"Asset listing with 1000 records")
 
 
 @pytest.fixture
@@ -280,7 +229,7 @@ def many_assets(db_session, test_tenant):
             identifier=f"sub{i}.example.com",
             type=AssetType.SUBDOMAIN,
             risk_score=float(i % 100),
-            is_active=True
+            is_active=True,
         )
         for i in range(25)
     ]
@@ -292,34 +241,32 @@ def many_assets(db_session, test_tenant):
 @pytest.fixture
 def mixed_type_assets(db_session, test_tenant):
     """Create assets of different types"""
-    assets = [
-        Asset(
-            tenant_id=test_tenant.id,
-            identifier=f"sub{i}.example.com",
-            type=AssetType.SUBDOMAIN,
-            risk_score=30.0,
-            is_active=True
-        )
-        for i in range(5)
-    ] + [
-        Asset(
-            tenant_id=test_tenant.id,
-            identifier=f"1.2.3.{i}",
-            type=AssetType.IP,
-            risk_score=40.0,
-            is_active=True
-        )
-        for i in range(5)
-    ] + [
-        Asset(
-            tenant_id=test_tenant.id,
-            identifier=f"https://sub{i}.example.com/path",
-            type=AssetType.URL,
-            risk_score=20.0,
-            is_active=True
-        )
-        for i in range(3)
-    ]
+    assets = (
+        [
+            Asset(
+                tenant_id=test_tenant.id,
+                identifier=f"sub{i}.example.com",
+                type=AssetType.SUBDOMAIN,
+                risk_score=30.0,
+                is_active=True,
+            )
+            for i in range(5)
+        ]
+        + [
+            Asset(tenant_id=test_tenant.id, identifier=f"1.2.3.{i}", type=AssetType.IP, risk_score=40.0, is_active=True)
+            for i in range(5)
+        ]
+        + [
+            Asset(
+                tenant_id=test_tenant.id,
+                identifier=f"https://sub{i}.example.com/path",
+                type=AssetType.URL,
+                risk_score=20.0,
+                is_active=True,
+            )
+            for i in range(3)
+        ]
+    )
     db_session.add_all(assets)
     db_session.commit()
     return assets
@@ -335,7 +282,7 @@ def priority_assets(db_session, test_tenant):
             type=AssetType.SUBDOMAIN,
             risk_score=85.0,
             is_active=True,
-            priority='critical'
+            priority="critical",
         )
         for i in range(3)
     ] + [
@@ -345,7 +292,7 @@ def priority_assets(db_session, test_tenant):
             type=AssetType.SUBDOMAIN,
             risk_score=30.0,
             is_active=True,
-            priority='normal'
+            priority="normal",
         )
         for i in range(5)
     ]
@@ -363,21 +310,21 @@ def searchable_assets(db_session, test_tenant):
             identifier="production-api.example.com",
             type=AssetType.SUBDOMAIN,
             risk_score=50.0,
-            is_active=True
+            is_active=True,
         ),
         Asset(
             tenant_id=test_tenant.id,
             identifier="production-web.example.com",
             type=AssetType.SUBDOMAIN,
             risk_score=45.0,
-            is_active=True
+            is_active=True,
         ),
         Asset(
             tenant_id=test_tenant.id,
             identifier="staging-api.example.com",
             type=AssetType.SUBDOMAIN,
             risk_score=20.0,
-            is_active=True
+            is_active=True,
         ),
     ]
     db_session.add_all(assets)
@@ -390,11 +337,7 @@ def hierarchical_assets(db_session, test_tenant):
     """Create assets with parent-child relationships"""
     # Root domain
     root = Asset(
-        tenant_id=test_tenant.id,
-        identifier="example.com",
-        type=AssetType.DOMAIN,
-        risk_score=60.0,
-        is_active=True
+        tenant_id=test_tenant.id, identifier="example.com", type=AssetType.DOMAIN, risk_score=60.0, is_active=True
     )
     db_session.add(root)
     db_session.commit()
@@ -408,7 +351,7 @@ def hierarchical_assets(db_session, test_tenant):
             type=AssetType.SUBDOMAIN,
             risk_score=40.0,
             is_active=True,
-            parent_id=root.id
+            parent_id=root.id,
         )
         for i in range(5)
     ]
@@ -429,7 +372,7 @@ def thousand_assets(db_session, test_tenant):
                 identifier=f"perf{batch * batch_size + i}.example.com",
                 type=AssetType.SUBDOMAIN,
                 risk_score=float((batch * batch_size + i) % 100),
-                is_active=True
+                is_active=True,
             )
             for i in range(batch_size)
         ]

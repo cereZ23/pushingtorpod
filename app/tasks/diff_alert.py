@@ -172,9 +172,7 @@ def run_diff_and_alert(self, tenant_id: int, scan_run_id: int):
             finding_row = finding_lookup.get(finding_key)
             if finding_row:
                 sev = (
-                    finding_row.severity.value
-                    if hasattr(finding_row.severity, "value")
-                    else str(finding_row.severity)
+                    finding_row.severity.value if hasattr(finding_row.severity, "value") else str(finding_row.severity)
                 )
                 events.append(
                     {
@@ -209,9 +207,7 @@ def run_diff_and_alert(self, tenant_id: int, scan_run_id: int):
         if events and not diff.is_suspicious:
             from app.tasks.alerting import evaluate_alert_policies
 
-            evaluate_alert_policies.delay(
-                tenant_id, events[: settings.alert_max_per_run]
-            )
+            evaluate_alert_policies.delay(tenant_id, events[: settings.alert_max_per_run])
 
         # Store snapshot in scan run stats
         current_run.stats = current_run.stats or {}
@@ -220,9 +216,7 @@ def run_diff_and_alert(self, tenant_id: int, scan_run_id: int):
             "service_keys": list(current.service_keys),
             "finding_keys": list(current.finding_keys),
         }
-        current_run.stats["change_events"] = [
-            {"type": e["type"], "count": 1} for e in events[:100]
-        ]
+        current_run.stats["change_events"] = [{"type": e["type"], "count": 1} for e in events[:100]]
         db.commit()
 
         result = {
@@ -264,25 +258,17 @@ def _build_snapshot(db, tenant_id: int) -> RunSnapshot:
     """
     snapshot = RunSnapshot()
 
-    assets = (
-        db.query(Asset)
-        .filter(Asset.tenant_id == tenant_id, Asset.is_active == True)
-        .all()
-    )
+    assets = db.query(Asset).filter(Asset.tenant_id == tenant_id, Asset.is_active == True).all()
     for a in assets:
         key = f"{tenant_id}:{a.type.value}:{a.identifier}"
         snapshot.asset_keys.add(key)
 
         # Content hash from raw_metadata for change detection
         if a.raw_metadata:
-            metadata_hash = hashlib.sha256(
-                str(a.raw_metadata).encode()
-            ).hexdigest()[:16]
+            metadata_hash = hashlib.sha256(str(a.raw_metadata).encode()).hexdigest()[:16]
             snapshot.content_hashes[key] = metadata_hash
 
-    services = (
-        db.query(Service).join(Asset).filter(Asset.tenant_id == tenant_id).all()
-    )
+    services = db.query(Service).join(Asset).filter(Asset.tenant_id == tenant_id).all()
     for s in services:
         key = f"{s.asset_id}:{s.port}:{s.protocol}"
         snapshot.service_keys.add(key)
@@ -353,9 +339,7 @@ def _compute_diff(
     diff.resolved_findings = list(previous.finding_keys - current.finding_keys)
 
     # Sanity: >50% removal = suspicious
-    if previous.asset_keys and len(diff.removed_assets) > len(
-        previous.asset_keys
-    ) * 0.5:
+    if previous.asset_keys and len(diff.removed_assets) > len(previous.asset_keys) * 0.5:
         diff.is_suspicious = True
 
     return diff

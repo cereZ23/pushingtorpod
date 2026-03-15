@@ -14,16 +14,10 @@ from pydantic import BaseModel, ConfigDict, Field
 class ThreatIntelStatusResponse(BaseModel):
     """Response for GET /admin/threat-intel/status"""
 
-    kev_last_refresh: Optional[str] = Field(
-        None, description="ISO timestamp of last KEV catalog refresh"
-    )
+    kev_last_refresh: Optional[str] = Field(None, description="ISO timestamp of last KEV catalog refresh")
     kev_count: int = Field(0, description="Number of CVEs in KEV catalog")
-    kev_catalog_cached: bool = Field(
-        False, description="Whether KEV catalog is currently in Redis cache"
-    )
-    epss_cache_available: bool = Field(
-        False, description="Whether EPSS cache is reachable"
-    )
+    kev_catalog_cached: bool = Field(False, description="Whether KEV catalog is currently in Redis cache")
+    epss_cache_available: bool = Field(False, description="Whether EPSS cache is reachable")
     error: Optional[str] = Field(None, description="Error message if any")
 
     model_config = ConfigDict(
@@ -68,9 +62,7 @@ class KEVDetailResponse(BaseModel):
     short_description: str = Field("", description="Brief description")
     required_action: str = Field("", description="Required remediation action")
     due_date: str = Field("", description="Compliance due date")
-    known_ransomware_use: str = Field(
-        "Unknown", description="Whether known ransomware campaigns use this CVE"
-    )
+    known_ransomware_use: str = Field("Unknown", description="Whether known ransomware campaigns use this CVE")
     notes: str = Field("", description="Additional notes")
 
     model_config = ConfigDict(
@@ -107,9 +99,7 @@ class FindingThreatIntelResponse(BaseModel):
         description="EPSS severity category (low/medium/high/critical)",
     )
     is_kev: bool = Field(False, description="Whether CVE is in CISA KEV catalog")
-    kev_details: Optional[KEVDetailResponse] = Field(
-        None, description="KEV catalog details if applicable"
-    )
+    kev_details: Optional[KEVDetailResponse] = Field(None, description="KEV catalog details if applicable")
     risk_boost_description: str = Field(
         "",
         description="Human-readable description of threat intel impact on risk score",
@@ -199,10 +189,7 @@ def build_risk_boost_description(epss_score: float, is_kev: bool) -> str:
     parts = []
 
     if is_kev:
-        parts.append(
-            "This CVE is in the CISA Known Exploited Vulnerabilities catalog "
-            "(confirmed active exploitation)."
-        )
+        parts.append("This CVE is in the CISA Known Exploited Vulnerabilities catalog (confirmed active exploitation).")
 
     if epss_score >= 0.7:
         parts.append(
@@ -210,18 +197,11 @@ def build_risk_boost_description(epss_score: float, is_kev: bool) -> str:
             "(top 5%). Immediate remediation recommended."
         )
     elif epss_score >= 0.4:
-        parts.append(
-            f"EPSS score: {epss_score:.1%} - high exploitation probability. "
-            "Prioritize remediation."
-        )
+        parts.append(f"EPSS score: {epss_score:.1%} - high exploitation probability. Prioritize remediation.")
     elif epss_score >= 0.1:
-        parts.append(
-            f"EPSS score: {epss_score:.1%} - moderate exploitation probability."
-        )
+        parts.append(f"EPSS score: {epss_score:.1%} - moderate exploitation probability.")
     elif epss_score > 0:
-        parts.append(
-            f"EPSS score: {epss_score:.1%} - low exploitation probability."
-        )
+        parts.append(f"EPSS score: {epss_score:.1%} - low exploitation probability.")
 
     if is_kev and epss_score >= 0.5:
         parts.append("CRITICAL: Immediate remediation required.")

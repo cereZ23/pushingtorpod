@@ -12,11 +12,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 
 from app.api.dependencies import get_db, verify_tenant_access, PaginationParams, escape_like
-from app.api.schemas.certificate import (
-    CertificateResponse,
-    CertificateListRequest,
-    CertificateHealthResponse
-)
+from app.api.schemas.certificate import CertificateResponse, CertificateListRequest, CertificateHealthResponse
 from app.api.schemas.common import PaginatedResponse
 from app.models.database import Asset
 from app.models.enrichment import Certificate
@@ -41,7 +37,7 @@ def list_certificates(
     sort_order: str = Query("asc"),
     pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
+    membership=Depends(verify_tenant_access),
 ):
     """
     List certificates with filtering
@@ -55,9 +51,13 @@ def list_certificates(
     Useful for TLS/SSL hygiene and compliance
     """
     # Build query with tenant isolation
-    query = db.query(Certificate).join(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.is_active == True,  # noqa: E712
+    query = (
+        db.query(Certificate)
+        .join(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.is_active == True,  # noqa: E712
+        )
     )
 
     # Apply filters
@@ -69,12 +69,7 @@ def list_certificates(
 
     if is_expiring_soon:
         thirty_days = datetime.now(timezone.utc) + timedelta(days=30)
-        query = query.filter(
-            and_(
-                Certificate.is_expired == False,
-                Certificate.not_after <= thirty_days
-            )
-        )
+        query = query.filter(and_(Certificate.is_expired == False, Certificate.not_after <= thirty_days))
 
     if is_self_signed is not None:
         query = query.filter(Certificate.is_self_signed == is_self_signed)
@@ -91,9 +86,7 @@ def list_certificates(
 
     if search:
         safe_search = escape_like(search)
-        query = query.filter(
-            Certificate.subject_cn.ilike(f"%{safe_search}%", escape="\\")
-        )
+        query = query.filter(Certificate.subject_cn.ilike(f"%{safe_search}%", escape="\\"))
 
     # Get total count
     total = query.count()
@@ -123,16 +116,13 @@ def list_certificates(
         total=total,
         page=pagination.page,
         page_size=pagination.page_size,
-        total_pages=(total + pagination.page_size - 1) // pagination.page_size
+        total_pages=(total + pagination.page_size - 1) // pagination.page_size,
     )
 
 
 @router.get("/{certificate_id}", response_model=CertificateResponse)
 def get_certificate(
-    tenant_id: int,
-    certificate_id: int,
-    db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
+    tenant_id: int, certificate_id: int, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)
 ):
     """
     Get certificate by ID
@@ -142,16 +132,12 @@ def get_certificate(
     Raises:
         - 404: Certificate not found
     """
-    certificate = db.query(Certificate).join(Asset).filter(
-        Certificate.id == certificate_id,
-        Asset.tenant_id == tenant_id
-    ).first()
+    certificate = (
+        db.query(Certificate).join(Asset).filter(Certificate.id == certificate_id, Asset.tenant_id == tenant_id).first()
+    )
 
     if not certificate:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Certificate not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate not found")
 
     return CertificateResponse.model_validate(certificate)
 
@@ -161,7 +147,7 @@ def get_expiring_certificates(
     tenant_id: int,
     days: int = Query(30, ge=1, le=365, description="Days until expiry"),
     db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
+    membership=Depends(verify_tenant_access),
 ):
     """
     Get certificates expiring soon
@@ -175,21 +161,21 @@ def get_expiring_certificates(
     """
     expiry_threshold = datetime.now(timezone.utc) + timedelta(days=days)
 
-    certificates = db.query(Certificate).join(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Certificate.is_expired == False,
-        Certificate.not_after <= expiry_threshold
-    ).order_by(Certificate.not_after.asc()).all()
+    certificates = (
+        db.query(Certificate)
+        .join(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id, Certificate.is_expired == False, Certificate.not_after <= expiry_threshold
+        )
+        .order_by(Certificate.not_after.asc())
+        .all()
+    )
 
     return [CertificateResponse.model_validate(c) for c in certificates]
 
 
 @router.get("/health", response_model=CertificateHealthResponse)
-def get_certificate_health(
-    tenant_id: int,
-    db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
-):
+def get_certificate_health(tenant_id: int, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)):
     """
     Get certificate health summary
 
@@ -203,61 +189,62 @@ def get_certificate_health(
     Useful for compliance and security dashboards
     """
     # Total certificates
-    total = db.query(Certificate).join(Asset).filter(
-        Asset.tenant_id == tenant_id
-    ).count()
+    total = db.query(Certificate).join(Asset).filter(Asset.tenant_id == tenant_id).count()
 
     # Expired certificates
-    expired = db.query(Certificate).join(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Certificate.is_expired == True
-    ).count()
+    expired = (
+        db.query(Certificate).join(Asset).filter(Asset.tenant_id == tenant_id, Certificate.is_expired == True).count()
+    )
 
     # Expiring soon (30 days)
     thirty_days = datetime.now(timezone.utc) + timedelta(days=30)
-    expiring_soon = db.query(Certificate).join(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Certificate.is_expired == False,
-        Certificate.not_after <= thirty_days
-    ).count()
+    expiring_soon = (
+        db.query(Certificate)
+        .join(Asset)
+        .filter(Asset.tenant_id == tenant_id, Certificate.is_expired == False, Certificate.not_after <= thirty_days)
+        .count()
+    )
 
     # Self-signed
-    self_signed = db.query(Certificate).join(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Certificate.is_self_signed == True
-    ).count()
+    self_signed = (
+        db.query(Certificate)
+        .join(Asset)
+        .filter(Asset.tenant_id == tenant_id, Certificate.is_self_signed == True)
+        .count()
+    )
 
     # Weak signature
-    weak_signature = db.query(Certificate).join(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Certificate.has_weak_signature == True
-    ).count()
+    weak_signature = (
+        db.query(Certificate)
+        .join(Asset)
+        .filter(Asset.tenant_id == tenant_id, Certificate.has_weak_signature == True)
+        .count()
+    )
 
     # Wildcard certificates
-    wildcard = db.query(Certificate).join(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Certificate.is_wildcard == True
-    ).count()
+    wildcard = (
+        db.query(Certificate).join(Asset).filter(Asset.tenant_id == tenant_id, Certificate.is_wildcard == True).count()
+    )
 
     # Distribution by issuer
-    issuers = db.query(
-        Certificate.issuer,
-        func.count(Certificate.id).label('count')
-    ).join(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Certificate.issuer.isnot(None)
-    ).group_by(Certificate.issuer).all()
+    issuers = (
+        db.query(Certificate.issuer, func.count(Certificate.id).label("count"))
+        .join(Asset)
+        .filter(Asset.tenant_id == tenant_id, Certificate.issuer.isnot(None))
+        .group_by(Certificate.issuer)
+        .all()
+    )
 
     by_issuer = {issuer: count for issuer, count in issuers}
 
     # Distribution by key size
-    key_sizes = db.query(
-        Certificate.public_key_bits,
-        func.count(Certificate.id).label('count')
-    ).join(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Certificate.public_key_bits.isnot(None)
-    ).group_by(Certificate.public_key_bits).all()
+    key_sizes = (
+        db.query(Certificate.public_key_bits, func.count(Certificate.id).label("count"))
+        .join(Asset)
+        .filter(Asset.tenant_id == tenant_id, Certificate.public_key_bits.isnot(None))
+        .group_by(Certificate.public_key_bits)
+        .all()
+    )
 
     by_key_size = {str(size): count for size, count in key_sizes if size}
 
@@ -269,5 +256,5 @@ def get_certificate_health(
         weak_signature=weak_signature,
         wildcard=wildcard,
         by_issuer=by_issuer,
-        by_key_size=by_key_size
+        by_key_size=by_key_size,
     )

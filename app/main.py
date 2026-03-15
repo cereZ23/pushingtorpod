@@ -132,15 +132,8 @@ All data endpoints are tenant-scoped:
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
     terms_of_service="https://example.com/terms",
-    contact={
-        "name": "EASM Platform Support",
-        "url": "https://example.com/support",
-        "email": "support@example.com"
-    },
-    license_info={
-        "name": "Proprietary",
-        "url": "https://example.com/license"
-    }
+    contact={"name": "EASM Platform Support", "url": "https://example.com/support", "email": "support@example.com"},
+    license_info={"name": "Proprietary", "url": "https://example.com/license"},
 )
 
 # Add rate limiting state
@@ -258,11 +251,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     """Handle HTTP exceptions with consistent format"""
     return JSONResponse(
         status_code=exc.status_code,
-        content={
-            "error": exc.__class__.__name__,
-            "detail": exc.detail,
-            "status_code": exc.status_code
-        }
+        content={"error": exc.__class__.__name__, "detail": exc.detail, "status_code": exc.status_code},
     )
 
 
@@ -275,8 +264,8 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "error": "ValidationError",
             "detail": "Request validation failed",
             "status_code": 422,
-            "errors": exc.errors()
-        }
+            "errors": exc.errors(),
+        },
     )
 
 
@@ -333,8 +322,8 @@ async def generic_exception_handler(request: Request, exc: Exception):
             "path": request.url.path,
             "method": request.method,
             "client_ip": request.client.host if request.client else "unknown",
-            "user_agent": request.headers.get("user-agent", "unknown")
-        }
+            "user_agent": request.headers.get("user-agent", "unknown"),
+        },
     )
 
     # Return generic error to client (environment-based)
@@ -345,14 +334,7 @@ async def generic_exception_handler(request: Request, exc: Exception):
         # Development: Show error details for debugging
         detail = f"{exc.__class__.__name__}: {str(exc)}"
 
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": "InternalServerError",
-            "detail": detail,
-            "status_code": 500
-        }
-    )
+    return JSONResponse(status_code=500, content={"error": "InternalServerError", "detail": detail, "status_code": 500})
 
 
 # Root endpoint
@@ -370,8 +352,9 @@ def root(request: Request):
         "sprint": "Sprint 3 - Complete REST API",
         "docs": "/api/docs",
         "health": "/health",
-        "authentication": "/api/v1/auth/login"
+        "authentication": "/api/v1/auth/login",
     }
+
 
 @app.get("/metrics", include_in_schema=False)
 async def metrics(request: Request):
@@ -424,19 +407,20 @@ async def startup_event():
     """
     from app.rate_limiter import GLOBAL_DEFAULT_LIMIT
 
-    logger.info("="*80)
+    logger.info("=" * 80)
     logger.info(f"Starting {settings.app_name} v3.0.0")
     logger.info(f"Environment: {settings.environment}")
     logger.info(f"Debug mode: {settings.debug}")
     logger.info(f"API Documentation: http://{settings.api_host}:{settings.api_port}/api/docs")
     logger.info(f"Rate limits: GET={GLOBAL_DEFAULT_LIMIT}, mutations={MUTATION_DEFAULT_LIMIT}, storage=Redis")
-    logger.info("="*80)
+    logger.info("=" * 80)
 
     # Test database connection
     try:
         from app.database import engine
         from sqlalchemy import text
         from sqlalchemy.exc import SQLAlchemyError
+
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         logger.info("Database connection: OK")
@@ -446,6 +430,7 @@ async def startup_event():
     # Test Redis connection
     try:
         import redis
+
         r = redis.from_url(settings.redis_url, socket_connect_timeout=2)
         r.ping()
         r.close()
@@ -494,5 +479,5 @@ if __name__ == "__main__":
         port=settings.api_port,
         reload=settings.api_reload,
         workers=1 if settings.api_reload else settings.api_workers,
-        log_level=settings.log_level.lower()
+        log_level=settings.log_level.lower(),
     )

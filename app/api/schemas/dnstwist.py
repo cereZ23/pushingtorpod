@@ -16,8 +16,7 @@ class DnstwistScanRequest(BaseModel):
     domain_list: Optional[List[str]] = Field(
         None,
         description=(
-            "Explicit list of root domains to scan. "
-            "When omitted, all active DOMAIN assets for the tenant are used."
+            "Explicit list of root domains to scan. When omitted, all active DOMAIN assets for the tenant are used."
         ),
     )
 

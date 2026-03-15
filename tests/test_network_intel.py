@@ -52,11 +52,13 @@ class TestSerializeDate:
 
     def test_date_object(self):
         from datetime import date
+
         d = date(2024, 6, 15)
         assert _serialize_date(d) == "2024-06-15"
 
     def test_list_of_dates(self):
         from datetime import date
+
         dates = [date(2024, 1, 1), date(2025, 1, 1)]
         assert _serialize_date(dates) == "2024-01-01"
 
@@ -183,6 +185,7 @@ class TestReverseDns:
     @patch("app.services.network_intel.socket.gethostbyaddr")
     def test_no_ptr_record(self, mock_gethostbyaddr):
         import socket
+
         mock_gethostbyaddr.side_effect = socket.herror("Host not found")
 
         result = reverse_dns("192.0.2.1")
@@ -218,6 +221,7 @@ class TestResolveDomainIp:
     @patch("app.services.network_intel.socket.getaddrinfo")
     def test_failed_resolution(self, mock_getaddrinfo):
         import socket
+
         mock_getaddrinfo.side_effect = socket.gaierror("Name resolution failed")
 
         result = resolve_domain_ip("nonexistent.invalid")
@@ -565,9 +569,7 @@ class TestEnrichAssetNetwork:
     @patch("app.services.network_intel.reverse_dns")
     @patch("app.services.network_intel.resolve_domain_ip")
     @patch("app.services.network_intel.whois_lookup")
-    def test_all_lookups_fail(
-        self, mock_whois, mock_resolve, mock_rdns, mock_geoip
-    ):
+    def test_all_lookups_fail(self, mock_whois, mock_resolve, mock_rdns, mock_geoip):
         """Enrichment returns empty/None values when all lookups fail."""
         mock_whois.return_value = {
             "registrar": None,
@@ -597,13 +599,17 @@ class TestEnrichAssetNetwork:
     @patch("app.services.network_intel.reverse_dns")
     @patch("app.services.network_intel.resolve_domain_ip")
     @patch("app.services.network_intel.whois_lookup")
-    def test_pre_resolved_ip(
-        self, mock_whois, mock_resolve, mock_rdns, mock_geoip
-    ):
+    def test_pre_resolved_ip(self, mock_whois, mock_resolve, mock_rdns, mock_geoip):
         """When ip_address is provided, skip DNS resolution."""
-        mock_whois.return_value = {"registrar": None, "org": None, "country": None,
-                                    "created": None, "expires": None,
-                                    "nameservers": [], "emails": []}
+        mock_whois.return_value = {
+            "registrar": None,
+            "org": None,
+            "country": None,
+            "created": None,
+            "expires": None,
+            "nameservers": [],
+            "emails": [],
+        }
         mock_rdns.return_value = None
         mock_geoip.return_value = None
 
@@ -626,9 +632,7 @@ class TestEnrichAssetNetwork:
 class TestRunNetworkEnrichmentTask:
     @patch("app.database.SessionLocal")
     @patch("app.services.network_intel.enrich_asset_network")
-    def test_no_assets_returns_no_candidates(
-        self, mock_enrich, mock_session_local
-    ):
+    def test_no_assets_returns_no_candidates(self, mock_enrich, mock_session_local):
         """Task returns early when no assets match."""
         mock_db = MagicMock()
         mock_query = MagicMock()
@@ -642,9 +646,7 @@ class TestRunNetworkEnrichmentTask:
         # Call the underlying function directly (skip Celery binding)
         # __wrapped__ on a Celery bind=True task strips self from the signature;
         # Celery auto-injects the task instance as self — do NOT pass a positional mock
-        result = run_network_enrichment.__wrapped__(
-            tenant_id=1, asset_ids=None
-        )
+        result = run_network_enrichment.__wrapped__(tenant_id=1, asset_ids=None)
 
         assert result["status"] == "no_candidates"
         assert result["assets_enriched"] == 0
@@ -653,9 +655,7 @@ class TestRunNetworkEnrichmentTask:
     @patch("app.database.SessionLocal")
     @patch("app.services.network_intel.enrich_asset_network")
     @patch("app.tasks.network_enrichment._merge_headers_for_asset")
-    def test_successful_enrichment(
-        self, mock_merge_headers, mock_enrich, mock_session_local
-    ):
+    def test_successful_enrichment(self, mock_merge_headers, mock_enrich, mock_session_local):
         """Task enriches assets and commits to DB."""
         # Setup mock asset
         mock_asset = MagicMock()
@@ -683,9 +683,7 @@ class TestRunNetworkEnrichmentTask:
 
         from app.tasks.network_enrichment import run_network_enrichment
 
-        result = run_network_enrichment.__wrapped__(
-            tenant_id=1, asset_ids=[42]
-        )
+        result = run_network_enrichment.__wrapped__(tenant_id=1, asset_ids=[42])
 
         assert result["status"] == "completed"
         assert result["assets_enriched"] == 1
@@ -695,9 +693,7 @@ class TestRunNetworkEnrichmentTask:
     @patch("app.database.SessionLocal")
     @patch("app.services.network_intel.enrich_asset_network")
     @patch("app.tasks.network_enrichment._merge_headers_for_asset")
-    def test_enrichment_failure_counted(
-        self, mock_merge_headers, mock_enrich, mock_session_local
-    ):
+    def test_enrichment_failure_counted(self, mock_merge_headers, mock_enrich, mock_session_local):
         """Failed enrichment increments fail count but does not crash."""
         mock_asset = MagicMock()
         mock_asset.id = 99
@@ -718,9 +714,7 @@ class TestRunNetworkEnrichmentTask:
 
         from app.tasks.network_enrichment import run_network_enrichment
 
-        result = run_network_enrichment.__wrapped__(
-            tenant_id=1, asset_ids=[99]
-        )
+        result = run_network_enrichment.__wrapped__(tenant_id=1, asset_ids=[99])
 
         assert result["status"] == "completed"
         assert result["assets_enriched"] == 0

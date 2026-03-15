@@ -102,8 +102,7 @@ def _pg_engine():
     pg_host = os.environ.get("POSTGRES_HOST", "127.0.0.1")
     pg_port = os.environ.get("POSTGRES_PORT", "15432")
     pg_user = os.environ.get("POSTGRES_USER", "easm")
-    pg_pass = os.environ.get("POSTGRES_PASSWORD",
-                             os.environ.get("DB_PASSWORD", "easm_password"))
+    pg_pass = os.environ.get("POSTGRES_PASSWORD", os.environ.get("DB_PASSWORD", "easm_password"))
     pg_db = os.environ.get("POSTGRES_DB", "easm")
 
     database_url = os.environ.get(
@@ -117,22 +116,17 @@ def _pg_engine():
     # applied Alembic migrations) and that hashed_password is nullable for
     # SSO-only users.
     from sqlalchemy import text, inspect as sa_inspect
+
     with engine.connect() as conn:
         inspector = sa_inspect(engine)
         existing_cols = {c["name"] for c in inspector.get_columns("users")}
         if "sso_provider" not in existing_cols:
-            conn.execute(text(
-                "ALTER TABLE users ADD COLUMN sso_provider VARCHAR(50)"
-            ))
+            conn.execute(text("ALTER TABLE users ADD COLUMN sso_provider VARCHAR(50)"))
         if "sso_subject_id" not in existing_cols:
-            conn.execute(text(
-                "ALTER TABLE users ADD COLUMN sso_subject_id VARCHAR(255)"
-            ))
+            conn.execute(text("ALTER TABLE users ADD COLUMN sso_subject_id VARCHAR(255)"))
         # Make hashed_password nullable (required for SSO-only user tests).
         # This is idempotent -- running it on an already-nullable column is a no-op.
-        conn.execute(text(
-            "ALTER TABLE users ALTER COLUMN hashed_password DROP NOT NULL"
-        ))
+        conn.execute(text("ALTER TABLE users ALTER COLUMN hashed_password DROP NOT NULL"))
         conn.commit()
 
     yield engine
@@ -289,6 +283,7 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
                 # Catch broadly: PyJWTError, DecodeError, UnicodeDecodeError,
                 # InvalidSignatureError, etc.
                 from fastapi import HTTPException, status
+
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail=f"Token validation failed: {exc}",
@@ -309,8 +304,7 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
         _original_create_access = jm.create_access_token
         _original_create_refresh = jm.create_refresh_token
 
-        def _test_create_access(subject, tenant_id, roles=None,
-                                expires_delta=None, additional_claims=None):
+        def _test_create_access(subject, tenant_id, roles=None, expires_delta=None, additional_claims=None):
             if expires_delta is None:
                 expires_delta = timedelta(minutes=30)
             now = datetime.now(timezone.utc)
@@ -353,9 +347,11 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
     app.dependency_overrides.clear()
     if _original_verify is not None:
         from app.security.jwt_auth import jwt_manager as jm2
+
         jm2.verify_token = _original_verify
     if _original_create_access is not None:
         from app.security.jwt_auth import jwt_manager as jm3
+
         jm3.create_access_token = _original_create_access
         jm3.create_refresh_token = _original_create_refresh
 
@@ -421,12 +417,8 @@ class TestLoginRateLimit:
 
         source = inspect.getsource(auth_module)
         # The decorator should appear as @limiter.limit("5/minute") or similar
-        assert "limiter.limit" in source, (
-            "auth router must use @limiter.limit on login endpoint"
-        )
-        assert "5/minute" in source, (
-            "Login rate limit should be set to 5/minute"
-        )
+        assert "limiter.limit" in source, "auth router must use @limiter.limit on login endpoint"
+        assert "5/minute" in source, "Login rate limit should be set to 5/minute"
 
 
 # ===========================================================================
@@ -452,9 +444,7 @@ class TestAssetSortWhitelist:
         body = response.json()
         items = body["data"]
         identifiers = [i["identifier"] for i in items]
-        assert identifiers == sorted(identifiers), (
-            "Assets should be sorted alphabetically by identifier"
-        )
+        assert identifiers == sorted(identifiers), "Assets should be sorted alphabetically by identifier"
 
     def test_sort_by_risk_score_returns_200(
         self,
@@ -470,9 +460,7 @@ class TestAssetSortWhitelist:
         body = response.json()
         items = body["data"]
         scores = [i["risk_score"] for i in items]
-        assert scores == sorted(scores, reverse=True), (
-            "Assets should be sorted descending by risk_score"
-        )
+        assert scores == sorted(scores, reverse=True), "Assets should be sorted descending by risk_score"
 
     def test_sort_by_invalid_column_falls_back_to_default(
         self,
@@ -498,14 +486,9 @@ class TestAssetSortWhitelist:
         sample_assets: list[Asset],
     ):
         """Passing a SQL fragment as sort_by must not cause server errors."""
-        url = (
-            f"/api/v1/tenants/{test_tenant.id}/assets"
-            "?sort_by=identifier;DROP+TABLE+assets--"
-        )
+        url = f"/api/v1/tenants/{test_tenant.id}/assets?sort_by=identifier;DROP+TABLE+assets--"
         response = client.get(url, headers=auth_headers)
-        assert response.status_code == 200, (
-            "SQL injection in sort_by should be safely ignored"
-        )
+        assert response.status_code == 200, "SQL injection in sort_by should be safely ignored"
 
     def test_allowed_sort_columns_whitelist_exists(self):
         """The router source must declare ALLOWED_SORT_COLUMNS."""
@@ -513,9 +496,7 @@ class TestAssetSortWhitelist:
         from app.api.routers import assets as assets_module
 
         source = inspect.getsource(assets_module)
-        assert "ALLOWED_SORT_COLUMNS" in source, (
-            "assets router must define an ALLOWED_SORT_COLUMNS whitelist"
-        )
+        assert "ALLOWED_SORT_COLUMNS" in source, "assets router must define an ALLOWED_SORT_COLUMNS whitelist"
 
 
 # ===========================================================================
@@ -562,8 +543,7 @@ class TestILikeEscape:
         body = response.json()
         # None of the sample identifiers contain a literal '%'
         assert body["meta"]["total"] == 0, (
-            "Search for literal '%' should match zero assets because "
-            "the wildcard is escaped"
+            "Search for literal '%' should match zero assets because the wildcard is escaped"
         )
 
     def test_search_with_underscore_does_not_match_single_char(
@@ -580,9 +560,7 @@ class TestILikeEscape:
         assert response.status_code == 200
         body = response.json()
         # None of the sample identifiers contain a literal '_'
-        assert body["meta"]["total"] == 0, (
-            "Underscore wildcard should be escaped and match nothing"
-        )
+        assert body["meta"]["total"] == 0, "Underscore wildcard should be escaped and match nothing"
 
 
 # ===========================================================================
@@ -623,8 +601,7 @@ class TestHealthEndpointHardened:
         services = data.get("services", {})
         for svc_name, svc_status in services.items():
             assert svc_status in ("ok", "error"), (
-                f"Service '{svc_name}' has unexpected status: {svc_status!r}. "
-                "Only 'ok' or 'error' are allowed."
+                f"Service '{svc_name}' has unexpected status: {svc_status!r}. Only 'ok' or 'error' are allowed."
             )
 
     def test_health_does_not_leak_connection_strings(
@@ -645,9 +622,7 @@ class TestHealthEndpointHardened:
             "errno",
         ]
         for indicator in leak_indicators:
-            assert indicator not in body, (
-                f"Health endpoint leaks infrastructure detail: found '{indicator}'"
-            )
+            assert indicator not in body, f"Health endpoint leaks infrastructure detail: found '{indicator}'"
 
 
 # ===========================================================================
@@ -749,9 +724,7 @@ class TestSsoOnlyUserRejected:
         detail = response.json().get("detail", "")
         forbidden_phrases = ["null", "none", "hashed_password", "column"]
         for phrase in forbidden_phrases:
-            assert phrase not in detail.lower(), (
-                f"Error message leaks internal detail: found '{phrase}' in: {detail!r}"
-            )
+            assert phrase not in detail.lower(), f"Error message leaks internal detail: found '{phrase}' in: {detail!r}"
 
     def test_regular_user_can_still_login(
         self,
@@ -787,9 +760,7 @@ class TestSamlDisabled:
             response = client.get("/api/v1/auth/saml/login")
 
         # The endpoint calls _require_saml_enabled() which checks settings
-        assert response.status_code == 404, (
-            f"Expected 404 for SAML login when disabled, got {response.status_code}"
-        )
+        assert response.status_code == 404, f"Expected 404 for SAML login when disabled, got {response.status_code}"
 
     def test_saml_metadata_returns_404_when_disabled(
         self,
@@ -814,6 +785,4 @@ class TestSamlDisabled:
         body = response.text.lower()
         leak_indicators = ["entity_id", "sso_url", "x509"]
         for indicator in leak_indicators:
-            assert indicator not in body, (
-                f"SAML 404 response leaks config detail: found '{indicator}'"
-            )
+            assert indicator not in body, f"SAML 404 response leaks config detail: found '{indicator}'"

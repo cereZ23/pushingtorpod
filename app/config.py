@@ -15,12 +15,7 @@ from pathlib import Path
 class Settings(BaseSettings):
     """Application settings with environment variable support"""
 
-    model_config = SettingsConfigDict(
-        env_file='.env',
-        env_file_encoding='utf-8',
-        case_sensitive=False,
-        extra='ignore'
-    )
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
     # Application
     app_name: str = "EASM Platform"
@@ -50,7 +45,7 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "dev_jwt_secret_INSECURE_DO_NOT_USE_IN_PRODUCTION_" + "x" * 32
     jwt_algorithm: str = "RS256"  # RS256 (asymmetric) for production, HS256 (symmetric) for dev
     jwt_private_key_path: Optional[str] = None  # Path to RS256 private key (PEM format)
-    jwt_public_key_path: Optional[str] = None   # Path to RS256 public key (PEM format)
+    jwt_public_key_path: Optional[str] = None  # Path to RS256 public key (PEM format)
     jwt_access_token_expire_minutes: int = 30
     jwt_refresh_token_expire_days: int = 7
 
@@ -128,10 +123,21 @@ class Settings(BaseSettings):
     tool_execution_max_output_size: int = 100 * 1024 * 1024  # 100MB
     tool_temp_dir: Optional[Path] = None
     tool_allowed_tools: set[str] = {
-        'subfinder', 'dnsx', 'httpx', 'naabu',
-        'katana', 'nuclei', 'tlsx', 'uncover', 'notify',
-        'amass',  # Sprint 1.7: OWASP Amass for enhanced subdomain enumeration
-        'alterx', 'puredns', 'cdncheck', 'cloudlist', 'fingerprintx',
+        "subfinder",
+        "dnsx",
+        "httpx",
+        "naabu",
+        "katana",
+        "nuclei",
+        "tlsx",
+        "uncover",
+        "notify",
+        "amass",  # Sprint 1.7: OWASP Amass for enhanced subdomain enumeration
+        "alterx",
+        "puredns",
+        "cdncheck",
+        "cloudlist",
+        "fingerprintx",
     }
 
     # Discovery Pipeline
@@ -145,15 +151,15 @@ class Settings(BaseSettings):
     discovery_nuclei_timeout: int = 1800
 
     # New tool timeouts
-    alterx_timeout: int = 300          # 5 min
-    puredns_timeout: int = 1800        # 30 min (174k+ candidates at 200/s)
-    cdncheck_timeout: int = 120        # 2 min
-    cloudlist_timeout: int = 300       # 5 min
-    fingerprintx_timeout: int = 300    # 5 min
-    interactsh_enabled: bool = False   # Opt-in, requires interactsh server URL
-    interactsh_server: str = ''        # e.g. 'oast.pro' or self-hosted
-    puredns_resolvers_path: str = '/app/data/resolvers.txt'
-    puredns_wordlist_path: str = '/app/data/dns-wordlist.txt'
+    alterx_timeout: int = 300  # 5 min
+    puredns_timeout: int = 1800  # 30 min (174k+ candidates at 200/s)
+    cdncheck_timeout: int = 120  # 2 min
+    cloudlist_timeout: int = 300  # 5 min
+    fingerprintx_timeout: int = 300  # 5 min
+    interactsh_enabled: bool = False  # Opt-in, requires interactsh server URL
+    interactsh_server: str = ""  # e.g. 'oast.pro' or self-hosted
+    puredns_resolvers_path: str = "/app/data/resolvers.txt"
+    puredns_wordlist_path: str = "/app/data/dns-wordlist.txt"
 
     # Enrichment Pipeline (Sprint 2)
     enrichment_enabled: bool = True
@@ -248,7 +254,7 @@ class Settings(BaseSettings):
     feature_visual_recon_enabled: bool = True
     feature_notifications_enabled: bool = False
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def validate_production_secrets(self):
         """
         ENHANCED Sprint 2 Security: Validate production secrets
@@ -259,72 +265,83 @@ class Settings(BaseSettings):
         Raises:
             ValueError: If production environment has weak/default secrets
         """
-        if self.environment == 'production':
+        if self.environment == "production":
             errors = []
 
             # Sprint 2 Enhancement: Comprehensive weak secret detection
             weak_patterns = [
-                'CHANGE_THIS', 'changeme', 'INSECURE', 'DO_NOT_USE',
-                'dev_', 'test_', 'default', 'password', 'secret',
-                '123456', 'admin', 'root', 'qwerty'
+                "CHANGE_THIS",
+                "changeme",
+                "INSECURE",
+                "DO_NOT_USE",
+                "dev_",
+                "test_",
+                "default",
+                "password",
+                "secret",
+                "123456",
+                "admin",
+                "root",
+                "qwerty",
             ]
 
             # Check SECRET_KEY
             if any(pattern in self.secret_key for pattern in weak_patterns) or len(self.secret_key) < 64:
                 errors.append(
                     "SECRET_KEY must be set with a cryptographically strong random value (min 64 chars) in production. "
-                    "Generate with: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+                    'Generate with: python -c "import secrets; print(secrets.token_urlsafe(64))"'
                 )
 
             # Check JWT_SECRET_KEY
             if any(pattern in self.jwt_secret_key for pattern in weak_patterns) or len(self.jwt_secret_key) < 64:
                 errors.append(
                     "JWT_SECRET_KEY must be set with a cryptographically strong random value (min 64 chars) in production. "
-                    "Generate with: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+                    'Generate with: python -c "import secrets; print(secrets.token_urlsafe(64))"'
                 )
 
             # Check database password
-            if any(pattern in self.postgres_password.lower() for pattern in weak_patterns) or len(self.postgres_password) < 16:
+            if (
+                any(pattern in self.postgres_password.lower() for pattern in weak_patterns)
+                or len(self.postgres_password) < 16
+            ):
                 errors.append(
                     "POSTGRES_PASSWORD must be set with a strong password (min 16 chars) in production. "
-                    "Generate with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+                    'Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"'
                 )
 
             # Check MinIO credentials
             if any(pattern in self.minio_access_key.lower() for pattern in weak_patterns):
-                errors.append(
-                    "MINIO_ACCESS_KEY must be changed from defaults in production"
-                )
+                errors.append("MINIO_ACCESS_KEY must be changed from defaults in production")
 
-            if any(pattern in self.minio_secret_key.lower() for pattern in weak_patterns) or len(self.minio_secret_key) < 32:
+            if (
+                any(pattern in self.minio_secret_key.lower() for pattern in weak_patterns)
+                or len(self.minio_secret_key) < 32
+            ):
                 errors.append(
                     "MINIO_SECRET_KEY must be set with a strong random value (min 32 chars) in production. "
-                    "Generate with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+                    'Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"'
                 )
 
             # Check CORS configuration
             if "*" in self.cors_origins:
                 errors.append(
-                    "CORS_ORIGINS must not include wildcard ('*') in production. "
-                    "Specify exact allowed origins."
+                    "CORS_ORIGINS must not include wildcard ('*') in production. Specify exact allowed origins."
                 )
 
             # Check that Redis password is set in production
             if not self.redis_password:
-                errors.append(
-                    "REDIS_PASSWORD must be set in production to secure Redis access"
-                )
+                errors.append("REDIS_PASSWORD must be set in production to secure Redis access")
 
             if errors:
-                error_msg = "\n\n" + "="*80 + "\n"
+                error_msg = "\n\n" + "=" * 80 + "\n"
                 error_msg += "PRODUCTION CONFIGURATION ERRORS DETECTED\n"
-                error_msg += "="*80 + "\n\n"
+                error_msg += "=" * 80 + "\n\n"
                 error_msg += "The following configuration issues MUST be fixed before deploying to production:\n\n"
                 for i, error in enumerate(errors, 1):
                     error_msg += f"{i}. {error}\n\n"
-                error_msg += "="*80 + "\n"
+                error_msg += "=" * 80 + "\n"
                 error_msg += "Set ENVIRONMENT=development to bypass these checks for local development.\n"
-                error_msg += "="*80 + "\n"
+                error_msg += "=" * 80 + "\n"
                 raise ValueError(error_msg)
 
         return self

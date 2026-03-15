@@ -22,10 +22,10 @@ router = APIRouter(prefix="/api/v1/tenants/{tenant_id}/scan", tags=["Scanning"])
 def trigger_nuclei_scan(
     tenant_id: int,
     asset_ids: Optional[List[int]] = Body(None, description="Specific asset IDs to scan (optional)"),
-    severity_levels: List[str] = Body(['critical', 'high', 'medium'], description="Severity levels to scan"),
+    severity_levels: List[str] = Body(["critical", "high", "medium"], description="Severity levels to scan"),
     template_paths: Optional[List[str]] = Body(None, description="Specific template paths (optional)"),
     db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
+    membership=Depends(verify_tenant_access),
 ):
     """
     Manually trigger a Nuclei vulnerability scan
@@ -53,21 +53,14 @@ def trigger_nuclei_scan(
         tenant_id=tenant_id,
         asset_ids=asset_ids,
         severity=severity_levels,  # Map severity_levels -> severity
-        templates=template_paths    # Map template_paths -> templates
+        templates=template_paths,  # Map template_paths -> templates
     )
 
-    return TaskResponse(
-        task_id=task.id,
-        status='queued',
-        message=f'Nuclei scan queued for tenant {tenant_id}'
-    )
+    return TaskResponse(task_id=task.id, status="queued", message=f"Nuclei scan queued for tenant {tenant_id}")
 
 
 @router.post("/nuclei/update-templates", response_model=TaskResponse)
-def update_nuclei_templates(
-    tenant_id: int,
-    membership = Depends(verify_tenant_access)
-):
+def update_nuclei_templates(tenant_id: int, membership=Depends(verify_tenant_access)):
     """
     Update Nuclei templates to latest version
 
@@ -83,8 +76,4 @@ def update_nuclei_templates(
 
     task = update_task.delay()
 
-    return TaskResponse(
-        task_id=task.id,
-        status='queued',
-        message='Nuclei template update queued'
-    )
+    return TaskResponse(task_id=task.id, status="queued", message="Nuclei template update queued")

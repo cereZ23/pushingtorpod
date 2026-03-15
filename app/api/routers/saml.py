@@ -97,9 +97,8 @@ async def saml_acs(request: Request, db: Session = Depends(get_db)):
         or _first(attributes.get("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"))
         or name_id
     )
-    full_name = (
-        _first(attributes.get("displayName"))
-        or _first(attributes.get("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name"))
+    full_name = _first(attributes.get("displayName")) or _first(
+        attributes.get("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name")
     )
 
     if not email:
@@ -195,12 +194,14 @@ async def saml_acs(request: Request, db: Session = Depends(get_db)):
 
     # Redirect to frontend with tokens in URL fragment (not query string)
     # Fragment is not sent to the server on subsequent requests
-    fragment = urlencode({
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer",
-        "expires_in": settings.jwt_access_token_expire_minutes * 60,
-    })
+    fragment = urlencode(
+        {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+            "expires_in": settings.jwt_access_token_expire_minutes * 60,
+        }
+    )
     redirect_url = f"{settings.saml_frontend_url}/auth/sso-callback#{fragment}"
 
     logger.info(f"SAML login complete for {email}, redirecting to frontend")

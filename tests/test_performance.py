@@ -11,6 +11,7 @@ Tests cover:
 
 Run with: pytest tests/test_performance.py -v --durations=10
 """
+
 import pytest
 import time
 import psutil
@@ -26,10 +27,10 @@ from app.models.database import Base, Tenant, Asset, Event, AssetType, EventKind
 from app.repositories.asset_repository import AssetRepository, EventRepository
 
 
-@pytest.fixture(scope='function')
+@pytest.fixture(scope="function")
 def test_db():
     """Create test database"""
-    engine = create_engine('sqlite:///:memory:')
+    engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     SessionLocal = sessionmaker(bind=engine)
     db = SessionLocal()
@@ -54,11 +55,7 @@ class TestBatchProcessingPerformance:
         repo = AssetRepository(db)
 
         assets_data = [
-            {
-                'identifier': f'sub{i}.example.com',
-                'type': AssetType.SUBDOMAIN,
-                'raw_metadata': json.dumps({'index': i})
-            }
+            {"identifier": f"sub{i}.example.com", "type": AssetType.SUBDOMAIN, "raw_metadata": json.dumps({"index": i})}
             for i in range(100)
         ]
 
@@ -66,7 +63,7 @@ class TestBatchProcessingPerformance:
         result = repo.bulk_upsert(tenant.id, assets_data)
         elapsed = time.time() - start_time
 
-        assert result['total_processed'] == 100
+        assert result["total_processed"] == 100
         # Should complete in under 1 second
         assert elapsed < 1.0, f"Bulk upsert of 100 assets took {elapsed:.2f}s"
 
@@ -77,9 +74,9 @@ class TestBatchProcessingPerformance:
 
         assets_data = [
             {
-                'identifier': f'sub{i}.example.com',
-                'type': AssetType.SUBDOMAIN,
-                'raw_metadata': json.dumps({'index': i, 'data': 'x' * 100})
+                "identifier": f"sub{i}.example.com",
+                "type": AssetType.SUBDOMAIN,
+                "raw_metadata": json.dumps({"index": i, "data": "x" * 100}),
             }
             for i in range(1000)
         ]
@@ -88,7 +85,7 @@ class TestBatchProcessingPerformance:
         result = repo.bulk_upsert(tenant.id, assets_data)
         elapsed = time.time() - start_time
 
-        assert result['total_processed'] == 1000
+        assert result["total_processed"] == 1000
         # Should complete in under 5 seconds
         assert elapsed < 5.0, f"Bulk upsert of 1000 assets took {elapsed:.2f}s"
 
@@ -98,11 +95,7 @@ class TestBatchProcessingPerformance:
         repo = AssetRepository(db)
 
         assets_data = [
-            {
-                'identifier': f'sub{i}.example.com',
-                'type': AssetType.SUBDOMAIN,
-                'raw_metadata': json.dumps({'index': i})
-            }
+            {"identifier": f"sub{i}.example.com", "type": AssetType.SUBDOMAIN, "raw_metadata": json.dumps({"index": i})}
             for i in range(5000)
         ]
 
@@ -110,7 +103,7 @@ class TestBatchProcessingPerformance:
         result = repo.bulk_upsert(tenant.id, assets_data)
         elapsed = time.time() - start_time
 
-        assert result['total_processed'] == 5000
+        assert result["total_processed"] == 5000
         # Should complete in under 20 seconds
         assert elapsed < 20.0, f"Bulk upsert of 5000 assets took {elapsed:.2f}s"
 
@@ -122,24 +115,13 @@ class TestBatchProcessingPerformance:
         # Individual inserts
         start_time = time.time()
         for i in range(100):
-            assets_data = [
-                {
-                    'identifier': f'individual{i}.com',
-                    'type': AssetType.SUBDOMAIN,
-                    'raw_metadata': '{}'
-                }
-            ]
+            assets_data = [{"identifier": f"individual{i}.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"}]
             repo.bulk_upsert(tenant.id, assets_data)
         individual_time = time.time() - start_time
 
         # Bulk upsert
         assets_data = [
-            {
-                'identifier': f'bulk{i}.com',
-                'type': AssetType.SUBDOMAIN,
-                'raw_metadata': '{}'
-            }
-            for i in range(100)
+            {"identifier": f"bulk{i}.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"} for i in range(100)
         ]
 
         start_time = time.time()
@@ -147,33 +129,23 @@ class TestBatchProcessingPerformance:
         bulk_time = time.time() - start_time
 
         # Bulk should be at least 2x faster
-        assert bulk_time < individual_time / 2, \
+        assert bulk_time < individual_time / 2, (
             f"Bulk ({bulk_time:.2f}s) not significantly faster than individual ({individual_time:.2f}s)"
+        )
 
     def test_batch_event_creation_performance(self, test_db):
         """Benchmark: Batch event creation"""
         db, tenant = test_db
 
         # Create assets first
-        assets = [
-            Asset(
-                tenant_id=tenant.id,
-                identifier=f'test{i}.com',
-                type=AssetType.SUBDOMAIN
-            )
-            for i in range(1000)
-        ]
+        assets = [Asset(tenant_id=tenant.id, identifier=f"test{i}.com", type=AssetType.SUBDOMAIN) for i in range(1000)]
         db.add_all(assets)
         db.commit()
 
         # Create events in batch
         event_repo = EventRepository(db)
         events = [
-            Event(
-                asset_id=assets[i % len(assets)].id,
-                kind=EventKind.NEW_ASSET,
-                payload=json.dumps({'index': i})
-            )
+            Event(asset_id=assets[i % len(assets)].id, kind=EventKind.NEW_ASSET, payload=json.dumps({"index": i}))
             for i in range(1000)
         ]
 
@@ -196,11 +168,7 @@ class TestDatabaseQueryPerformance:
 
         # Create 1000 assets
         assets_data = [
-            {
-                'identifier': f'sub{i}.example.com',
-                'type': AssetType.SUBDOMAIN,
-                'raw_metadata': '{}'
-            }
+            {"identifier": f"sub{i}.example.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"}
             for i in range(1000)
         ]
         repo.bulk_upsert(tenant.id, assets_data)
@@ -221,18 +189,14 @@ class TestDatabaseQueryPerformance:
 
         # Create 10000 assets
         assets_data = [
-            {
-                'identifier': f'sub{i}.example.com',
-                'type': AssetType.SUBDOMAIN,
-                'raw_metadata': '{}'
-            }
+            {"identifier": f"sub{i}.example.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"}
             for i in range(10000)
         ]
         repo.bulk_upsert(tenant.id, assets_data)
 
         # Query specific asset (should use index)
         start_time = time.time()
-        asset = repo.get_by_identifier(tenant.id, 'sub5000.example.com', AssetType.SUBDOMAIN)
+        asset = repo.get_by_identifier(tenant.id, "sub5000.example.com", AssetType.SUBDOMAIN)
         elapsed = time.time() - start_time
 
         assert asset is not None
@@ -247,10 +211,10 @@ class TestDatabaseQueryPerformance:
         # Create mix of assets with different risk scores
         assets_data = [
             {
-                'identifier': f'sub{i}.example.com',
-                'type': AssetType.SUBDOMAIN,
-                'raw_metadata': '{}',
-                'risk_score': float(i % 100)
+                "identifier": f"sub{i}.example.com",
+                "type": AssetType.SUBDOMAIN,
+                "raw_metadata": "{}",
+                "risk_score": float(i % 100),
             }
             for i in range(1000)
         ]
@@ -272,11 +236,7 @@ class TestDatabaseQueryPerformance:
 
         # Create 5000 assets
         assets_data = [
-            {
-                'identifier': f'sub{i}.example.com',
-                'type': AssetType.SUBDOMAIN,
-                'raw_metadata': '{}'
-            }
+            {"identifier": f"sub{i}.example.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"}
             for i in range(5000)
         ]
         repo.bulk_upsert(tenant.id, assets_data)
@@ -315,9 +275,9 @@ class TestMemoryUsagePerformance:
         # Create large batch
         assets_data = [
             {
-                'identifier': f'sub{i}.example.com',
-                'type': AssetType.SUBDOMAIN,
-                'raw_metadata': json.dumps({'data': 'x' * 1000})
+                "identifier": f"sub{i}.example.com",
+                "type": AssetType.SUBDOMAIN,
+                "raw_metadata": json.dumps({"data": "x" * 1000}),
             }
             for i in range(5000)
         ]
@@ -337,11 +297,7 @@ class TestMemoryUsagePerformance:
 
         # Create 10000 assets
         assets_data = [
-            {
-                'identifier': f'sub{i}.example.com',
-                'type': AssetType.SUBDOMAIN,
-                'raw_metadata': '{}'
-            }
+            {"identifier": f"sub{i}.example.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"}
             for i in range(10000)
         ]
         repo.bulk_upsert(tenant.id, assets_data)
@@ -371,11 +327,7 @@ class TestMemoryUsagePerformance:
         # Perform many operations
         for iteration in range(10):
             assets_data = [
-                {
-                    'identifier': f'test{iteration}_{i}.com',
-                    'type': AssetType.SUBDOMAIN,
-                    'raw_metadata': '{}'
-                }
+                {"identifier": f"test{iteration}_{i}.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"}
                 for i in range(100)
             ]
             repo.bulk_upsert(tenant.id, assets_data)
@@ -400,11 +352,7 @@ class TestConcurrentOperationsPerformance:
 
         # Create test data
         assets_data = [
-            {
-                'identifier': f'sub{i}.example.com',
-                'type': AssetType.SUBDOMAIN,
-                'raw_metadata': '{}'
-            }
+            {"identifier": f"sub{i}.example.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"}
             for i in range(1000)
         ]
         repo.bulk_upsert(tenant.id, assets_data)
@@ -431,11 +379,7 @@ class TestConcurrentOperationsPerformance:
         for i in range(50):
             # Write
             assets_data = [
-                {
-                    'identifier': f'batch{i}_{j}.com',
-                    'type': AssetType.SUBDOMAIN,
-                    'raw_metadata': '{}'
-                }
+                {"identifier": f"batch{i}_{j}.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"}
                 for j in range(10)
             ]
             repo.bulk_upsert(tenant.id, assets_data)
@@ -452,10 +396,10 @@ class TestConcurrentOperationsPerformance:
 class TestDiscoveryPipelinePerformance:
     """Test discovery pipeline performance"""
 
-    @patch('app.tasks.discovery.SessionLocal')
-    @patch('app.utils.secure_executor.SecureToolExecutor.execute')
-    @patch('app.utils.secure_executor.SecureToolExecutor.read_output_file')
-    @patch('app.tasks.discovery.store_raw_output')
+    @patch("app.tasks.discovery.SessionLocal")
+    @patch("app.utils.secure_executor.SecureToolExecutor.execute")
+    @patch("app.utils.secure_executor.SecureToolExecutor.read_output_file")
+    @patch("app.tasks.discovery.store_raw_output")
     def test_process_discovery_results_batch_performance(
         self, mock_store, mock_read, mock_execute, mock_session_local, test_db
     ):
@@ -467,25 +411,19 @@ class TestDiscoveryPipelinePerformance:
 
         # Simulate large discovery result
         dnsx_result = {
-            'resolved': [
-                {
-                    'host': f'sub{i}.example.com',
-                    'a': [f'1.2.{i//256}.{i%256}']
-                }
-                for i in range(1000)
-            ],
-            'tenant_id': tenant.id
+            "resolved": [{"host": f"sub{i}.example.com", "a": [f"1.2.{i // 256}.{i % 256}"]} for i in range(1000)],
+            "tenant_id": tenant.id,
         }
 
         start_time = time.time()
         result = process_discovery_results(dnsx_result, tenant.id)
         elapsed = time.time() - start_time
 
-        assert result['total_resolved'] == 1000
+        assert result["total_resolved"] == 1000
         # Should process 1000 records efficiently
         assert elapsed < 5.0, f"Processing 1000 records took {elapsed:.2f}s"
 
-    @patch('app.tasks.discovery.SessionLocal')
+    @patch("app.tasks.discovery.SessionLocal")
     def test_collect_seeds_performance(self, mock_session_local, test_db):
         """Benchmark: Collecting seeds"""
         from app.tasks.discovery import collect_seeds
@@ -495,15 +433,7 @@ class TestDiscoveryPipelinePerformance:
         mock_session_local.return_value = db
 
         # Create many seeds
-        seeds = [
-            Seed(
-                tenant_id=tenant.id,
-                type='domain',
-                value=f'domain{i}.com',
-                enabled=True
-            )
-            for i in range(100)
-        ]
+        seeds = [Seed(tenant_id=tenant.id, type="domain", value=f"domain{i}.com", enabled=True) for i in range(100)]
         db.add_all(seeds)
         db.commit()
 
@@ -511,7 +441,7 @@ class TestDiscoveryPipelinePerformance:
         result = collect_seeds(tenant.id)
         elapsed = time.time() - start_time
 
-        assert len(result['domains']) == 100
+        assert len(result["domains"]) == 100
         # Should be very fast
         assert elapsed < 0.5, f"Collecting 100 seeds took {elapsed:.2f}s"
 
@@ -526,18 +456,14 @@ class TestIndexEffectiveness:
 
         # Create many assets
         assets_data = [
-            {
-                'identifier': f'sub{i}.example.com',
-                'type': AssetType.SUBDOMAIN,
-                'raw_metadata': '{}'
-            }
+            {"identifier": f"sub{i}.example.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"}
             for i in range(5000)
         ]
         repo.bulk_upsert(tenant.id, assets_data)
 
         # Query should be fast due to index
         start_time = time.time()
-        asset = repo.get_by_identifier(tenant.id, 'sub2500.example.com', AssetType.SUBDOMAIN)
+        asset = repo.get_by_identifier(tenant.id, "sub2500.example.com", AssetType.SUBDOMAIN)
         elapsed = time.time() - start_time
 
         assert asset is not None
@@ -552,10 +478,10 @@ class TestIndexEffectiveness:
         # Create assets with various risk scores
         assets_data = [
             {
-                'identifier': f'sub{i}.example.com',
-                'type': AssetType.SUBDOMAIN,
-                'raw_metadata': '{}',
-                'risk_score': float(i % 100)
+                "identifier": f"sub{i}.example.com",
+                "type": AssetType.SUBDOMAIN,
+                "raw_metadata": "{}",
+                "risk_score": float(i % 100),
             }
             for i in range(1000)
         ]
@@ -585,11 +511,7 @@ class TestScalabilityMetrics:
 
         for size in [100, 500, 1000]:
             assets_data = [
-                {
-                    'identifier': f'size{size}_{i}.com',
-                    'type': AssetType.SUBDOMAIN,
-                    'raw_metadata': '{}'
-                }
+                {"identifier": f"size{size}_{i}.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"}
                 for i in range(size)
             ]
 
@@ -613,25 +535,20 @@ class TestScalabilityMetrics:
         # Add data in stages and measure query time
         for batch in range(5):
             assets_data = [
-                {
-                    'identifier': f'batch{batch}_{i}.com',
-                    'type': AssetType.SUBDOMAIN,
-                    'raw_metadata': '{}'
-                }
+                {"identifier": f"batch{batch}_{i}.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"}
                 for i in range(1000)
             ]
             repo.bulk_upsert(tenant.id, assets_data)
 
             # Measure query time
             start_time = time.time()
-            repo.get_by_identifier(tenant.id, f'batch{batch}_500.com', AssetType.SUBDOMAIN)
+            repo.get_by_identifier(tenant.id, f"batch{batch}_500.com", AssetType.SUBDOMAIN)
             elapsed = time.time() - start_time
             query_times.append(elapsed)
 
         # Query time should remain relatively constant (due to indexes)
         # Last query should not be significantly slower than first
-        assert query_times[-1] < query_times[0] * 3, \
-            "Query performance degraded significantly as dataset grew"
+        assert query_times[-1] < query_times[0] * 3, "Query performance degraded significantly as dataset grew"
 
 
 @pytest.mark.benchmark
@@ -644,18 +561,13 @@ class TestBenchmarkComparisons:
         repo = AssetRepository(db)
 
         assets_data = [
-            {
-                'identifier': f'bench{i}.com',
-                'type': AssetType.SUBDOMAIN,
-                'raw_metadata': '{}'
-            }
-            for i in range(1000)
+            {"identifier": f"bench{i}.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"} for i in range(1000)
         ]
 
         def upsert():
             repo.bulk_upsert(tenant.id, assets_data)
 
-        if hasattr(pytest, 'benchmark'):
+        if hasattr(pytest, "benchmark"):
             benchmark(upsert)
         else:
             upsert()
@@ -667,19 +579,14 @@ class TestBenchmarkComparisons:
 
         # Setup data
         assets_data = [
-            {
-                'identifier': f'bench{i}.com',
-                'type': AssetType.SUBDOMAIN,
-                'raw_metadata': '{}'
-            }
-            for i in range(1000)
+            {"identifier": f"bench{i}.com", "type": AssetType.SUBDOMAIN, "raw_metadata": "{}"} for i in range(1000)
         ]
         repo.bulk_upsert(tenant.id, assets_data)
 
         def query():
-            repo.get_by_identifier(tenant.id, 'bench500.com', AssetType.SUBDOMAIN)
+            repo.get_by_identifier(tenant.id, "bench500.com", AssetType.SUBDOMAIN)
 
-        if hasattr(pytest, 'benchmark'):
+        if hasattr(pytest, "benchmark"):
             benchmark(query)
         else:
             query()

@@ -46,11 +46,7 @@ class AssetRepository:
         Returns:
             Asset if found, None otherwise
         """
-        return self.db.query(Asset).filter_by(
-            tenant_id=tenant_id,
-            identifier=identifier,
-            type=asset_type
-        ).first()
+        return self.db.query(Asset).filter_by(tenant_id=tenant_id, identifier=identifier, type=asset_type).first()
 
     def get_by_identifiers_bulk(self, tenant_id: int, identifiers_by_type: Dict[AssetType, List[str]]) -> Dict:
         """
@@ -76,23 +72,13 @@ class AssetRepository:
         conditions = []
         for asset_type, identifiers in identifiers_by_type.items():
             if identifiers:
-                conditions.append(
-                    and_(
-                        Asset.type == asset_type,
-                        Asset.identifier.in_(identifiers)
-                    )
-                )
+                conditions.append(and_(Asset.type == asset_type, Asset.identifier.in_(identifiers)))
 
         if not conditions:
             return {}
 
         # Single query with OR conditions - fetches all assets at once
-        assets = self.db.query(Asset).filter(
-            and_(
-                Asset.tenant_id == tenant_id,
-                or_(*conditions)
-            )
-        ).all()
+        assets = self.db.query(Asset).filter(and_(Asset.tenant_id == tenant_id, or_(*conditions))).all()
 
         # Build lookup dictionary for O(1) access
         asset_lookup = {}
@@ -109,7 +95,7 @@ class AssetRepository:
         is_active: bool = True,
         limit: int = 1000,
         offset: int = 0,
-        eager_load_relations: bool = False
+        eager_load_relations: bool = False,
     ) -> List[Asset]:
         """
         Get assets for a tenant with pagination
@@ -147,9 +133,7 @@ class AssetRepository:
         # instead of N queries (where N = number of assets * number of relationship types)
         if eager_load_relations:
             query = query.options(
-                selectinload(Asset.services),
-                selectinload(Asset.findings),
-                selectinload(Asset.events)
+                selectinload(Asset.services), selectinload(Asset.findings), selectinload(Asset.events)
             )
 
         return query.order_by(Asset.risk_score.desc()).limit(limit).offset(offset).all()
@@ -188,23 +172,25 @@ class AssetRepository:
             - last_seen and metadata are always updated
         """
         if not assets_data:
-            return {'created': 0, 'updated': 0, 'total_processed': 0}
+            return {"created": 0, "updated": 0, "total_processed": 0}
 
         # Prepare records for upsert
         records = []
         current_time = datetime.now(timezone.utc)
 
         for data in assets_data:
-            records.append({
-                'tenant_id': tenant_id,
-                'identifier': data['identifier'],
-                'type': data['type'],
-                'raw_metadata': data.get('raw_metadata'),
-                'first_seen': current_time,
-                'last_seen': current_time,
-                'risk_score': data.get('risk_score', 0.0),
-                'is_active': True
-            })
+            records.append(
+                {
+                    "tenant_id": tenant_id,
+                    "identifier": data["identifier"],
+                    "type": data["type"],
+                    "raw_metadata": data.get("raw_metadata"),
+                    "first_seen": current_time,
+                    "last_seen": current_time,
+                    "risk_score": data.get("risk_score", 0.0),
+                    "is_active": True,
+                }
+            )
 
         # Build UPSERT statement with RETURNING clause for tracking
         stmt = insert(Asset).values(records)
@@ -212,13 +198,13 @@ class AssetRepository:
         # On conflict, update last_seen and metadata but preserve first_seen
         # This is important: we only want to update last_seen, not first_seen
         stmt = stmt.on_conflict_do_update(
-            index_elements=['tenant_id', 'identifier', 'type'],
+            index_elements=["tenant_id", "identifier", "type"],
             set_={
-                'last_seen': stmt.excluded.last_seen,
-                'raw_metadata': stmt.excluded.raw_metadata,
-                'is_active': stmt.excluded.is_active
+                "last_seen": stmt.excluded.last_seen,
+                "raw_metadata": stmt.excluded.raw_metadata,
+                "is_active": stmt.excluded.is_active,
                 # Note: first_seen is NOT updated, preserving original discovery time
-            }
+            },
         ).returning(Asset.id, Asset.first_seen)
 
         # Execute and get affected rows
@@ -239,11 +225,7 @@ class AssetRepository:
             if first_seen and (current_time - first_seen).total_seconds() < 2:
                 created += 1
 
-        return {
-            'created': created,
-            'updated': len(returned_rows) - created,
-            'total_processed': len(records)
-        }
+        return {"created": created, "updated": len(returned_rows) - created, "total_processed": len(records)}
 
     def create_batch(self, assets: List[Asset]) -> List[Asset]:
         """
@@ -273,17 +255,11 @@ class AssetRepository:
         Args:
             asset_ids: List of asset IDs to deactivate
         """
-        self.db.query(Asset).filter(Asset.id.in_(asset_ids)).update(
-            {'is_active': False},
-            synchronize_session=False
-        )
+        self.db.query(Asset).filter(Asset.id.in_(asset_ids)).update({"is_active": False}, synchronize_session=False)
         self.db.commit()
 
     def get_critical_assets(
-        self,
-        tenant_id: int,
-        risk_threshold: float = 50.0,
-        eager_load_relations: bool = False
+        self, tenant_id: int, risk_threshold: float = 50.0, eager_load_relations: bool = False
     ) -> List[Asset]:
         """
         Get critical assets above risk threshold
@@ -306,11 +282,7 @@ class AssetRepository:
             - Without eager loading: 1 + (N * M) queries where N=assets, M=relationships accessed
         """
         query = self.db.query(Asset).filter(
-            and_(
-                Asset.tenant_id == tenant_id,
-                Asset.risk_score >= risk_threshold,
-                Asset.is_active == True
-            )
+            and_(Asset.tenant_id == tenant_id, Asset.risk_score >= risk_threshold, Asset.is_active == True)
         )
 
         # OPTIMIZATION: Eager load relationships to avoid N+1 queries
@@ -318,9 +290,7 @@ class AssetRepository:
         # with their associated findings and services for risk assessment
         if eager_load_relations:
             query = query.options(
-                selectinload(Asset.services),
-                selectinload(Asset.findings),
-                selectinload(Asset.events)
+                selectinload(Asset.services), selectinload(Asset.findings), selectinload(Asset.events)
             )
 
         return query.order_by(Asset.risk_score.desc()).all()
@@ -344,11 +314,7 @@ class EventRepository:
         Returns:
             Created event
         """
-        event = Event(
-            asset_id=asset_id,
-            kind=kind,
-            payload=json.dumps(payload)
-        )
+        event = Event(asset_id=asset_id, kind=kind, payload=json.dumps(payload))
         self.db.add(event)
         self.db.flush()
         return event
@@ -358,22 +324,19 @@ class EventRepository:
         self.db.add_all(events)
         self.db.flush()
 
-    def get_by_asset(
-        self,
-        asset_id: int,
-        limit: int = 100,
-        offset: int = 0
-    ) -> List[Event]:
+    def get_by_asset(self, asset_id: int, limit: int = 100, offset: int = 0) -> List[Event]:
         """Get events for an asset"""
-        return self.db.query(Event).filter_by(
-            asset_id=asset_id
-        ).order_by(Event.created_at.desc()).limit(limit).offset(offset).all()
+        return (
+            self.db.query(Event)
+            .filter_by(asset_id=asset_id)
+            .order_by(Event.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+            .all()
+        )
 
     def get_recent_by_tenant(
-        self,
-        tenant_id: int,
-        hours: int = 24,
-        event_kinds: Optional[List[EventKind]] = None
+        self, tenant_id: int, hours: int = 24, event_kinds: Optional[List[EventKind]] = None
     ) -> List[Event]:
         """
         Get recent events for a tenant
@@ -390,12 +353,7 @@ class EventRepository:
 
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-        query = self.db.query(Event).join(Asset).filter(
-            and_(
-                Asset.tenant_id == tenant_id,
-                Event.created_at >= cutoff
-            )
-        )
+        query = self.db.query(Event).join(Asset).filter(and_(Asset.tenant_id == tenant_id, Event.created_at >= cutoff))
 
         if event_kinds:
             query = query.filter(Event.kind.in_(event_kinds))

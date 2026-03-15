@@ -15,6 +15,7 @@ from datetime import datetime
 # Ticketing Config schemas
 # ------------------------------------------------------------------
 
+
 class TicketingConfigCreate(BaseModel):
     """Request body to create/update a ticketing integration config."""
 
@@ -107,6 +108,7 @@ class TicketingTestResult(BaseModel):
 # Ticket schemas
 # ------------------------------------------------------------------
 
+
 class TicketCreateRequest(BaseModel):
     """Request body to create a ticket for a finding."""
 
@@ -115,11 +117,7 @@ class TicketCreateRequest(BaseModel):
         description="Override provider (defaults to tenant's active config).",
     )
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {"provider": "jira"}
-        }
-    )
+    model_config = ConfigDict(json_schema_extra={"example": {"provider": "jira"}})
 
 
 class TicketResponse(BaseModel):

@@ -32,18 +32,18 @@ class ServiceNowProvider(TicketingProvider):
 
     SEVERITY_TO_IMPACT = {
         "critical": "1",  # High
-        "high": "2",      # Medium
-        "medium": "2",    # Medium
-        "low": "3",       # Low
-        "info": "3",      # Low
+        "high": "2",  # Medium
+        "medium": "2",  # Medium
+        "low": "3",  # Low
+        "info": "3",  # Low
     }
 
     SEVERITY_TO_URGENCY = {
         "critical": "1",  # High
-        "high": "2",      # Medium
-        "medium": "2",    # Medium
-        "low": "3",       # Low
-        "info": "3",      # Low
+        "high": "2",  # Medium
+        "medium": "2",  # Medium
+        "low": "3",  # Low
+        "info": "3",  # Low
     }
 
     # ServiceNow incident state values
@@ -55,11 +55,11 @@ class ServiceNowProvider(TicketingProvider):
 
     # Map ServiceNow state numbers to normalized EASM status
     SN_STATE_TO_EASM = {
-        "1": "open",          # New
-        "2": "in_progress",   # In Progress
-        "3": "in_progress",   # On Hold
-        "6": "resolved",      # Resolved
-        "7": "closed",        # Closed
+        "1": "open",  # New
+        "2": "in_progress",  # In Progress
+        "3": "in_progress",  # On Hold
+        "6": "resolved",  # Resolved
+        "7": "closed",  # Closed
     }
 
     def __init__(self, config: dict):
@@ -87,9 +87,7 @@ class ServiceNowProvider(TicketingProvider):
             )
         return self._client
 
-    def _request_with_retry(
-        self, method: str, path: str, **kwargs
-    ) -> httpx.Response:
+    def _request_with_retry(self, method: str, path: str, **kwargs) -> httpx.Response:
         """
         Execute an HTTP request with exponential-backoff retries
         on transient errors (5xx, timeouts, connection errors).
@@ -124,9 +122,7 @@ class ServiceNowProvider(TicketingProvider):
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(_RETRY_BACKOFF_SECONDS[attempt])
 
-        raise ConnectionError(
-            f"ServiceNow request failed after {_MAX_RETRIES} attempts: {last_exc}"
-        )
+        raise ConnectionError(f"ServiceNow request failed after {_MAX_RETRIES} attempts: {last_exc}")
 
     @staticmethod
     def _build_description(data: TicketData) -> str:
@@ -145,10 +141,7 @@ class ServiceNowProvider(TicketingProvider):
                 lines.append(f"{key}: {value}")
             lines.append("")
 
-        lines.append(
-            f"[Auto-created by EASM Platform - "
-            f"finding_id={data.finding_id}, tenant_id={data.tenant_id}]"
-        )
+        lines.append(f"[Auto-created by EASM Platform - finding_id={data.finding_id}, tenant_id={data.tenant_id}]")
 
         return "\n".join(lines)
 
@@ -170,9 +163,7 @@ class ServiceNowProvider(TicketingProvider):
         )
 
         if response.status_code != 200:
-            raise RuntimeError(
-                f"ServiceNow lookup for {number} failed ({response.status_code})"
-            )
+            raise RuntimeError(f"ServiceNow lookup for {number} failed ({response.status_code})")
 
         results = response.json().get("result", [])
         if not results:
@@ -202,9 +193,7 @@ class ServiceNowProvider(TicketingProvider):
         if data.assignee:
             payload["assigned_to"] = data.assignee
 
-        response = self._request_with_retry(
-            "POST", f"/table/{self.table}", json=payload
-        )
+        response = self._request_with_retry("POST", f"/table/{self.table}", json=payload)
 
         if response.status_code not in (200, 201):
             error_detail = response.text[:500]
@@ -213,10 +202,7 @@ class ServiceNowProvider(TicketingProvider):
                 response.status_code,
                 error_detail,
             )
-            raise RuntimeError(
-                f"ServiceNow incident creation failed ({response.status_code}): "
-                f"{error_detail}"
-            )
+            raise RuntimeError(f"ServiceNow incident creation failed ({response.status_code}): {error_detail}")
 
         result_data = response.json().get("result", {})
         number = result_data.get("number", "")
@@ -244,9 +230,7 @@ class ServiceNowProvider(TicketingProvider):
         """
         sys_id = self._sys_id_from_number(external_id)
 
-        response = self._request_with_retry(
-            "PATCH", f"/table/{self.table}/{sys_id}", json=data
-        )
+        response = self._request_with_retry("PATCH", f"/table/{self.table}/{sys_id}", json=data)
 
         if response.status_code not in (200, 204):
             error_detail = response.text[:500]
@@ -256,10 +240,7 @@ class ServiceNowProvider(TicketingProvider):
                 response.status_code,
                 error_detail,
             )
-            raise RuntimeError(
-                f"ServiceNow incident update failed ({response.status_code}): "
-                f"{error_detail}"
-            )
+            raise RuntimeError(f"ServiceNow incident update failed ({response.status_code}): {error_detail}")
 
         result_data = response.json().get("result", {})
         current_state = result_data.get("state", "")
@@ -291,9 +272,7 @@ class ServiceNowProvider(TicketingProvider):
         )
 
         if response.status_code != 200:
-            raise RuntimeError(
-                f"ServiceNow status fetch failed ({response.status_code})"
-            )
+            raise RuntimeError(f"ServiceNow status fetch failed ({response.status_code})")
 
         results = response.json().get("result", [])
         if not results:
@@ -319,9 +298,7 @@ class ServiceNowProvider(TicketingProvider):
         )
 
         if response.status_code != 200:
-            raise RuntimeError(
-                f"ServiceNow status fetch failed ({response.status_code})"
-            )
+            raise RuntimeError(f"ServiceNow status fetch failed ({response.status_code})")
 
         results = response.json().get("result", [])
         if not results:
@@ -428,9 +405,7 @@ class ServiceNowProvider(TicketingProvider):
                     return True
                 logger.warning("ServiceNow connection OK but user profile not found")
                 return True  # Connection works even if user lookup returns empty
-            logger.error(
-                "ServiceNow connection test failed: %d", response.status_code
-            )
+            logger.error("ServiceNow connection test failed: %d", response.status_code)
             return False
         except Exception as exc:
             logger.error("ServiceNow connection test error: %s", exc)

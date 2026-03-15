@@ -104,9 +104,7 @@ _CVSS_WEIGHT: dict[str, float] = {
 }
 
 # S3 listing response patterns (XML elements from ListBucketResult)
-_S3_LISTING_PATTERN = re.compile(
-    r"<ListBucketResult|<Contents>|<Key>", re.IGNORECASE
-)
+_S3_LISTING_PATTERN = re.compile(r"<ListBucketResult|<Contents>|<Key>", re.IGNORECASE)
 
 # GCS listing response patterns
 _GCS_LISTING_PATTERN = re.compile(
@@ -115,14 +113,13 @@ _GCS_LISTING_PATTERN = re.compile(
 )
 
 # Azure listing response patterns
-_AZURE_LISTING_PATTERN = re.compile(
-    r"<EnumerationResults|<Blobs>|<Blob>|<Name>", re.IGNORECASE
-)
+_AZURE_LISTING_PATTERN = re.compile(r"<EnumerationResults|<Blobs>|<Blob>|<Name>", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
 # Bucket name generation
 # ---------------------------------------------------------------------------
+
 
 def generate_bucket_names(domain: str) -> list[str]:
     """
@@ -149,8 +146,8 @@ def generate_bucket_names(domain: str) -> list[str]:
     # to avoid false positives on generic bucket names like "assets" or "cdn"
     parts = domain.split(".")
     name_base = parts[0] if parts else domain  # e.g. 'autistici'
-    name_dash = "-".join(parts)                # e.g. 'autistici-org'
-    name_concat = "".join(parts)               # e.g. 'autisticiorg'
+    name_dash = "-".join(parts)  # e.g. 'autistici-org'
+    name_concat = "".join(parts)  # e.g. 'autisticiorg'
 
     # Only use bases that are specific enough (>= 4 chars)
     bases = []
@@ -185,16 +182,19 @@ def generate_bucket_names(domain: str) -> list[str]:
 # Provider probe targets
 # ---------------------------------------------------------------------------
 
+
 def _build_s3_targets(bucket_names: list[str]) -> list[dict[str, str]]:
     """Build AWS S3 probe targets."""
     targets = []
     for name in bucket_names:
-        targets.append({
-            "provider": "aws-s3",
-            "bucket_name": name,
-            "check_url": f"https://{name}.s3.amazonaws.com",
-            "list_url": f"https://{name}.s3.amazonaws.com/?list-type=2&max-keys=5",
-        })
+        targets.append(
+            {
+                "provider": "aws-s3",
+                "bucket_name": name,
+                "check_url": f"https://{name}.s3.amazonaws.com",
+                "list_url": f"https://{name}.s3.amazonaws.com/?list-type=2&max-keys=5",
+            }
+        )
     return targets
 
 
@@ -202,12 +202,14 @@ def _build_gcs_targets(bucket_names: list[str]) -> list[dict[str, str]]:
     """Build Google Cloud Storage probe targets."""
     targets = []
     for name in bucket_names:
-        targets.append({
-            "provider": "gcs",
-            "bucket_name": name,
-            "check_url": f"https://storage.googleapis.com/{name}",
-            "list_url": f"https://storage.googleapis.com/{name}",
-        })
+        targets.append(
+            {
+                "provider": "gcs",
+                "bucket_name": name,
+                "check_url": f"https://storage.googleapis.com/{name}",
+                "list_url": f"https://storage.googleapis.com/{name}",
+            }
+        )
     return targets
 
 
@@ -219,15 +221,17 @@ def _build_azure_targets(bucket_names: list[str]) -> list[dict[str, str]]:
         sanitized = re.sub(r"[^a-z0-9]", "", name)
         if len(sanitized) < 3 or len(sanitized) > 24:
             continue
-        targets.append({
-            "provider": "azure-blob",
-            "bucket_name": name,
-            "check_url": f"https://{sanitized}.blob.core.windows.net/{sanitized}",
-            "list_url": f"https://{sanitized}.blob.core.windows.net/{sanitized}?restype=container&comp=list&maxresults=5",
-            "extra_checks": [
-                f"https://{sanitized}.blob.core.windows.net/$web",
-            ],
-        })
+        targets.append(
+            {
+                "provider": "azure-blob",
+                "bucket_name": name,
+                "check_url": f"https://{sanitized}.blob.core.windows.net/{sanitized}",
+                "list_url": f"https://{sanitized}.blob.core.windows.net/{sanitized}?restype=container&comp=list&maxresults=5",
+                "extra_checks": [
+                    f"https://{sanitized}.blob.core.windows.net/$web",
+                ],
+            }
+        )
     return targets
 
 
@@ -236,19 +240,22 @@ def _build_do_targets(bucket_names: list[str]) -> list[dict[str, str]]:
     targets = []
     for name in bucket_names:
         for region in DO_REGIONS:
-            targets.append({
-                "provider": "do-spaces",
-                "bucket_name": name,
-                "check_url": f"https://{name}.{region}.digitaloceanspaces.com",
-                "list_url": f"https://{name}.{region}.digitaloceanspaces.com",
-                "region": region,
-            })
+            targets.append(
+                {
+                    "provider": "do-spaces",
+                    "bucket_name": name,
+                    "check_url": f"https://{name}.{region}.digitaloceanspaces.com",
+                    "list_url": f"https://{name}.{region}.digitaloceanspaces.com",
+                    "region": region,
+                }
+            )
     return targets
 
 
 # ---------------------------------------------------------------------------
 # Async probing
 # ---------------------------------------------------------------------------
+
 
 async def _probe_bucket(
     client: httpx.AsyncClient,
@@ -311,10 +318,12 @@ async def _probe_bucket(
                 try:
                     extra_resp = await client.head(extra_url, follow_redirects=True)
                     if extra_resp.status_code == 200:
-                        extra_findings.append({
-                            "url": extra_url,
-                            "status_code": extra_resp.status_code,
-                        })
+                        extra_findings.append(
+                            {
+                                "url": extra_url,
+                                "status_code": extra_resp.status_code,
+                            }
+                        )
                 except (httpx.TimeoutException, httpx.ConnectError):
                     pass
 
@@ -404,10 +413,7 @@ async def _run_cloud_scan_async(
         verify=False,  # Some cloud endpoints have cert issues with custom domains
         headers={"User-Agent": "EASM-Scanner/1.0"},
     ) as client:
-        tasks = [
-            _probe_bucket(client, target, semaphore)
-            for target in targets
-        ]
+        tasks = [_probe_bucket(client, target, semaphore) for target in targets]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
     findings = []
@@ -420,6 +426,7 @@ async def _run_cloud_scan_async(
 # ---------------------------------------------------------------------------
 # Finding persistence
 # ---------------------------------------------------------------------------
+
 
 def _template_id_for_bucket(provider: str, access_level: str) -> str:
     """Generate a stable template_id for a cloud bucket finding."""
@@ -502,11 +509,7 @@ def _persist_findings(
         )
 
         # Upsert: check for existing finding by fingerprint
-        existing = (
-            db.query(Finding)
-            .filter(Finding.fingerprint == fp)
-            .first()
-        )
+        existing = db.query(Finding).filter(Finding.fingerprint == fp).first()
 
         if existing:
             existing.last_seen = datetime.now(timezone.utc)
@@ -544,6 +547,7 @@ def _persist_findings(
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
+
 
 def run_cloud_bucket_scan(
     tenant_id: int,
@@ -628,8 +632,7 @@ def run_cloud_bucket_scan(
             return stats
 
         tenant_logger.info(
-            f"Cloud bucket scan: {len(assets)} domains, "
-            f"{len(all_bucket_names)} unique bucket names to probe"
+            f"Cloud bucket scan: {len(assets)} domains, {len(all_bucket_names)} unique bucket names to probe"
         )
 
         # Build probe targets for all providers
@@ -641,10 +644,7 @@ def run_cloud_bucket_scan(
 
         stats["targets_probed"] = len(all_targets)
 
-        tenant_logger.info(
-            f"Cloud bucket scan: {len(all_targets)} total probe targets "
-            f"across 4 providers"
-        )
+        tenant_logger.info(f"Cloud bucket scan: {len(all_targets)} total probe targets across 4 providers")
 
         # Run async probes with global timeout
         async def _run_with_timeout():
@@ -655,8 +655,7 @@ def run_cloud_bucket_scan(
                 )
             except asyncio.TimeoutError:
                 tenant_logger.warning(
-                    f"Cloud bucket scan timed out after {_GLOBAL_TIMEOUT}s "
-                    f"({len(all_targets)} targets)"
+                    f"Cloud bucket scan timed out after {_GLOBAL_TIMEOUT}s ({len(all_targets)} targets)"
                 )
                 return []
 
@@ -664,10 +663,9 @@ def run_cloud_bucket_scan(
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 import concurrent.futures
+
                 with concurrent.futures.ThreadPoolExecutor() as pool:
-                    cloud_findings = pool.submit(
-                        asyncio.run, _run_with_timeout()
-                    ).result()
+                    cloud_findings = pool.submit(asyncio.run, _run_with_timeout()).result()
             else:
                 cloud_findings = loop.run_until_complete(_run_with_timeout())
         except RuntimeError:
@@ -676,16 +674,17 @@ def run_cloud_bucket_scan(
         stats["buckets_found"] = len(cloud_findings)
 
         if cloud_findings:
-            tenant_logger.info(
-                f"Cloud bucket scan found {len(cloud_findings)} accessible buckets"
-            )
+            tenant_logger.info(f"Cloud bucket scan found {len(cloud_findings)} accessible buckets")
 
             # Persist findings - associate with the first domain asset
             # (cloud buckets are org-level, linked to the primary domain)
             primary_asset_id = assets[0].id
 
             result = _persist_findings(
-                db, tenant_id, primary_asset_id, cloud_findings,
+                db,
+                tenant_id,
+                primary_asset_id,
+                cloud_findings,
                 scan_run_id=scan_run_id,
                 asset_identifier=assets[0].identifier,
             )
@@ -700,9 +699,7 @@ def run_cloud_bucket_scan(
                 sev = f["severity"]
                 severity_counts[sev] = severity_counts.get(sev, 0) + 1
 
-            tenant_logger.info(
-                f"Cloud bucket findings breakdown: {severity_counts}"
-            )
+            tenant_logger.info(f"Cloud bucket findings breakdown: {severity_counts}")
         else:
             tenant_logger.info("Cloud bucket scan: no accessible buckets found")
 
@@ -717,9 +714,7 @@ def run_cloud_bucket_scan(
         )
 
     except Exception as exc:
-        tenant_logger.error(
-            f"Cloud bucket scan failed: {exc}", exc_info=True
-        )
+        tenant_logger.error(f"Cloud bucket scan failed: {exc}", exc_info=True)
         stats["status"] = "failed"
         stats["error"] = str(exc)
         stats["errors"] += 1

@@ -146,19 +146,17 @@ def health_metrics() -> Response:
         db = SessionLocal()
         try:
             data["tenants"] = db.execute(text("SELECT count(*) FROM tenants")).scalar()
-            data["assets_active"] = db.execute(
-                text("SELECT count(*) FROM assets WHERE is_active = true")
-            ).scalar()
-            data["findings_open"] = db.execute(
-                text("SELECT count(*) FROM findings WHERE status = 'open'")
-            ).scalar()
+            data["assets_active"] = db.execute(text("SELECT count(*) FROM assets WHERE is_active = true")).scalar()
+            data["findings_open"] = db.execute(text("SELECT count(*) FROM findings WHERE status = 'open'")).scalar()
 
-            scan_row = db.execute(text(
-                "SELECT count(*), "
-                "       count(*) FILTER (WHERE status = 'completed'), "
-                "       count(*) FILTER (WHERE status = 'failed') "
-                "FROM scan_runs"
-            )).fetchone()
+            scan_row = db.execute(
+                text(
+                    "SELECT count(*), "
+                    "       count(*) FILTER (WHERE status = 'completed'), "
+                    "       count(*) FILTER (WHERE status = 'failed') "
+                    "FROM scan_runs"
+                )
+            ).fetchone()
             if scan_row:
                 data["scan_runs_total"] = scan_row[0]
                 data["scan_runs_completed"] = scan_row[1]

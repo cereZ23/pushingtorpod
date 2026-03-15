@@ -36,6 +36,7 @@ BULK_RETEST_LIMIT = 100
 # Pydantic schemas (inline for this router)
 # ---------------------------------------------------------------------------
 
+
 class BulkRetestRequest(BaseModel):
     """Schema for bulk retest request."""
 
@@ -74,16 +75,23 @@ class BulkRetestResponse(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _get_finding_for_tenant(
     db: Session,
     tenant_id: int,
     finding_id: int,
 ) -> Finding:
     """Fetch a finding scoped to the given tenant, or raise 404."""
-    finding = db.query(Finding).join(Asset).options(joinedload(Finding.asset)).filter(
-        Finding.id == finding_id,
-        Asset.tenant_id == tenant_id,
-    ).first()
+    finding = (
+        db.query(Finding)
+        .join(Asset)
+        .options(joinedload(Finding.asset))
+        .filter(
+            Finding.id == finding_id,
+            Asset.tenant_id == tenant_id,
+        )
+        .first()
+    )
     if not finding:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -152,9 +160,14 @@ def _resolve_project_id(db: Session, finding: Finding, tenant_id: int) -> int:
     from app.models.scanning import Project
 
     # Try to find a project for this tenant
-    project = db.query(Project).filter(
-        Project.tenant_id == tenant_id,
-    ).order_by(Project.updated_at.desc()).first()
+    project = (
+        db.query(Project)
+        .filter(
+            Project.tenant_id == tenant_id,
+        )
+        .order_by(Project.updated_at.desc())
+        .first()
+    )
 
     if project:
         return project.id
@@ -212,6 +225,7 @@ def _safe_set(obj: object, attr: str, value) -> None:
 # ENDPOINTS
 # ===========================================================================
 
+
 @router.post("/findings/{finding_id}/retest", response_model=TaskResponse)
 def trigger_retest(
     tenant_id: int,
@@ -249,24 +263,22 @@ def trigger_retest(
     # Check if a retest is already pending for this finding
     existing_retest_id = _safe_get(finding, "retest_scan_run_id")
     if existing_retest_id:
-        existing_run = db.query(ScanRun).filter(
-            ScanRun.id == existing_retest_id,
-        ).first()
+        existing_run = (
+            db.query(ScanRun)
+            .filter(
+                ScanRun.id == existing_retest_id,
+            )
+            .first()
+        )
         if existing_run and existing_run.status in (ScanRunStatus.PENDING, ScanRunStatus.RUNNING):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Finding {finding_id} already has a pending retest "
-                    f"(scan_run_id={existing_retest_id})"
-                ),
+                detail=(f"Finding {finding_id} already has a pending retest (scan_run_id={existing_retest_id})"),
             )
 
     scan_run = _create_retest_scan_run(db, finding, tenant_id)
 
-    logger.info(
-        f"Triggered retest for finding {finding_id} "
-        f"(scan_run={scan_run.id}, tenant={tenant_id})"
-    )
+    logger.info(f"Triggered retest for finding {finding_id} (scan_run={scan_run.id}, tenant={tenant_id})")
 
     return TaskResponse(
         task_id=scan_run.celery_task_id or "pending",
@@ -366,10 +378,16 @@ def bulk_retest(
 
     for finding_id in payload.finding_ids:
         # Fetch finding with tenant isolation
-        finding = db.query(Finding).join(Asset).options(joinedload(Finding.asset)).filter(
-            Finding.id == finding_id,
-            Asset.tenant_id == tenant_id,
-        ).first()
+        finding = (
+            db.query(Finding)
+            .join(Asset)
+            .options(joinedload(Finding.asset))
+            .filter(
+                Finding.id == finding_id,
+                Asset.tenant_id == tenant_id,
+            )
+            .first()
+        )
 
         if not finding:
             skipped += 1
@@ -379,25 +397,28 @@ def bulk_retest(
         # Skip if already being retested
         existing_retest_id = _safe_get(finding, "retest_scan_run_id")
         if existing_retest_id:
-            existing_run = db.query(ScanRun).filter(
-                ScanRun.id == existing_retest_id,
-            ).first()
+            existing_run = (
+                db.query(ScanRun)
+                .filter(
+                    ScanRun.id == existing_retest_id,
+                )
+                .first()
+            )
             if existing_run and existing_run.status in (ScanRunStatus.PENDING, ScanRunStatus.RUNNING):
                 skipped += 1
-                errors.append(
-                    f"Finding {finding_id} already has a pending retest "
-                    f"(scan_run_id={existing_retest_id})"
-                )
+                errors.append(f"Finding {finding_id} already has a pending retest (scan_run_id={existing_retest_id})")
                 continue
 
         try:
             scan_run = _create_retest_scan_run(db, finding, tenant_id)
             queued += 1
-            tasks.append({
-                "finding_id": finding_id,
-                "scan_run_id": scan_run.id,
-                "task_id": scan_run.celery_task_id or "pending",
-            })
+            tasks.append(
+                {
+                    "finding_id": finding_id,
+                    "scan_run_id": scan_run.id,
+                    "task_id": scan_run.celery_task_id or "pending",
+                }
+            )
         except Exception as exc:
             skipped += 1
             errors.append(f"Failed to queue retest for finding {finding_id}: {str(exc)}")

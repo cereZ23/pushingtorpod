@@ -51,12 +51,7 @@ async def list_audit_logs(
         query = query.filter(AuditLog.timestamp <= end_date)
 
     total = query.count()
-    logs = (
-        query.order_by(AuditLog.timestamp.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-        .all()
-    )
+    logs = query.order_by(AuditLog.timestamp.desc()).offset((page - 1) * page_size).limit(page_size).all()
 
     return {
         "data": [

@@ -37,14 +37,18 @@ def _phase_2_dns_bruteforce(tenant_id, project_id, scan_run_id, db, tenant_logge
     from app.models.database import Asset, AssetType
 
     # Gather known subdomains
-    subdomains = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
-        Asset.is_active == True,
-    ).all()
+    subdomains = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
+            Asset.is_active == True,
+        )
+        .all()
+    )
 
     if not subdomains:
-        return {'assets_discovered': 0, 'candidates_generated': 0}
+        return {"assets_discovered": 0, "candidates_generated": 0}
 
     subdomain_list = [a.identifier for a in subdomains]
 
@@ -65,8 +69,7 @@ def _phase_2_dns_bruteforce(tenant_id, project_id, scan_run_id, db, tenant_logge
     in_scope = [h for h in validated if _is_hostname_in_scope(h.strip().lower(), seed_domains)]
     if len(in_scope) < len(validated):
         tenant_logger.info(
-            f"Scope filter: {len(in_scope)} in-scope, "
-            f"{len(validated) - len(in_scope)} out-of-scope filtered"
+            f"Scope filter: {len(in_scope)} in-scope, {len(validated) - len(in_scope)} out-of-scope filtered"
         )
     validated = in_scope
 
@@ -78,11 +81,15 @@ def _phase_2_dns_bruteforce(tenant_id, project_id, scan_run_id, db, tenant_logge
         if not hostname:
             continue
 
-        existing = db.query(Asset).filter(
-            Asset.tenant_id == tenant_id,
-            Asset.identifier == hostname,
-            Asset.type == AssetType.SUBDOMAIN,
-        ).first()
+        existing = (
+            db.query(Asset)
+            .filter(
+                Asset.tenant_id == tenant_id,
+                Asset.identifier == hostname,
+                Asset.type == AssetType.SUBDOMAIN,
+            )
+            .first()
+        )
 
         if not existing:
             asset = Asset(
@@ -98,18 +105,23 @@ def _phase_2_dns_bruteforce(tenant_id, project_id, scan_run_id, db, tenant_logge
             # Create parent_domain relationship
             parent_domain = _extract_parent_domain(hostname)
             if parent_domain:
-                parent_asset = db.query(Asset).filter(
-                    Asset.tenant_id == tenant_id,
-                    Asset.identifier == parent_domain,
-                    Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
-                ).first()
+                parent_asset = (
+                    db.query(Asset)
+                    .filter(
+                        Asset.tenant_id == tenant_id,
+                        Asset.identifier == parent_domain,
+                        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
+                    )
+                    .first()
+                )
                 if parent_asset:
                     if _upsert_relationship(
-                        db, tenant_id,
+                        db,
+                        tenant_id,
                         source_asset_id=asset.id,
                         target_asset_id=parent_asset.id,
-                        rel_type='parent_domain',
-                        metadata={'source': 'dns_bruteforce'},
+                        rel_type="parent_domain",
+                        metadata={"source": "dns_bruteforce"},
                     ):
                         relationships_created += 1
         else:
@@ -119,10 +131,10 @@ def _phase_2_dns_bruteforce(tenant_id, project_id, scan_run_id, db, tenant_logge
     db.commit()
 
     return {
-        'assets_discovered': assets_created,
-        'candidates_generated': len(candidates),
-        'candidates_validated': len(validated),
-        'relationships_created': relationships_created,
+        "assets_discovered": assets_created,
+        "candidates_generated": len(candidates),
+        "candidates_validated": len(validated),
+        "relationships_created": relationships_created,
     }
 
 
@@ -138,53 +150,56 @@ def _phase_3_dns_resolution(tenant_id, project_id, scan_run_id, db, tenant_logge
     from app.models.database import Asset, AssetType
 
     # Get all subdomains to resolve
-    subdomains = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
-        Asset.is_active == True
-    ).all()
+    subdomains = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
+            Asset.is_active == True,
+        )
+        .all()
+    )
 
     if not subdomains:
-        return {'records_resolved': 0, 'relationships_created': 0}
+        return {"records_resolved": 0, "relationships_created": 0}
 
     subdomain_list = [a.identifier for a in subdomains]
 
     # run_dnsx expects (subfinder_result: dict, tenant_id: int)
-    subfinder_result = {'subdomains': subdomain_list}
+    subfinder_result = {"subdomains": subdomain_list}
     result = run_dnsx(subfinder_result, tenant_id)
 
-    resolved = result.get('resolved', []) if isinstance(result, dict) else []
+    resolved = result.get("resolved", []) if isinstance(result, dict) else []
 
     # Collect unique IPs from all resolved records
     unique_ips = set()
     for record in resolved:
-        for ip in record.get('a', []):
+        for ip in record.get("a", []):
             unique_ips.add(ip)
-        for ip in record.get('aaaa', []):
+        for ip in record.get("aaaa", []):
             unique_ips.add(ip)
 
     # Collect unique CNAME targets (they may be new subdomains)
     unique_cnames = set()
     for record in resolved:
-        for cname in record.get('cname', []):
-            cname = cname.strip().rstrip('.').lower()
+        for cname in record.get("cname", []):
+            cname = cname.strip().rstrip(".").lower()
             if cname:
                 unique_cnames.add(cname)
 
     # Create IP assets (deduped, skip existing)
     ips_created = 0
     for ip in unique_ips:
-        existing = db.query(Asset.id).filter(
-            Asset.tenant_id == tenant_id,
-            Asset.identifier == ip
-        ).first()
+        existing = db.query(Asset.id).filter(Asset.tenant_id == tenant_id, Asset.identifier == ip).first()
         if not existing:
-            db.add(Asset(
-                tenant_id=tenant_id,
-                type=AssetType.IP,
-                identifier=ip,
-                is_active=True,
-            ))
+            db.add(
+                Asset(
+                    tenant_id=tenant_id,
+                    type=AssetType.IP,
+                    identifier=ip,
+                    is_active=True,
+                )
+            )
             ips_created += 1
     if ips_created:
         db.commit()
@@ -199,80 +214,90 @@ def _phase_3_dns_resolution(tenant_id, project_id, scan_run_id, db, tenant_logge
         if not _is_hostname_in_scope(cname, seed_domains):
             cnames_skipped += 1
             continue
-        existing = db.query(Asset.id).filter(
-            Asset.tenant_id == tenant_id,
-            Asset.identifier == cname,
-        ).first()
+        existing = (
+            db.query(Asset.id)
+            .filter(
+                Asset.tenant_id == tenant_id,
+                Asset.identifier == cname,
+            )
+            .first()
+        )
         if not existing:
-            db.add(Asset(
-                tenant_id=tenant_id,
-                type=AssetType.SUBDOMAIN,
-                identifier=cname,
-                is_active=True,
-            ))
+            db.add(
+                Asset(
+                    tenant_id=tenant_id,
+                    type=AssetType.SUBDOMAIN,
+                    identifier=cname,
+                    is_active=True,
+                )
+            )
             cnames_created += 1
     if cnames_created:
         db.commit()
     if cnames_skipped:
-        tenant_logger.info(
-            f"Skipped {cnames_skipped} out-of-scope CNAME targets "
-            f"(CDN/cloud infrastructure)"
-        )
+        tenant_logger.info(f"Skipped {cnames_skipped} out-of-scope CNAME targets (CDN/cloud infrastructure)")
 
     # ------------------------------------------------------------------
     # Build asset lookup for relationship creation
     # ------------------------------------------------------------------
-    all_assets = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.is_active == True,
-    ).all()
+    all_assets = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.is_active == True,
+        )
+        .all()
+    )
     asset_by_identifier = {a.identifier.lower(): a for a in all_assets}
 
     relationships_created = 0
 
     for record in resolved:
-        host = record.get('host', '').lower()
+        host = record.get("host", "").lower()
         source_asset = asset_by_identifier.get(host)
         if not source_asset:
             continue
 
         # --- resolves_to: subdomain/domain -> IP (A records) ---
-        for ip in record.get('a', []):
+        for ip in record.get("a", []):
             target_asset = asset_by_identifier.get(ip)
             if target_asset:
                 if _upsert_relationship(
-                    db, tenant_id,
+                    db,
+                    tenant_id,
                     source_asset_id=source_asset.id,
                     target_asset_id=target_asset.id,
-                    rel_type='resolves_to',
-                    metadata={'record_type': 'A', 'value': ip},
+                    rel_type="resolves_to",
+                    metadata={"record_type": "A", "value": ip},
                 ):
                     relationships_created += 1
 
         # --- resolves_to: subdomain/domain -> IP (AAAA records) ---
-        for ip in record.get('aaaa', []):
+        for ip in record.get("aaaa", []):
             target_asset = asset_by_identifier.get(ip)
             if target_asset:
                 if _upsert_relationship(
-                    db, tenant_id,
+                    db,
+                    tenant_id,
                     source_asset_id=source_asset.id,
                     target_asset_id=target_asset.id,
-                    rel_type='resolves_to',
-                    metadata={'record_type': 'AAAA', 'value': ip},
+                    rel_type="resolves_to",
+                    metadata={"record_type": "AAAA", "value": ip},
                 ):
                     relationships_created += 1
 
         # --- cname_to: subdomain/domain -> CNAME target ---
-        for cname in record.get('cname', []):
-            cname_clean = cname.strip().rstrip('.').lower()
+        for cname in record.get("cname", []):
+            cname_clean = cname.strip().rstrip(".").lower()
             target_asset = asset_by_identifier.get(cname_clean)
             if target_asset:
                 if _upsert_relationship(
-                    db, tenant_id,
+                    db,
+                    tenant_id,
                     source_asset_id=source_asset.id,
                     target_asset_id=target_asset.id,
-                    rel_type='cname_to',
-                    metadata={'cname': cname_clean},
+                    rel_type="cname_to",
+                    metadata={"cname": cname_clean},
                 ):
                     relationships_created += 1
 
@@ -282,11 +307,12 @@ def _phase_3_dns_resolution(tenant_id, project_id, scan_run_id, db, tenant_logge
             parent_asset = asset_by_identifier.get(parent_domain)
             if parent_asset:
                 if _upsert_relationship(
-                    db, tenant_id,
+                    db,
+                    tenant_id,
                     source_asset_id=source_asset.id,
                     target_asset_id=parent_asset.id,
-                    rel_type='parent_domain',
-                    metadata={'source': 'dns_resolution'},
+                    rel_type="parent_domain",
+                    metadata={"source": "dns_resolution"},
                 ):
                     relationships_created += 1
 
@@ -294,16 +320,15 @@ def _phase_3_dns_resolution(tenant_id, project_id, scan_run_id, db, tenant_logge
         db.commit()
 
     tenant_logger.info(
-        f"Phase 3 relationships: {relationships_created} edges created "
-        f"(resolves_to, cname_to, parent_domain)"
+        f"Phase 3 relationships: {relationships_created} edges created (resolves_to, cname_to, parent_domain)"
     )
 
     return {
-        'records_resolved': len(resolved),
-        'ips_created': ips_created,
-        'cnames_created': cnames_created,
-        'hosts_resolved': len(subdomain_list),
-        'relationships_created': relationships_created,
+        "records_resolved": len(resolved),
+        "ips_created": ips_created,
+        "cnames_created": cnames_created,
+        "hosts_resolved": len(subdomain_list),
+        "relationships_created": relationships_created,
     }
 
 
@@ -320,22 +345,26 @@ def _phase_4_http_probing(tenant_id, project_id, scan_run_id, db, tenant_logger)
     from app.tasks.enrichment import run_httpx
     from app.models.database import Asset, AssetType, Service
 
-    assets = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN, AssetType.IP]),
-        Asset.is_active == True
-    ).all()
+    assets = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN, AssetType.IP]),
+            Asset.is_active == True,
+        )
+        .all()
+    )
 
     if not assets:
         tenant_logger.warning("No active assets for HTTP probing")
-        return {'services_discovered': 0, 'hosts_probed': 0, 'relationships_created': 0}
+        return {"services_discovered": 0, "hosts_probed": 0, "relationships_created": 0}
 
     asset_ids = [a.id for a in assets]
     tenant_logger.info(f"HTTPx: probing {len(asset_ids)} assets")
     result = run_httpx(tenant_id, asset_ids)
 
-    services_created = result.get('services_created', 0) if isinstance(result, dict) else 0
-    services_updated = result.get('services_updated', 0) if isinstance(result, dict) else 0
+    services_created = result.get("services_created", 0) if isinstance(result, dict) else 0
+    services_updated = result.get("services_updated", 0) if isinstance(result, dict) else 0
 
     # ------------------------------------------------------------------
     # Create 'hosts' edges: asset -> service asset
@@ -353,9 +382,13 @@ def _phase_4_http_probing(tenant_id, project_id, scan_run_id, db, tenant_logger)
     db.expire_all()
 
     for asset in assets:
-        services = db.query(Service).filter(
-            Service.asset_id == asset.id,
-        ).all()
+        services = (
+            db.query(Service)
+            .filter(
+                Service.asset_id == asset.id,
+            )
+            .all()
+        )
 
         for svc in services:
             if svc.port is None:
@@ -363,11 +396,15 @@ def _phase_4_http_probing(tenant_id, project_id, scan_run_id, db, tenant_logger)
 
             # Upsert a SERVICE-type asset for the (host, port) combo
             svc_identifier = f"{asset.identifier}:{svc.port}"
-            svc_asset = db.query(Asset).filter(
-                Asset.tenant_id == tenant_id,
-                Asset.identifier == svc_identifier,
-                Asset.type == AssetType.SERVICE,
-            ).first()
+            svc_asset = (
+                db.query(Asset)
+                .filter(
+                    Asset.tenant_id == tenant_id,
+                    Asset.identifier == svc_identifier,
+                    Asset.type == AssetType.SERVICE,
+                )
+                .first()
+            )
 
             if not svc_asset:
                 svc_asset = Asset(
@@ -381,15 +418,16 @@ def _phase_4_http_probing(tenant_id, project_id, scan_run_id, db, tenant_logger)
 
             # Create the hosts relationship: domain/IP -> service
             if _upsert_relationship(
-                db, tenant_id,
+                db,
+                tenant_id,
                 source_asset_id=asset.id,
                 target_asset_id=svc_asset.id,
-                rel_type='hosts',
+                rel_type="hosts",
                 metadata={
-                    'port': svc.port,
-                    'protocol': svc.protocol,
-                    'http_status': svc.http_status,
-                    'web_server': svc.web_server,
+                    "port": svc.port,
+                    "protocol": svc.protocol,
+                    "http_status": svc.http_status,
+                    "web_server": svc.web_server,
                 },
             ):
                 relationships_created += 1
@@ -397,16 +435,14 @@ def _phase_4_http_probing(tenant_id, project_id, scan_run_id, db, tenant_logger)
     if relationships_created:
         db.commit()
 
-    tenant_logger.info(
-        f"Phase 4 relationships: {relationships_created} 'hosts' edges created"
-    )
+    tenant_logger.info(f"Phase 4 relationships: {relationships_created} 'hosts' edges created")
 
     return {
-        'services_discovered': services_created + services_updated,
-        'services_created': services_created,
-        'services_updated': services_updated,
-        'hosts_probed': len(asset_ids),
-        'relationships_created': relationships_created,
+        "services_discovered": services_created + services_updated,
+        "services_created": services_created,
+        "services_updated": services_updated,
+        "hosts_probed": len(asset_ids),
+        "relationships_created": relationships_created,
     }
 
 
@@ -421,30 +457,34 @@ def _phase_4b_tls_collection(tenant_id, project_id, scan_run_id, db, tenant_logg
     from app.tasks.enrichment import run_tlsx
     from app.models.database import Asset, AssetType
 
-    assets = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
-        Asset.is_active == True,
-    ).all()
+    assets = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
+            Asset.is_active == True,
+        )
+        .all()
+    )
 
     if not assets:
         tenant_logger.warning("No active domain/subdomain assets for TLS collection")
-        return {'certificates_collected': 0, 'hosts_analyzed': 0}
+        return {"certificates_collected": 0, "hosts_analyzed": 0}
 
     asset_ids = [a.id for a in assets]
     tenant_logger.info(f"TLSx: collecting certificates from {len(asset_ids)} assets")
     result = run_tlsx(tenant_id, asset_ids)
 
-    certificates_collected = result.get('certificates_discovered', 0) if isinstance(result, dict) else 0
-    certificates_created = result.get('certificates_created', 0) if isinstance(result, dict) else 0
-    certificates_updated = result.get('certificates_updated', 0) if isinstance(result, dict) else 0
-    hosts_analyzed = result.get('hosts_analyzed', 0) if isinstance(result, dict) else 0
+    certificates_collected = result.get("certificates_discovered", 0) if isinstance(result, dict) else 0
+    certificates_created = result.get("certificates_created", 0) if isinstance(result, dict) else 0
+    certificates_updated = result.get("certificates_updated", 0) if isinstance(result, dict) else 0
+    hosts_analyzed = result.get("hosts_analyzed", 0) if isinstance(result, dict) else 0
 
     return {
-        'certificates_collected': certificates_collected,
-        'certificates_created': certificates_created,
-        'certificates_updated': certificates_updated,
-        'hosts_analyzed': hosts_analyzed,
+        "certificates_collected": certificates_collected,
+        "certificates_created": certificates_created,
+        "certificates_updated": certificates_updated,
+        "hosts_analyzed": hosts_analyzed,
     }
 
 
@@ -462,45 +502,58 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     # Tier-based port configuration
     # Tier 1 uses top-100 with 300s timeout (connect scan in Docker is slow)
     tier_config = {
-        1: {'top_ports': '100', 'rate': 100, 'full_scan': False, 'timeout': 300},
-        2: {'top_ports': '1000', 'rate': 500, 'full_scan': False, 'timeout': 600},
-        3: {'top_ports': '1000', 'rate': 1000, 'full_scan': False, 'timeout': 600},
+        1: {"top_ports": "100", "rate": 100, "full_scan": False, "timeout": 300},
+        2: {"top_ports": "1000", "rate": 500, "full_scan": False, "timeout": 600},
+        3: {"top_ports": "1000", "rate": 1000, "full_scan": False, "timeout": 600},
     }
     config = tier_config.get(scan_tier, tier_config[1])
 
     # Apply adaptive throttle if active
     from app.services.adaptive_throttle import get_throttle
+
     throttle = get_throttle(tenant_id, scan_run_id)
-    effective_rate = throttle.get_rate(config['rate'])
+    effective_rate = throttle.get_rate(config["rate"])
 
     # Get domains/subdomains -- naabu resolves hostnames to IPs internally,
     # so scanning both a subdomain AND its resolved IP is redundant.
     # Only include standalone IPs (not the target of any resolves_to relationship).
-    hostname_assets = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
-        Asset.is_active == True,
-    ).all()
+    hostname_assets = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
+            Asset.is_active == True,
+        )
+        .all()
+    )
 
     # Find IPs that are NOT covered by any hostname (standalone IPs from seeds/uncover)
     from sqlalchemy import exists
+
     covered_ip_ids = {
-        r.target_asset_id for r in db.query(Relationship.target_asset_id).filter(
+        r.target_asset_id
+        for r in db.query(Relationship.target_asset_id)
+        .filter(
             Relationship.tenant_id == tenant_id,
-            Relationship.rel_type == 'resolves_to',
-        ).all()
+            Relationship.rel_type == "resolves_to",
+        )
+        .all()
     }
-    standalone_ips = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.type == AssetType.IP,
-        Asset.is_active == True,
-        ~Asset.id.in_(covered_ip_ids) if covered_ip_ids else True,
-    ).all()
+    standalone_ips = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type == AssetType.IP,
+            Asset.is_active == True,
+            ~Asset.id.in_(covered_ip_ids) if covered_ip_ids else True,
+        )
+        .all()
+    )
 
     assets = hostname_assets + standalone_ips
 
     if not assets:
-        return {'ports_discovered': 0, 'scan_tier': scan_tier}
+        return {"ports_discovered": 0, "scan_tier": scan_tier}
 
     asset_ids = [a.id for a in assets]
     tenant_logger.info(
@@ -511,17 +564,20 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         f"{len(covered_ip_ids)} duplicate IPs skipped)"
     )
     result = run_naabu(
-        tenant_id, asset_ids, full_scan=config['full_scan'],
-        rate=effective_rate, timeout=config.get('timeout'),
+        tenant_id,
+        asset_ids,
+        full_scan=config["full_scan"],
+        rate=effective_rate,
+        timeout=config.get("timeout"),
     )
 
     return {
-        'ports_discovered': result.get('ports_discovered', 0) if isinstance(result, dict) else 0,
-        'services_created': result.get('services_created', 0) if isinstance(result, dict) else 0,
-        'hosts_scanned': result.get('hosts_scanned', 0) if isinstance(result, dict) else 0,
-        'scan_tier': scan_tier,
-        'top_ports': config['top_ports'],
-        'rate': config['rate'],
+        "ports_discovered": result.get("ports_discovered", 0) if isinstance(result, dict) else 0,
+        "services_created": result.get("services_created", 0) if isinstance(result, dict) else 0,
+        "hosts_scanned": result.get("hosts_scanned", 0) if isinstance(result, dict) else 0,
+        "scan_tier": scan_tier,
+        "top_ports": config["top_ports"],
+        "rate": config["rate"],
     }
 
 
@@ -534,14 +590,18 @@ def _phase_5b_cdn_detection(tenant_id, project_id, scan_run_id, db, tenant_logge
     from app.tasks.service_fingerprint import run_cdncheck
     from app.models.database import Asset, AssetType
 
-    assets = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN, AssetType.IP]),
-        Asset.is_active == True,
-    ).all()
+    assets = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN, AssetType.IP]),
+            Asset.is_active == True,
+        )
+        .all()
+    )
 
     if not assets:
-        return {'hosts_checked': 0, 'cdn_detected': 0, 'waf_detected': 0}
+        return {"hosts_checked": 0, "cdn_detected": 0, "waf_detected": 0}
 
     hosts = [a.identifier for a in assets]
     results = run_cdncheck(hosts, tenant_id)
@@ -556,16 +616,16 @@ def _phase_5b_cdn_detection(tenant_id, project_id, scan_run_id, db, tenant_logge
             continue
 
         changed = False
-        if info.get('cdn') and info.get('cdn_name'):
-            asset.cdn_name = info['cdn_name']
+        if info.get("cdn") and info.get("cdn_name"):
+            asset.cdn_name = info["cdn_name"]
             cdn_count += 1
             changed = True
-        if info.get('waf') and info.get('waf_name'):
-            asset.waf_name = info['waf_name']
+        if info.get("waf") and info.get("waf_name"):
+            asset.waf_name = info["waf_name"]
             waf_count += 1
             changed = True
-        if info.get('cloud'):
-            asset.cloud_provider = info['cloud']
+        if info.get("cloud"):
+            asset.cloud_provider = info["cloud"]
             changed = True
 
         if changed:
@@ -574,10 +634,10 @@ def _phase_5b_cdn_detection(tenant_id, project_id, scan_run_id, db, tenant_logge
     db.commit()
 
     return {
-        'hosts_checked': len(results),
-        'cdn_detected': cdn_count,
-        'waf_detected': waf_count,
-        'assets_updated': updated,
+        "hosts_checked": len(results),
+        "cdn_detected": cdn_count,
+        "waf_detected": waf_count,
+        "assets_updated": updated,
     }
 
 
@@ -591,14 +651,19 @@ def _phase_5c_service_fingerprint(tenant_id, project_id, scan_run_id, db, tenant
     from app.models.database import Asset, AssetType, Service
 
     # Build host:port targets from services table
-    services = db.query(Service).join(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.is_active == True,
-        Service.port.isnot(None),
-    ).all()
+    services = (
+        db.query(Service)
+        .join(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.is_active == True,
+            Service.port.isnot(None),
+        )
+        .all()
+    )
 
     if not services:
-        return {'services_fingerprinted': 0, 'protocols_identified': 0}
+        return {"services_fingerprinted": 0, "protocols_identified": 0}
 
     # Build target list as host:port
     targets = []
@@ -611,7 +676,7 @@ def _phase_5c_service_fingerprint(tenant_id, project_id, scan_run_id, db, tenant
             service_map[target] = svc
 
     if not targets:
-        return {'services_fingerprinted': 0, 'protocols_identified': 0}
+        return {"services_fingerprinted": 0, "protocols_identified": 0}
 
     results = run_fingerprintx(targets, tenant_id)
 
@@ -619,8 +684,8 @@ def _phase_5c_service_fingerprint(tenant_id, project_id, scan_run_id, db, tenant
     services_updated = 0
 
     for entry in results:
-        host = entry.get('host', '')
-        port = entry.get('port', 0)
+        host = entry.get("host", "")
+        port = entry.get("port", 0)
         target_key = f"{host}:{port}"
 
         svc = service_map.get(target_key)
@@ -628,23 +693,23 @@ def _phase_5c_service_fingerprint(tenant_id, project_id, scan_run_id, db, tenant
             continue
 
         # Update with more precise fingerprint data
-        if entry.get('service'):
-            svc.product = entry['service']
+        if entry.get("service"):
+            svc.product = entry["service"]
             services_updated += 1
-        if entry.get('version'):
-            svc.version = entry['version']
-        if entry.get('protocol'):
-            svc.protocol = entry['protocol']
+        if entry.get("version"):
+            svc.version = entry["version"]
+        if entry.get("protocol"):
+            svc.protocol = entry["protocol"]
             protocols_identified += 1
-        if entry.get('tls'):
+        if entry.get("tls"):
             svc.has_tls = True
         # Mark enrichment source
-        svc.enrichment_source = 'fingerprintx'
+        svc.enrichment_source = "fingerprintx"
 
     db.commit()
 
     return {
-        'services_fingerprinted': services_updated,
-        'protocols_identified': protocols_identified,
-        'targets_scanned': len(targets),
+        "services_fingerprinted": services_updated,
+        "protocols_identified": protocols_identified,
+        "targets_scanned": len(targets),
     }

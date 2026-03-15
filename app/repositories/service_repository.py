@@ -38,12 +38,7 @@ class ServiceRepository:
         """Get service by ID"""
         return self.db.query(Service).filter_by(id=service_id).first()
 
-    def get_by_asset(
-        self,
-        asset_id: int,
-        limit: int = 100,
-        offset: int = 0
-    ) -> List[Service]:
+    def get_by_asset(self, asset_id: int, limit: int = 100, offset: int = 0) -> List[Service]:
         """
         Get all services for an asset
 
@@ -55,9 +50,9 @@ class ServiceRepository:
         Returns:
             List of services ordered by port
         """
-        return self.db.query(Service).filter_by(
-            asset_id=asset_id
-        ).order_by(Service.port).limit(limit).offset(offset).all()
+        return (
+            self.db.query(Service).filter_by(asset_id=asset_id).order_by(Service.port).limit(limit).offset(offset).all()
+        )
 
     def get_by_port(self, asset_id: int, port: int) -> Optional[Service]:
         """
@@ -70,16 +65,9 @@ class ServiceRepository:
         Returns:
             Service if found, None otherwise
         """
-        return self.db.query(Service).filter_by(
-            asset_id=asset_id,
-            port=port
-        ).first()
+        return self.db.query(Service).filter_by(asset_id=asset_id, port=port).first()
 
-    def get_web_services(
-        self,
-        asset_id: int,
-        only_live: bool = True
-    ) -> List[Service]:
+    def get_web_services(self, asset_id: int, only_live: bool = True) -> List[Service]:
         """
         Get HTTP/HTTPS services for an asset
 
@@ -95,10 +83,7 @@ class ServiceRepository:
         query = self.db.query(Service).filter(
             and_(
                 Service.asset_id == asset_id,
-                or_(
-                    Service.protocol.in_(['http', 'https']),
-                    Service.port.in_([80, 443, 8000, 8080, 8443, 8888])
-                )
+                or_(Service.protocol.in_(["http", "https"]), Service.port.in_([80, 443, 8000, 8080, 8443, 8888])),
             )
         )
 
@@ -107,11 +92,7 @@ class ServiceRepository:
 
         return query.order_by(Service.port).all()
 
-    def get_services_with_tls(
-        self,
-        asset_id: int,
-        include_expired: bool = False
-    ) -> List[Service]:
+    def get_services_with_tls(self, asset_id: int, include_expired: bool = False) -> List[Service]:
         """
         Get services with TLS enabled
 
@@ -122,12 +103,7 @@ class ServiceRepository:
         Returns:
             List of services with TLS
         """
-        query = self.db.query(Service).filter(
-            and_(
-                Service.asset_id == asset_id,
-                Service.has_tls == True
-            )
-        )
+        query = self.db.query(Service).filter(and_(Service.asset_id == asset_id, Service.has_tls == True))
 
         # Optional: Could filter by certificate expiry if needed
         # This would require a join with certificates table
@@ -176,7 +152,7 @@ class ServiceRepository:
             - enrichment_source tracks which tool last updated the service
         """
         if not services_data:
-            return {'created': 0, 'updated': 0, 'total_processed': 0}
+            return {"created": 0, "updated": 0, "total_processed": 0}
 
         # Prepare records for upsert
         records = []
@@ -184,51 +160,48 @@ class ServiceRepository:
 
         for data in services_data:
             # Port is required
-            if 'port' not in data:
+            if "port" not in data:
                 continue
 
             record = {
-                'asset_id': asset_id,
-                'port': data['port'],
-                'protocol': data.get('protocol'),
-                'product': data.get('product'),
-                'version': data.get('version'),
-                'first_seen': current_time,
-                'last_seen': current_time,
-
+                "asset_id": asset_id,
+                "port": data["port"],
+                "protocol": data.get("protocol"),
+                "product": data.get("product"),
+                "version": data.get("version"),
+                "first_seen": current_time,
+                "last_seen": current_time,
                 # HTTP enrichment (from HTTPx)
-                'http_status': data.get('http_status'),
-                'http_title': data.get('http_title'),
-                'web_server': data.get('web_server'),
-                'response_time_ms': data.get('response_time_ms'),
-                'content_length': data.get('content_length'),
-                'redirect_url': data.get('redirect_url'),
-                'screenshot_url': data.get('screenshot_url'),
-
+                "http_status": data.get("http_status"),
+                "http_title": data.get("http_title"),
+                "web_server": data.get("web_server"),
+                "response_time_ms": data.get("response_time_ms"),
+                "content_length": data.get("content_length"),
+                "redirect_url": data.get("redirect_url"),
+                "screenshot_url": data.get("screenshot_url"),
                 # TLS enrichment (from TLSx)
-                'has_tls': data.get('has_tls', False),
-                'tls_version': data.get('tls_version'),
-                'tls_fingerprint': data.get('tls_fingerprint'),
-
+                "has_tls": data.get("has_tls", False),
+                "tls_version": data.get("tls_version"),
+                "tls_fingerprint": data.get("tls_fingerprint"),
                 # Enrichment tracking
-                'enriched_at': current_time,
-                'enrichment_source': data.get('enrichment_source')
+                "enriched_at": current_time,
+                "enrichment_source": data.get("enrichment_source"),
             }
 
             # Handle JSON fields - convert lists/dicts to JSON
-            if 'http_technologies' in data:
-                record['http_technologies'] = data['http_technologies']
+            if "http_technologies" in data:
+                record["http_technologies"] = data["http_technologies"]
 
-            if 'http_headers' in data:
-                record['http_headers'] = data['http_headers']
+            if "http_headers" in data:
+                record["http_headers"] = data["http_headers"]
 
-            if 'technologies' in data and isinstance(data['technologies'], list):
-                record['technologies'] = json.dumps(data['technologies'])
+            if "technologies" in data and isinstance(data["technologies"], list):
+                record["technologies"] = json.dumps(data["technologies"])
 
             records.append(record)
 
         if not records:
-            return {'created': 0, 'updated': 0, 'total_processed': 0}
+            return {"created": 0, "updated": 0, "total_processed": 0}
 
         # Build UPSERT statement
         stmt = insert(Service).values(records)
@@ -243,32 +216,31 @@ class ServiceRepository:
         _cur = Service.__table__.c  # current row columns
 
         update_dict = {
-            'last_seen': stmt.excluded.last_seen,
-            'protocol': _coalesce(stmt.excluded.protocol, _cur.protocol),
-            'product': _coalesce(stmt.excluded.product, _cur.product),
-            'version': _coalesce(stmt.excluded.version, _cur.version),
-            'http_status': _coalesce(stmt.excluded.http_status, _cur.http_status),
-            'http_title': _coalesce(stmt.excluded.http_title, _cur.http_title),
-            'web_server': _coalesce(stmt.excluded.web_server, _cur.web_server),
-            'http_technologies': _coalesce(stmt.excluded.http_technologies, _cur.http_technologies),
-            'http_headers': _coalesce(stmt.excluded.http_headers, _cur.http_headers),
-            'response_time_ms': _coalesce(stmt.excluded.response_time_ms, _cur.response_time_ms),
-            'content_length': _coalesce(stmt.excluded.content_length, _cur.content_length),
-            'redirect_url': _coalesce(stmt.excluded.redirect_url, _cur.redirect_url),
-            'screenshot_url': _coalesce(stmt.excluded.screenshot_url, _cur.screenshot_url),
-            'has_tls': _coalesce(stmt.excluded.has_tls, _cur.has_tls),
-            'tls_version': _coalesce(stmt.excluded.tls_version, _cur.tls_version),
-            'tls_fingerprint': _coalesce(stmt.excluded.tls_fingerprint, _cur.tls_fingerprint),
-            'technologies': _coalesce(stmt.excluded.technologies, _cur.technologies),
-            'enriched_at': stmt.excluded.enriched_at,
-            'enrichment_source': _coalesce(stmt.excluded.enrichment_source, _cur.enrichment_source),
+            "last_seen": stmt.excluded.last_seen,
+            "protocol": _coalesce(stmt.excluded.protocol, _cur.protocol),
+            "product": _coalesce(stmt.excluded.product, _cur.product),
+            "version": _coalesce(stmt.excluded.version, _cur.version),
+            "http_status": _coalesce(stmt.excluded.http_status, _cur.http_status),
+            "http_title": _coalesce(stmt.excluded.http_title, _cur.http_title),
+            "web_server": _coalesce(stmt.excluded.web_server, _cur.web_server),
+            "http_technologies": _coalesce(stmt.excluded.http_technologies, _cur.http_technologies),
+            "http_headers": _coalesce(stmt.excluded.http_headers, _cur.http_headers),
+            "response_time_ms": _coalesce(stmt.excluded.response_time_ms, _cur.response_time_ms),
+            "content_length": _coalesce(stmt.excluded.content_length, _cur.content_length),
+            "redirect_url": _coalesce(stmt.excluded.redirect_url, _cur.redirect_url),
+            "screenshot_url": _coalesce(stmt.excluded.screenshot_url, _cur.screenshot_url),
+            "has_tls": _coalesce(stmt.excluded.has_tls, _cur.has_tls),
+            "tls_version": _coalesce(stmt.excluded.tls_version, _cur.tls_version),
+            "tls_fingerprint": _coalesce(stmt.excluded.tls_fingerprint, _cur.tls_fingerprint),
+            "technologies": _coalesce(stmt.excluded.technologies, _cur.technologies),
+            "enriched_at": stmt.excluded.enriched_at,
+            "enrichment_source": _coalesce(stmt.excluded.enrichment_source, _cur.enrichment_source),
             # Note: first_seen is NOT updated, preserving original discovery time
         }
 
-        stmt = stmt.on_conflict_do_update(
-            index_elements=['asset_id', 'port'],
-            set_=update_dict
-        ).returning(Service.id, Service.first_seen)
+        stmt = stmt.on_conflict_do_update(index_elements=["asset_id", "port"], set_=update_dict).returning(
+            Service.id, Service.first_seen
+        )
 
         # Execute and get affected rows
         result = self.db.execute(stmt)
@@ -287,17 +259,9 @@ class ServiceRepository:
             if first_seen and (current_time - first_seen).total_seconds() < 2:
                 created += 1
 
-        return {
-            'created': created,
-            'updated': len(returned_rows) - created,
-            'total_processed': len(records)
-        }
+        return {"created": created, "updated": len(returned_rows) - created, "total_processed": len(records)}
 
-    def get_stale_services(
-        self,
-        tenant_id: int,
-        days_threshold: int = 30
-    ) -> List[Service]:
+    def get_stale_services(self, tenant_id: int, days_threshold: int = 30) -> List[Service]:
         """
         Get services not seen recently (potential decommissions)
 
@@ -313,18 +277,15 @@ class ServiceRepository:
         """
         cutoff = datetime.now(timezone.utc) - timedelta(days=days_threshold)
 
-        return self.db.query(Service).join(Service.asset).filter(
-            and_(
-                Service.asset.has(tenant_id=tenant_id),
-                Service.last_seen < cutoff
-            )
-        ).order_by(Service.last_seen).all()
+        return (
+            self.db.query(Service)
+            .join(Service.asset)
+            .filter(and_(Service.asset.has(tenant_id=tenant_id), Service.last_seen < cutoff))
+            .order_by(Service.last_seen)
+            .all()
+        )
 
-    def get_services_by_technology(
-        self,
-        tenant_id: int,
-        technology: str
-    ) -> List[Service]:
+    def get_services_by_technology(self, tenant_id: int, technology: str) -> List[Service]:
         """
         Find services using specific technology
 
@@ -339,15 +300,20 @@ class ServiceRepository:
         """
         # JSONB containment query for http_technologies
         # For technologies field (text), we'd need to parse JSON
-        return self.db.query(Service).join(Service.asset).filter(
-            and_(
-                Service.asset.has(tenant_id=tenant_id),
-                or_(
-                    Service.http_technologies.contains([technology]),
-                    Service.technologies.like(f'%{escape_like(technology)}%', escape="\\")
+        return (
+            self.db.query(Service)
+            .join(Service.asset)
+            .filter(
+                and_(
+                    Service.asset.has(tenant_id=tenant_id),
+                    or_(
+                        Service.http_technologies.contains([technology]),
+                        Service.technologies.like(f"%{escape_like(technology)}%", escape="\\"),
+                    ),
                 )
             )
-        ).all()
+            .all()
+        )
 
     def count_by_asset(self, asset_id: int) -> int:
         """Count services for an asset"""

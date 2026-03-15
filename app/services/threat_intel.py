@@ -41,10 +41,7 @@ logger = logging.getLogger(__name__)
 EPSS_API_URL = "https://api.first.org/data/v1/epss"
 
 # CISA KEV catalog feed
-KEV_CATALOG_URL = (
-    "https://www.cisa.gov/sites/default/files/feeds/"
-    "known_exploited_vulnerabilities.json"
-)
+KEV_CATALOG_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 
 # Redis key prefixes and TTL
 EPSS_KEY_PREFIX = "epss:"
@@ -192,9 +189,7 @@ class ThreatIntelService:
 
             try:
                 with httpx.Client(timeout=HTTP_TIMEOUT) as client:
-                    response = client.get(
-                        EPSS_API_URL, params={"cve": cve_param}
-                    )
+                    response = client.get(EPSS_API_URL, params={"cve": cve_param})
                     response.raise_for_status()
 
                 data = response.json()
@@ -212,9 +207,7 @@ class ThreatIntelService:
                 for cve_id in batch:
                     score = fetched.get(cve_id, 0.0)
                     results[cve_id] = score
-                    pipe.setex(
-                        f"{EPSS_KEY_PREFIX}{cve_id}", CACHE_TTL, str(score)
-                    )
+                    pipe.setex(f"{EPSS_KEY_PREFIX}{cve_id}", CACHE_TTL, str(score))
 
                 try:
                     pipe.execute()
@@ -310,9 +303,7 @@ class ThreatIntelService:
                     "short_description": vuln.get("shortDescription", ""),
                     "required_action": vuln.get("requiredAction", ""),
                     "due_date": vuln.get("dueDate", ""),
-                    "known_ransomware_use": vuln.get(
-                        "knownRansomwareCampaignUse", "Unknown"
-                    ),
+                    "known_ransomware_use": vuln.get("knownRansomwareCampaignUse", "Unknown"),
                     "notes": vuln.get("notes", ""),
                 }
                 detail_key = f"{KEV_DETAILS_KEY_PREFIX}{cve_id}"
@@ -331,9 +322,7 @@ class ThreatIntelService:
 
             pipe.execute()
 
-            logger.info(
-                "KEV catalog refreshed: %d vulnerabilities cached", len(cve_ids)
-            )
+            logger.info("KEV catalog refreshed: %d vulnerabilities cached", len(cve_ids))
             return len(cve_ids)
 
         except httpx.HTTPError as exc:

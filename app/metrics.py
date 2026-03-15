@@ -3,6 +3,7 @@ Prometheus metrics for EASM Platform.
 
 Exposes request count, duration, active connections, and error rate.
 """
+
 from __future__ import annotations
 
 import logging

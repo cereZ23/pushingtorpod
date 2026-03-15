@@ -54,9 +54,9 @@ class AssetResponse(BaseModel):
                 "service_count": 5,
                 "certificate_count": 2,
                 "endpoint_count": 150,
-                "finding_count": 3
+                "finding_count": 3,
             }
-        }
+        },
     )
 
 
@@ -68,13 +68,7 @@ class AssetCreate(BaseModel):
     priority: Optional[str] = Field("normal", description="Asset priority")
 
     model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "type": "subdomain",
-                "identifier": "api.example.com",
-                "priority": "high"
-            }
-        }
+        json_schema_extra={"example": {"type": "subdomain", "identifier": "api.example.com", "priority": "high"}}
     )
 
 
@@ -84,14 +78,7 @@ class AssetUpdate(BaseModel):
     priority: Optional[str] = Field(None, description="Asset priority")
     is_active: Optional[bool] = Field(None, description="Active status")
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "priority": "critical",
-                "is_active": True
-            }
-        }
-    )
+    model_config = ConfigDict(json_schema_extra={"example": {"priority": "critical", "is_active": True}})
 
 
 class AssetListRequest(BaseModel):
@@ -118,7 +105,7 @@ class AssetListRequest(BaseModel):
                 "search": "api",
                 "min_risk_score": 50.0,
                 "sort_by": "risk_score",
-                "sort_order": "desc"
+                "sort_order": "desc",
             }
         }
     )
@@ -140,16 +127,14 @@ class AssetDetailResponse(AssetResponse):
 
     # Network intelligence enrichment
     dns_info: Optional[Dict[str, Any]] = Field(
-        None,
-        description="DNS and network intelligence data (WHOIS, ASN, rDNS, cloud provider, nameservers)"
+        None, description="DNS and network intelligence data (WHOIS, ASN, rDNS, cloud provider, nameservers)"
     )
     cdn: Optional[str] = Field(None, description="Detected CDN provider (e.g. cloudflare, akamai)")
     waf: Optional[str] = Field(None, description="Detected WAF provider (e.g. cloudflare, aws_waf)")
 
     # Parent asset reference (for SERVICE-type assets)
     parent_asset: Optional[Dict[str, Any]] = Field(
-        None,
-        description="Parent asset info (for SERVICE-type assets that inherit data from parent subdomain/domain)"
+        None, description="Parent asset info (for SERVICE-type assets that inherit data from parent subdomain/domain)"
     )
 
     model_config = ConfigDict(from_attributes=True)
@@ -186,9 +171,9 @@ class AssetTreeNode(BaseModel):
                         "is_active": True,
                         "service_count": 5,
                         "finding_count": 3,
-                        "children": []
+                        "children": [],
                     }
-                ]
+                ],
             }
         }
     )
@@ -202,13 +187,7 @@ class SeedCreate(BaseModel):
     enabled: bool = Field(default=True, description="Enabled status")
 
     model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "type": "domain",
-                "value": "example.com",
-                "enabled": True
-            }
-        }
+        json_schema_extra={"example": {"type": "domain", "value": "example.com", "enabled": True}}
     )
 
 
@@ -235,7 +214,7 @@ class BulkAssetCreate(BaseModel):
             "example": {
                 "assets": [
                     {"type": "domain", "identifier": "example.com"},
-                    {"type": "subdomain", "identifier": "api.example.com"}
+                    {"type": "subdomain", "identifier": "api.example.com"},
                 ]
             }
         }

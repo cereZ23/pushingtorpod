@@ -28,35 +28,33 @@ class DomainValidator:
     """
 
     # RFC 1123 compliant hostname regex
-    HOSTNAME_REGEX = re.compile(
-        r'^(?!-)(?:[a-zA-Z0-9-]{1,63}(?<!-)\.)*[a-zA-Z]{2,63}$'
-    )
+    HOSTNAME_REGEX = re.compile(r"^(?!-)(?:[a-zA-Z0-9-]{1,63}(?<!-)\.)*[a-zA-Z]{2,63}$")
 
     # Blocked TLDs for security
-    BLOCKED_TLDS = {'.local', '.localhost', '.internal', '.corp', '.home', '.test', '.invalid'}
+    BLOCKED_TLDS = {".local", ".localhost", ".internal", ".corp", ".home", ".test", ".invalid"}
 
     # Reserved IP ranges (RFC 1918, RFC 6890)
     RESERVED_NETWORKS = [
-        ipaddress.IPv4Network('10.0.0.0/8'),
-        ipaddress.IPv4Network('172.16.0.0/12'),
-        ipaddress.IPv4Network('192.168.0.0/16'),
-        ipaddress.IPv4Network('127.0.0.0/8'),
-        ipaddress.IPv4Network('169.254.0.0/16'),
-        ipaddress.IPv4Network('224.0.0.0/4'),
-        ipaddress.IPv4Network('240.0.0.0/4'),
-        ipaddress.IPv4Network('0.0.0.0/8'),
-        ipaddress.IPv6Network('::1/128'),
-        ipaddress.IPv6Network('fe80::/10'),
-        ipaddress.IPv6Network('fc00::/7'),
-        ipaddress.IPv6Network('ff00::/8'),
+        ipaddress.IPv4Network("10.0.0.0/8"),
+        ipaddress.IPv4Network("172.16.0.0/12"),
+        ipaddress.IPv4Network("192.168.0.0/16"),
+        ipaddress.IPv4Network("127.0.0.0/8"),
+        ipaddress.IPv4Network("169.254.0.0/16"),
+        ipaddress.IPv4Network("224.0.0.0/4"),
+        ipaddress.IPv4Network("240.0.0.0/4"),
+        ipaddress.IPv4Network("0.0.0.0/8"),
+        ipaddress.IPv6Network("::1/128"),
+        ipaddress.IPv6Network("fe80::/10"),
+        ipaddress.IPv6Network("fc00::/7"),
+        ipaddress.IPv6Network("ff00::/8"),
     ]
 
     # Cloud metadata endpoints to block
     METADATA_ENDPOINTS = [
-        '169.254.169.254',  # AWS/GCP/Azure
-        'metadata.google.internal',  # GCP
-        'metadata.amazonaws.com',  # AWS
-        '100.100.100.200',  # Alibaba Cloud
+        "169.254.169.254",  # AWS/GCP/Azure
+        "metadata.google.internal",  # GCP
+        "metadata.amazonaws.com",  # AWS
+        "100.100.100.200",  # Alibaba Cloud
     ]
 
     @classmethod
@@ -78,7 +76,7 @@ class DomainValidator:
         domain = domain.strip().lower()
 
         # Remove any whitespace
-        if ' ' in domain or '\t' in domain or '\n' in domain or '\r' in domain:
+        if " " in domain or "\t" in domain or "\n" in domain or "\r" in domain:
             return False, "Domain contains whitespace characters"
 
         # Length check
@@ -90,24 +88,44 @@ class DomainValidator:
 
         # Check for dangerous characters (command injection prevention)
         dangerous_chars = [
-            ';', '&', '|', '$', '`', '\n', '\r', '>', '<',
-            '(', ')', '{', '}', '[', ']', '\\', '"', "'",
-            '\x00', '\x08', '\x0b', '\x0c', '\x1a'  # Control characters
+            ";",
+            "&",
+            "|",
+            "$",
+            "`",
+            "\n",
+            "\r",
+            ">",
+            "<",
+            "(",
+            ")",
+            "{",
+            "}",
+            "[",
+            "]",
+            "\\",
+            '"',
+            "'",
+            "\x00",
+            "\x08",
+            "\x0b",
+            "\x0c",
+            "\x1a",  # Control characters
         ]
         for char in dangerous_chars:
             if char in domain:
                 return False, f"Domain contains dangerous character: {repr(char)}"
 
         # Check for URL encoding attempts
-        if '%' in domain:
+        if "%" in domain:
             return False, "Domain contains URL encoding"
 
         # Check for path traversal attempts
-        if '../' in domain or '..\\' in domain:
+        if "../" in domain or "..\\" in domain:
             return False, "Domain contains path traversal attempt"
 
         # Handle wildcards
-        if domain.startswith('*.'):
+        if domain.startswith("*."):
             if not allow_wildcards:
                 return False, "Wildcard domains not allowed"
             domain = domain[2:]  # Remove wildcard for validation
@@ -164,25 +182,25 @@ class DomainValidator:
             return False, "Domain contains non-ASCII characters (potential homograph attack)"
 
         # Validate label lengths
-        labels = domain.split('.')
+        labels = domain.split(".")
         for label in labels:
             if len(label) > 63:
                 return False, f"Domain label exceeds 63 characters: {label}"
             if not label:
                 return False, "Empty domain label"
             # Check for invalid label start/end
-            if label.startswith('-') or label.endswith('-'):
+            if label.startswith("-") or label.endswith("-"):
                 return False, f"Domain label cannot start or end with hyphen: {label}"
 
         # Additional security checks for specific patterns
         suspicious_patterns = [
-            r'xn--',  # Punycode (could be homograph attack)
-            r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}',  # IP-like pattern
-            r'localhost',
-            r'127\.0\.',
-            r'192\.168\.',
-            r'10\.',
-            r'172\.(1[6-9]|2[0-9]|3[01])\.',
+            r"xn--",  # Punycode (could be homograph attack)
+            r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}",  # IP-like pattern
+            r"localhost",
+            r"127\.0\.",
+            r"192\.168\.",
+            r"10\.",
+            r"172\.(1[6-9]|2[0-9]|3[01])\.",
         ]
 
         for pattern in suspicious_patterns:
@@ -205,14 +223,9 @@ class DomainValidator:
             Dict with validation results
         """
         results = {
-            'valid': [],
-            'invalid': [],
-            'stats': {
-                'total': len(domains),
-                'valid_count': 0,
-                'invalid_count': 0,
-                'unique_errors': set()
-            }
+            "valid": [],
+            "invalid": [],
+            "stats": {"total": len(domains), "valid_count": 0, "invalid_count": 0, "unique_errors": set()},
         }
 
         seen_domains = set()
@@ -225,18 +238,15 @@ class DomainValidator:
 
             is_valid, error = cls.validate_domain(domain, allow_wildcards)
             if is_valid:
-                results['valid'].append(domain)
-                results['stats']['valid_count'] += 1
+                results["valid"].append(domain)
+                results["stats"]["valid_count"] += 1
             else:
-                results['invalid'].append({
-                    'domain': domain,
-                    'error': error
-                })
-                results['stats']['invalid_count'] += 1
-                results['stats']['unique_errors'].add(error)
+                results["invalid"].append({"domain": domain, "error": error})
+                results["stats"]["invalid_count"] += 1
+                results["stats"]["unique_errors"].add(error)
 
         # Convert set to list for JSON serialization
-        results['stats']['unique_errors'] = list(results['stats']['unique_errors'])
+        results["stats"]["unique_errors"] = list(results["stats"]["unique_errors"])
 
         return results
 
@@ -258,18 +268,18 @@ class DomainValidator:
         domain = domain.strip().lower()
 
         # Remove common prefixes
-        prefixes_to_remove = ['http://', 'https://', 'ftp://', 'www.']
+        prefixes_to_remove = ["http://", "https://", "ftp://", "www."]
         for prefix in prefixes_to_remove:
             if domain.startswith(prefix):
-                domain = domain[len(prefix):]
+                domain = domain[len(prefix) :]
 
         # Remove path component if present
-        if '/' in domain:
-            domain = domain.split('/')[0]
+        if "/" in domain:
+            domain = domain.split("/")[0]
 
         # Remove port if present
-        if ':' in domain:
-            domain = domain.split(':')[0]
+        if ":" in domain:
+            domain = domain.split(":")[0]
 
         # Validate the cleaned domain
         is_valid, _ = cls.validate_domain(domain)
@@ -282,20 +292,20 @@ class URLValidator:
     """
 
     # Allowed schemes
-    ALLOWED_SCHEMES = {'http', 'https'}
+    ALLOWED_SCHEMES = {"http", "https"}
 
     # Blocked URL patterns (SSRF prevention)
     BLOCKED_PATTERNS = [
-        r'file://',
-        r'gopher://',
-        r'dict://',
-        r'ftp://',
-        r'jar:',
-        r'netdoc:',
-        r'data:',
-        r'ldap://',
-        r'sftp://',
-        r'tftp://',
+        r"file://",
+        r"gopher://",
+        r"dict://",
+        r"ftp://",
+        r"jar:",
+        r"netdoc:",
+        r"data:",
+        r"ldap://",
+        r"sftp://",
+        r"tftp://",
     ]
 
     @classmethod
@@ -340,11 +350,11 @@ class URLValidator:
         # Check for suspicious path components
         if parsed.path:
             # Path traversal
-            if '../' in parsed.path or '..\\' in parsed.path:
+            if "../" in parsed.path or "..\\" in parsed.path:
                 return False, "URL contains path traversal"
 
             # Null bytes
-            if '\x00' in parsed.path:
+            if "\x00" in parsed.path:
                 return False, "URL contains null bytes"
 
         return True, None
@@ -378,9 +388,7 @@ def validate_endpoint_url_ssrf(url: str, *, require_https: bool = True) -> None:
 
     allowed_schemes = {"https"} if require_https else {"http", "https"}
     if parsed.scheme not in allowed_schemes:
-        raise ValueError(
-            f"Endpoint URL must use {'HTTPS' if require_https else 'HTTP(S)'}"
-        )
+        raise ValueError(f"Endpoint URL must use {'HTTPS' if require_https else 'HTTP(S)'}")
 
     hostname = parsed.hostname
     if not hostname:
@@ -393,7 +401,8 @@ def validate_endpoint_url_ssrf(url: str, *, require_https: bool = True) -> None:
     # Resolve hostname and verify all resulting IPs are public
     try:
         addrinfos = socket.getaddrinfo(
-            hostname, parsed.port or (443 if parsed.scheme == "https" else 80),
+            hostname,
+            parsed.port or (443 if parsed.scheme == "https" else 80),
             proto=socket.IPPROTO_TCP,
         )
     except socket.gaierror:
@@ -405,11 +414,11 @@ def validate_endpoint_url_ssrf(url: str, *, require_https: bool = True) -> None:
             if ip in network:
                 logger.warning(
                     "SSRF blocked: endpoint %s resolved to private IP %s (%s)",
-                    hostname, ip, network,
+                    hostname,
+                    ip,
+                    network,
                 )
-                raise ValueError(
-                    "Endpoint URL resolves to a private/reserved IP address"
-                )
+                raise ValueError("Endpoint URL resolves to a private/reserved IP address")
 
 
 class InputSanitizer:
@@ -433,14 +442,14 @@ class InputSanitizer:
             return ""
 
         # Remove control characters
-        text = ''.join(char for char in text if ord(char) >= 32 or char in '\n\r\t')
+        text = "".join(char for char in text if ord(char) >= 32 or char in "\n\r\t")
 
         # Truncate
         if len(text) > max_length:
             text = text[:max_length] + "...[truncated]"
 
         # Escape special characters
-        text = text.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+        text = text.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
 
         return text
 
@@ -460,15 +469,16 @@ class InputSanitizer:
 
         # Remove path components
         from pathlib import Path
+
         filename = Path(filename).name
 
         # Remove dangerous characters
-        safe_chars = re.compile(r'[^a-zA-Z0-9._-]')
-        filename = safe_chars.sub('_', filename)
+        safe_chars = re.compile(r"[^a-zA-Z0-9._-]")
+        filename = safe_chars.sub("_", filename)
 
         # Limit length
         if len(filename) > 255:
-            name, ext = filename.rsplit('.', 1) if '.' in filename else (filename, '')
-            filename = name[:240] + ('.' + ext if ext else '')
+            name, ext = filename.rsplit(".", 1) if "." in filename else (filename, "")
+            filename = name[:240] + ("." + ext if ext else "")
 
         return filename or "unnamed"

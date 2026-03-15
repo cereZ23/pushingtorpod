@@ -19,17 +19,20 @@ from app.api.dependencies import escape_like
 
 # ── H1.1: SSRF in SIEM push ─────────────────────────────────────────
 
+
 class TestSIEMSSRFValidation:
     """Test _validate_siem_endpoint_url blocks SSRF attacks."""
 
     def _validate(self, url: str):
         """Import and call the validation function; raises HTTPException on failure."""
         from app.api.routers.siem import _validate_siem_endpoint_url
+
         _validate_siem_endpoint_url(url)
 
     def test_rejects_http_scheme(self):
         """SIEM endpoint must use HTTPS — HTTP exposes auth tokens."""
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc_info:
             self._validate("http://splunk.corp.com:8088/services/collector")
         assert exc_info.value.status_code == 422
@@ -37,6 +40,7 @@ class TestSIEMSSRFValidation:
 
     def test_rejects_missing_hostname(self):
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException):
             self._validate("https://")
 
@@ -44,6 +48,7 @@ class TestSIEMSSRFValidation:
     def test_rejects_private_ip(self, mock_gai):
         """Block endpoints resolving to private IPs (127.0.0.1, 10.x, 192.168.x)."""
         from fastapi import HTTPException
+
         # Simulate DNS resolving to 127.0.0.1
         mock_gai.return_value = [
             (2, 1, 6, "", ("127.0.0.1", 443)),
@@ -57,6 +62,7 @@ class TestSIEMSSRFValidation:
     def test_rejects_metadata_ip(self, mock_gai):
         """Block AWS/GCP metadata endpoint 169.254.169.254."""
         from fastapi import HTTPException
+
         mock_gai.return_value = [
             (2, 1, 6, "", ("169.254.169.254", 443)),
         ]
@@ -67,6 +73,7 @@ class TestSIEMSSRFValidation:
     def test_rejects_metadata_hostname(self):
         """Block cloud metadata hostnames directly."""
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException):
             self._validate("https://169.254.169.254/latest/meta-data/")
 
@@ -82,12 +89,14 @@ class TestSIEMSSRFValidation:
 
 # ── H1.2: Password reset token hashing ──────────────────────────────
 
+
 class TestPasswordResetTokenHashing:
     """Verify that password reset tokens are SHA-256 hashed before storage."""
 
     def test_token_is_hashed_before_storage(self):
         """The token stored in DB should be SHA-256 hash, not plaintext."""
         import secrets
+
         token = secrets.token_urlsafe(32)
         expected_hash = hashlib.sha256(token.encode()).hexdigest()
 
@@ -108,18 +117,21 @@ class TestPasswordResetTokenHashing:
 
 # ── H1.3: MFA secret encryption ─────────────────────────────────────
 
+
 class TestMFAEncryption:
     """Test MFA secret encrypt/decrypt cycle."""
 
     def test_roundtrip_with_key(self):
         """Encrypt then decrypt should return original secret."""
         from cryptography.fernet import Fernet
+
         key = Fernet.generate_key().decode()
 
         with patch("app.utils.crypto.settings") as mock_settings:
             mock_settings.mfa_encryption_key = key
             # Reset cached fernet instance
             import app.utils.crypto as crypto_mod
+
             crypto_mod._fernet_instance = None
 
             from app.utils.crypto import encrypt_mfa_secret, decrypt_mfa_secret
@@ -143,6 +155,7 @@ class TestMFAEncryption:
         with patch("app.utils.crypto.settings") as mock_settings:
             mock_settings.mfa_encryption_key = None
             import app.utils.crypto as crypto_mod
+
             crypto_mod._fernet_instance = None
 
             from app.utils.crypto import encrypt_mfa_secret, decrypt_mfa_secret
@@ -167,6 +180,7 @@ class TestMFAEncryption:
 
 
 # ── H1.5: ILIKE escape ──────────────────────────────────────────────
+
 
 class TestEscapeLike:
     """Test escape_like utility prevents SQL wildcard injection."""
@@ -194,6 +208,7 @@ class TestEscapeLike:
 
 
 # ── H1.4: JWT role refresh ──────────────────────────────────────────
+
 
 class TestJWTRoleFreshness:
     """Test that token refresh loads current roles from DB."""

@@ -9,6 +9,7 @@ Usage in pipeline phases:
     throttle.report_429(host)                        # report a 429 response
     throttle.report_timeout(host)                    # report a connection timeout
 """
+
 from __future__ import annotations
 
 import logging
@@ -56,10 +57,12 @@ class ThrottleState:
                 self._rate_multiplier = max(self._rate_multiplier * _BACKOFF_FACTOR, 0.1)
                 self._throttled_since = time.time()
                 logger.warning(
-                    "Adaptive throttle: %d 429s detected (tenant %d, run %d). "
-                    "Rate multiplier %.2f -> %.2f",
-                    self._total_429s, self.tenant_id, self.scan_run_id,
-                    old, self._rate_multiplier,
+                    "Adaptive throttle: %d 429s detected (tenant %d, run %d). Rate multiplier %.2f -> %.2f",
+                    self._total_429s,
+                    self.tenant_id,
+                    self.scan_run_id,
+                    old,
+                    self._rate_multiplier,
                 )
 
     def report_timeout(self, host: str = "unknown") -> None:
@@ -78,10 +81,12 @@ class ThrottleState:
                     self._rate_multiplier = min(self._rate_multiplier / _BACKOFF_FACTOR, 1.0)
                     self._clean_phases = 0
                     logger.info(
-                        "Adaptive throttle: %d clean phases, recovering rate "
-                        "%.2f -> %.2f (tenant %d, run %d)",
-                        _RECOVERY_PHASES, old, self._rate_multiplier,
-                        self.tenant_id, self.scan_run_id,
+                        "Adaptive throttle: %d clean phases, recovering rate %.2f -> %.2f (tenant %d, run %d)",
+                        _RECOVERY_PHASES,
+                        old,
+                        self._rate_multiplier,
+                        self.tenant_id,
+                        self.scan_run_id,
                     )
 
     def get_rate(self, base_rate: int) -> int:
@@ -91,7 +96,9 @@ class ThrottleState:
             if self._rate_multiplier < 1.0:
                 logger.info(
                     "Adaptive throttle: base_rate=%d, effective=%d (multiplier=%.2f)",
-                    base_rate, effective, self._rate_multiplier,
+                    base_rate,
+                    effective,
+                    self._rate_multiplier,
                 )
             return effective
 
@@ -119,11 +126,11 @@ class ThrottleState:
     def summary(self) -> dict:
         """Return throttle state summary for scan stats."""
         return {
-            'total_429s': self._total_429s,
-            'total_timeouts': self._total_timeouts,
-            'rate_multiplier': round(self._rate_multiplier, 2),
-            'is_throttled': self.is_throttled,
-            'hosts_429': dict(self._429_counts),
+            "total_429s": self._total_429s,
+            "total_timeouts": self._total_timeouts,
+            "rate_multiplier": round(self._rate_multiplier, 2),
+            "is_throttled": self.is_throttled,
+            "hosts_429": dict(self._429_counts),
         }
 
 

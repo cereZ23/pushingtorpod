@@ -30,7 +30,7 @@ class SecretManager:
     - Audit logging
     """
 
-    def __init__(self, backend: str = 'env', key_file: Optional[Path] = None):
+    def __init__(self, backend: str = "env", key_file: Optional[Path] = None):
         """
         Initialize secret manager with specified backend
 
@@ -43,24 +43,24 @@ class SecretManager:
         self._cache: Dict[str, str] = {}
         self._fernet: Optional[Fernet] = None
 
-        if backend == 'file':
+        if backend == "file":
             self._initialize_file_backend()
 
     def _initialize_file_backend(self):
         """Initialize file-based encrypted secret storage"""
         if not self.key_file:
-            self.key_file = Path.home() / '.easm' / 'secret.key'
+            self.key_file = Path.home() / ".easm" / "secret.key"
 
         # Create directory if it doesn't exist
         self.key_file.parent.mkdir(parents=True, exist_ok=True)
 
         # Generate or load encryption key
         if self.key_file.exists():
-            with open(self.key_file, 'rb') as f:
+            with open(self.key_file, "rb") as f:
                 key = f.read()
         else:
             key = Fernet.generate_key()
-            with open(self.key_file, 'wb') as f:
+            with open(self.key_file, "wb") as f:
                 f.write(key)
             # Set restrictive permissions
             os.chmod(self.key_file, 0o600)
@@ -83,19 +83,19 @@ class SecretManager:
             return self._cache[key]
 
         try:
-            if self.backend == 'env':
+            if self.backend == "env":
                 value = os.getenv(key, default)
 
                 # Check for unsafe defaults
-                if value and any(unsafe in value for unsafe in ['CHANGE_THIS', 'changeme', 'password123']):
+                if value and any(unsafe in value for unsafe in ["CHANGE_THIS", "changeme", "password123"]):
                     logger.warning(f"Secret {key} contains unsafe default value")
-                    if os.getenv('ENVIRONMENT') == 'production':
+                    if os.getenv("ENVIRONMENT") == "production":
                         raise ValueError(f"Secret {key} has not been properly configured for production")
 
                 self._cache[key] = value
                 return value
 
-            elif self.backend == 'file':
+            elif self.backend == "file":
                 return self._get_from_file(key, default)
 
             # Placeholder for other backends
@@ -118,13 +118,13 @@ class SecretManager:
 
     def _get_from_file(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Get secret from encrypted file storage"""
-        secrets_file = self.key_file.parent / 'secrets.enc'
+        secrets_file = self.key_file.parent / "secrets.enc"
 
         if not secrets_file.exists():
             return default
 
         try:
-            with open(secrets_file, 'rb') as f:
+            with open(secrets_file, "rb") as f:
                 encrypted_data = f.read()
 
             decrypted_data = self._fernet.decrypt(encrypted_data)
@@ -147,11 +147,11 @@ class SecretManager:
             key: Secret key
             value: Secret value
         """
-        if self.backend == 'env':
+        if self.backend == "env":
             os.environ[key] = value
             self._cache[key] = value
 
-        elif self.backend == 'file':
+        elif self.backend == "file":
             self._set_to_file(key, value)
 
         # Log audit event (without the actual secret)
@@ -159,11 +159,11 @@ class SecretManager:
 
     def _set_to_file(self, key: str, value: str):
         """Store secret in encrypted file"""
-        secrets_file = self.key_file.parent / 'secrets.enc'
+        secrets_file = self.key_file.parent / "secrets.enc"
 
         # Load existing secrets
         if secrets_file.exists():
-            with open(secrets_file, 'rb') as f:
+            with open(secrets_file, "rb") as f:
                 encrypted_data = f.read()
             decrypted_data = self._fernet.decrypt(encrypted_data)
             secrets_dict = json.loads(decrypted_data.decode())
@@ -172,11 +172,11 @@ class SecretManager:
 
         # Update secret
         secrets_dict[key] = value
-        secrets_dict[f'{key}_updated'] = datetime.now(timezone.utc).isoformat()
+        secrets_dict[f"{key}_updated"] = datetime.now(timezone.utc).isoformat()
 
         # Encrypt and save
         encrypted_data = self._fernet.encrypt(json.dumps(secrets_dict).encode())
-        with open(secrets_file, 'wb') as f:
+        with open(secrets_file, "wb") as f:
             f.write(encrypted_data)
 
         # Set restrictive permissions
@@ -214,7 +214,7 @@ class SecretManager:
         self.set_secret(key, new_secret)
 
         # Store rotation metadata
-        self.set_secret(f'{key}_rotated_at', datetime.now(timezone.utc).isoformat())
+        self.set_secret(f"{key}_rotated_at", datetime.now(timezone.utc).isoformat())
 
         logger.info(f"Secret {key} was rotated at {datetime.now(timezone.utc).isoformat()}")
 
@@ -230,35 +230,27 @@ class SecretManager:
         Returns:
             Dict with validation results
         """
-        results = {
-            'valid': True,
-            'missing': [],
-            'weak': [],
-            'errors': []
-        }
+        results = {"valid": True, "missing": [], "weak": [], "errors": []}
 
         for secret_key in required_secrets:
             value = self.get_secret(secret_key)
 
             if not value:
-                results['missing'].append(secret_key)
-                results['valid'] = False
+                results["missing"].append(secret_key)
+                results["valid"] = False
                 continue
 
             # Check for weak secrets
-            weak_patterns = [
-                'password', '123456', 'admin', 'secret',
-                'changeme', 'CHANGE_THIS', 'default', 'test'
-            ]
+            weak_patterns = ["password", "123456", "admin", "secret", "changeme", "CHANGE_THIS", "default", "test"]
 
             if any(pattern in value.lower() for pattern in weak_patterns):
-                results['weak'].append(secret_key)
-                results['valid'] = False
+                results["weak"].append(secret_key)
+                results["valid"] = False
 
             # Check minimum length
             if len(value) < 16:
-                results['errors'].append(f"{secret_key} is too short (minimum 16 characters)")
-                results['valid'] = False
+                results["errors"].append(f"{secret_key} is too short (minimum 16 characters)")
+                results["valid"] = False
 
         return results
 
@@ -281,9 +273,9 @@ class SecretRotationScheduler:
         """
         self.secret_manager = secret_manager
         self.rotation_schedule = {
-            'jwt_secret_key': timedelta(days=30),
-            'api_key': timedelta(days=90),
-            'database_password': timedelta(days=60),
+            "jwt_secret_key": timedelta(days=30),
+            "api_key": timedelta(days=90),
+            "database_password": timedelta(days=60),
         }
 
     def check_rotation_needed(self, key: str) -> bool:
@@ -300,7 +292,7 @@ class SecretRotationScheduler:
             return False
 
         # Get last rotation time
-        rotated_at_key = f'{key}_rotated_at'
+        rotated_at_key = f"{key}_rotated_at"
         rotated_at_str = self.secret_manager.get_secret(rotated_at_key)
 
         if not rotated_at_str:
@@ -350,7 +342,7 @@ class SecretRotationScheduler:
         return rotated
 
 
-def initialize_secrets(backend: str = 'env') -> SecretManager:
+def initialize_secrets(backend: str = "env") -> SecretManager:
     """
     Initialize and validate secret manager
 
@@ -364,25 +356,25 @@ def initialize_secrets(backend: str = 'env') -> SecretManager:
 
     # Define required secrets
     required_secrets = [
-        'SECRET_KEY',
-        'JWT_SECRET_KEY',
-        'POSTGRES_PASSWORD',
+        "SECRET_KEY",
+        "JWT_SECRET_KEY",
+        "POSTGRES_PASSWORD",
     ]
 
     # Validate secrets in production
-    if os.getenv('ENVIRONMENT') == 'production':
+    if os.getenv("ENVIRONMENT") == "production":
         validation = manager.validate_secrets(required_secrets)
 
-        if not validation['valid']:
+        if not validation["valid"]:
             error_msg = "Secret validation failed:\n"
 
-            if validation['missing']:
+            if validation["missing"]:
                 error_msg += f"  Missing secrets: {', '.join(validation['missing'])}\n"
 
-            if validation['weak']:
+            if validation["weak"]:
                 error_msg += f"  Weak secrets: {', '.join(validation['weak'])}\n"
 
-            if validation['errors']:
+            if validation["errors"]:
                 error_msg += f"  Errors: {', '.join(validation['errors'])}\n"
 
             raise ValueError(error_msg)

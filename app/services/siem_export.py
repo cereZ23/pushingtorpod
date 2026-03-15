@@ -79,6 +79,7 @@ def _asset_type_value(asset_type: object) -> str:
 # Splunk HEC formatting
 # ------------------------------------------------------------------
 
+
 def format_finding_splunk_hec(finding: Finding, asset: Asset) -> dict:
     """
     Format a single finding as a Splunk HEC JSON event.
@@ -120,6 +121,7 @@ def format_finding_splunk_hec(finding: Finding, asset: Asset) -> dict:
 # CEF formatting
 # ------------------------------------------------------------------
 
+
 def _cef_escape(value: str) -> str:
     r"""Escape characters that have special meaning inside CEF fields (\ and |)."""
     return value.replace("\\", "\\\\").replace("|", "\\|")
@@ -156,14 +158,13 @@ def format_finding_cef(finding: Finding, asset: Asset) -> str:
     ]
     extension = " ".join(extension_parts)
 
-    return (
-        f"CEF:0|EASM|Platform|1.0|{template_id}|{name}|{severity_int}|{extension}"
-    )
+    return f"CEF:0|EASM|Platform|1.0|{template_id}|{name}|{severity_int}|{extension}"
 
 
 # ------------------------------------------------------------------
 # Main export function
 # ------------------------------------------------------------------
+
 
 def export_findings_for_tenant(
     db: Session,
@@ -192,11 +193,7 @@ def export_findings_for_tenant(
 
     if severity_min is not None:
         min_level = _SEVERITY_ORDER.get(severity_min, 0)
-        valid_severities = [
-            FindingSeverity(sev)
-            for sev, level in _SEVERITY_ORDER.items()
-            if level >= min_level
-        ]
+        valid_severities = [FindingSeverity(sev) for sev, level in _SEVERITY_ORDER.items() if level >= min_level]
         filters.append(Finding.severity.in_(valid_severities))
 
     findings_with_assets = (

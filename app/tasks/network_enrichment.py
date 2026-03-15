@@ -143,11 +143,13 @@ def run_network_enrichment(
 
         # Only enrich domains, subdomains, and IPs (not URLs/services)
         query = query.filter(
-            Asset.type.in_([
-                AssetType.DOMAIN,
-                AssetType.SUBDOMAIN,
-                AssetType.IP,
-            ])
+            Asset.type.in_(
+                [
+                    AssetType.DOMAIN,
+                    AssetType.SUBDOMAIN,
+                    AssetType.IP,
+                ]
+            )
         )
 
         assets = query.all()
@@ -161,9 +163,7 @@ def run_network_enrichment(
                 "status": "no_candidates",
             }
 
-        tenant_logger.info(
-            "Starting network enrichment for %d assets", len(assets)
-        )
+        tenant_logger.info("Starting network enrichment for %d assets", len(assets))
 
         enriched_count = 0
         failed_count = 0
@@ -206,7 +206,9 @@ def run_network_enrichment(
                     except Exception as exc:
                         tenant_logger.warning(
                             "Network enrichment failed for asset %s (id=%d): %s",
-                            asset.identifier, asset.id, exc,
+                            asset.identifier,
+                            asset.id,
+                            exc,
                         )
                         failed_count += 1
 
@@ -230,7 +232,9 @@ def run_network_enrichment(
                 except Exception as exc:
                     tenant_logger.warning(
                         "Failed to apply enrichment for asset %s (id=%d): %s",
-                        asset.identifier, asset.id, exc,
+                        asset.identifier,
+                        asset.id,
+                        exc,
                     )
                     failed_count += 1
 
@@ -266,9 +270,7 @@ def run_network_enrichment(
         }
 
     except Exception as exc:
-        tenant_logger.error(
-            "Network enrichment task failed: %s", exc, exc_info=True
-        )
+        tenant_logger.error("Network enrichment task failed: %s", exc, exc_info=True)
         try:
             db.rollback()
         except Exception:
@@ -334,11 +336,13 @@ def phase_1c_network_enrichment(
             Asset.tenant_id == tenant_id,
             Asset.id.in_(asset_ids),
             Asset.is_active == True,  # noqa: E712
-            Asset.type.in_([
-                AssetType.DOMAIN,
-                AssetType.SUBDOMAIN,
-                AssetType.IP,
-            ]),
+            Asset.type.in_(
+                [
+                    AssetType.DOMAIN,
+                    AssetType.SUBDOMAIN,
+                    AssetType.IP,
+                ]
+            ),
         )
         .all()
     )
@@ -387,10 +391,7 @@ def phase_1c_network_enrichment(
         results: list[tuple[int, dict | None, str | None]] = []
         with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(batch))) as executor:
             futures = {
-                executor.submit(
-                    _enrich_one, asset.id, asset.identifier, asset.type.value
-                ): asset.id
-                for asset in batch
+                executor.submit(_enrich_one, asset.id, asset.identifier, asset.type.value): asset.id for asset in batch
             }
             for future in as_completed(futures):
                 results.append(future.result())
@@ -427,16 +428,17 @@ def phase_1c_network_enrichment(
 
         tenant_logger.info(
             "Phase 1c batch %d/%d done (%d ok, %d fail)",
-            batch_num, total_batches, enriched_count, failed_count,
+            batch_num,
+            total_batches,
+            enriched_count,
+            failed_count,
         )
 
         # Brief pause between batches for WHOIS rate limits
         if batch_start + BATCH_SIZE < len(assets):
             time.sleep(BATCH_SLEEP_SECONDS)
 
-    tenant_logger.info(
-        "Phase 1c complete: %d enriched, %d failed", enriched_count, failed_count
-    )
+    tenant_logger.info("Phase 1c complete: %d enriched, %d failed", enriched_count, failed_count)
 
     return {
         "assets_discovered": 0,  # This phase enriches, it does not discover new assets

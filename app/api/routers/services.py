@@ -16,7 +16,7 @@ from app.api.schemas.service import (
     ServiceListRequest,
     TechnologyStackResponse,
     TechnologyItem,
-    PortDistributionResponse
+    PortDistributionResponse,
 )
 from app.api.schemas.envelope import PaginatedEnvelope, PaginationMeta
 from app.models.database import Asset, Service
@@ -41,7 +41,7 @@ def list_services(
     sort_order: str = Query("desc"),
     pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
+    membership=Depends(verify_tenant_access),
 ):
     """
     List services with filtering and pagination
@@ -57,9 +57,14 @@ def list_services(
     - search: Full-text search
     """
     # Build query with tenant isolation
-    query = db.query(Service).join(Asset).options(joinedload(Service.asset)).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.is_active == True,  # noqa: E712 — exclude services on deactivated assets
+    query = (
+        db.query(Service)
+        .join(Asset)
+        .options(joinedload(Service.asset))
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.is_active == True,  # noqa: E712 — exclude services on deactivated assets
+        )
     )
 
     # Apply filters
@@ -120,7 +125,7 @@ def list_services(
         resp = ServiceResponse.model_validate(s)
         if s.asset:
             resp.asset_identifier = s.asset.identifier
-            resp.asset_type = s.asset.type.value if hasattr(s.asset.type, 'value') else str(s.asset.type)
+            resp.asset_type = s.asset.type.value if hasattr(s.asset.type, "value") else str(s.asset.type)
         items.append(resp)
 
     return PaginatedEnvelope(
@@ -135,11 +140,7 @@ def list_services(
 
 
 @router.get("/tech-stack", response_model=List[TechnologyStackResponse])
-def get_technology_stack(
-    tenant_id: int,
-    db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
-):
+def get_technology_stack(tenant_id: int, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)):
     """
     Get technology stack summary
 
@@ -151,38 +152,33 @@ def get_technology_stack(
     - Security posture assessment
     """
     # Query for products
-    products = db.query(
-        Service.product,
-        Service.version,
-        func.count(Service.id).label('count')
-    ).join(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Service.product.isnot(None)
-    ).group_by(Service.product, Service.version).all()
+    products = (
+        db.query(Service.product, Service.version, func.count(Service.id).label("count"))
+        .join(Asset)
+        .filter(Asset.tenant_id == tenant_id, Service.product.isnot(None))
+        .group_by(Service.product, Service.version)
+        .all()
+    )
 
     # Aggregate by product
     tech_stack = {}
     for product, version, count in products:
         if product not in tech_stack:
-            tech_stack[product] = {
-                'technology': product,
-                'count': 0,
-                'versions': {}
-            }
+            tech_stack[product] = {"technology": product, "count": 0, "versions": {}}
 
-        tech_stack[product]['count'] += count
+        tech_stack[product]["count"] += count
         if version:
-            tech_stack[product]['versions'][version] = count
+            tech_stack[product]["versions"][version] = count
 
     # Convert to response format
     return [
         TechnologyStackResponse(
-            technology=tech['technology'],
-            count=tech['count'],
-            versions=tech['versions'],
-            risk_level=None  # TODO: Add risk assessment logic
+            technology=tech["technology"],
+            count=tech["count"],
+            versions=tech["versions"],
+            risk_level=None,  # TODO: Add risk assessment logic
         )
-        for tech in sorted(tech_stack.values(), key=lambda x: x['count'], reverse=True)
+        for tech in sorted(tech_stack.values(), key=lambda x: x["count"], reverse=True)
     ]
 
 
@@ -221,9 +217,7 @@ def get_technologies(
                 tech_agg[norm_product] = {"count": 0, "versions": {}}
             tech_agg[norm_product]["count"] += 1
             if version:
-                tech_agg[norm_product]["versions"][version] = (
-                    tech_agg[norm_product]["versions"].get(version, 0) + 1
-                )
+                tech_agg[norm_product]["versions"][version] = tech_agg[norm_product]["versions"].get(version, 0) + 1
 
         # Count each detected technology from httpx
         techs = http_techs if isinstance(http_techs, list) else []
@@ -267,11 +261,7 @@ def get_technologies(
 
 
 @router.get("/ports/distribution", response_model=List[PortDistributionResponse])
-def get_port_distribution(
-    tenant_id: int,
-    db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
-):
+def get_port_distribution(tenant_id: int, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)):
     """
     Get port distribution statistics
 
@@ -283,51 +273,41 @@ def get_port_distribution(
     - Service discovery
     """
     # Query for port distribution
-    ports = db.query(
-        Service.port,
-        Service.protocol,
-        Service.product,
-        func.count(Service.id).label('count')
-    ).join(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Service.port.isnot(None)
-    ).group_by(Service.port, Service.protocol, Service.product).all()
+    ports = (
+        db.query(Service.port, Service.protocol, Service.product, func.count(Service.id).label("count"))
+        .join(Asset)
+        .filter(Asset.tenant_id == tenant_id, Service.port.isnot(None))
+        .group_by(Service.port, Service.protocol, Service.product)
+        .all()
+    )
 
     # Aggregate by port
     port_dist = {}
     for port, protocol, product, count in ports:
         if port not in port_dist:
-            port_dist[port] = {
-                'port': port,
-                'count': 0,
-                'protocols': set(),
-                'products': []
-            }
+            port_dist[port] = {"port": port, "count": 0, "protocols": set(), "products": []}
 
-        port_dist[port]['count'] += count
+        port_dist[port]["count"] += count
         if protocol:
-            port_dist[port]['protocols'].add(protocol)
-        if product and product not in port_dist[port]['products']:
-            port_dist[port]['products'].append(product)
+            port_dist[port]["protocols"].add(protocol)
+        if product and product not in port_dist[port]["products"]:
+            port_dist[port]["products"].append(product)
 
     # Convert to response format
     return [
         PortDistributionResponse(
-            port=data['port'],
-            count=data['count'],
-            protocols=list(data['protocols']),
-            common_products=data['products'][:5]  # Top 5 products
+            port=data["port"],
+            count=data["count"],
+            protocols=list(data["protocols"]),
+            common_products=data["products"][:5],  # Top 5 products
         )
-        for data in sorted(port_dist.values(), key=lambda x: x['count'], reverse=True)[:50]
+        for data in sorted(port_dist.values(), key=lambda x: x["count"], reverse=True)[:50]
     ]
 
 
 @router.get("/{service_id}", response_model=ServiceResponse)
 def get_service(
-    tenant_id: int,
-    service_id: int,
-    db: Session = Depends(get_db),
-    membership = Depends(verify_tenant_access)
+    tenant_id: int, service_id: int, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)
 ):
     """
     Get service by ID
@@ -335,15 +315,9 @@ def get_service(
     Raises:
         - 404: Service not found
     """
-    service = db.query(Service).join(Asset).filter(
-        Service.id == service_id,
-        Asset.tenant_id == tenant_id
-    ).first()
+    service = db.query(Service).join(Asset).filter(Service.id == service_id, Asset.tenant_id == tenant_id).first()
 
     if not service:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Service not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
 
     return ServiceResponse.model_validate(service)

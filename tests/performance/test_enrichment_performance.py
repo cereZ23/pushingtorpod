@@ -42,30 +42,22 @@ from app.repositories.enrichment_repositories import (
     HTTPEndpointRepository,
     PortRepository,
     CertificateRepository,
-    CrawlResultRepository
+    CrawlResultRepository,
 )
 from app.utils.secure_executor import SecureToolExecutor, ToolExecutionError
-from app.tasks.enrichment import (
-    run_httpx,
-    run_naabu,
-    run_tlsx,
-    run_katana,
-    run_enrichment_pipeline
-)
+from app.tasks.enrichment import run_httpx, run_naabu, run_tlsx, run_katana, run_enrichment_pipeline
 from app.config import settings
 
 # Performance test markers
-pytestmark = [
-    pytest.mark.performance,
-    pytest.mark.integration
-]
+pytestmark = [pytest.mark.performance, pytest.mark.integration]
 
 
 # =============================================================================
 # FIXTURES
 # =============================================================================
 
-@pytest.fixture(scope='module')
+
+@pytest.fixture(scope="module")
 def performance_db():
     """Create PostgreSQL test database for performance testing"""
     # Use PostgreSQL for realistic performance testing
@@ -83,12 +75,7 @@ def performance_db():
 
     # Create engine with connection pooling settings for performance testing
     engine = create_engine(
-        db_url,
-        poolclass=pool.QueuePool,
-        pool_size=20,
-        max_overflow=40,
-        pool_pre_ping=True,
-        pool_recycle=3600
+        db_url, poolclass=pool.QueuePool, pool_size=20, max_overflow=40, pool_pre_ping=True, pool_recycle=3600
     )
 
     Base.metadata.create_all(engine)
@@ -121,15 +108,9 @@ def sample_urls(performance_db) -> List[str]:
     urls = []
 
     # Mix of different URL patterns
-    domains = [
-        "example.com", "test.org", "demo.net", "sample.io",
-        "perf-test.com", "benchmark.org", "load-test.net"
-    ]
+    domains = ["example.com", "test.org", "demo.net", "sample.io", "perf-test.com", "benchmark.org", "load-test.net"]
 
-    paths = [
-        "/", "/api", "/login", "/dashboard", "/admin",
-        "/api/v1/users", "/api/v2/data", "/search", "/products"
-    ]
+    paths = ["/", "/api", "/login", "/dashboard", "/admin", "/api/v1/users", "/api/v2/data", "/search", "/products"]
 
     for i in range(100):
         domain = random.choice(domains)
@@ -155,7 +136,7 @@ def sample_assets(performance_db) -> List[Asset]:
             identifier=f"test-{i}.example.com",
             first_seen=datetime.now(timezone.utc),
             last_seen=datetime.now(timezone.utc),
-            confidence_score=0.8 + (i % 20) / 100
+            confidence_score=0.8 + (i % 20) / 100,
         )
         db.add(asset)
         assets.append(asset)
@@ -167,7 +148,7 @@ def sample_assets(performance_db) -> List[Asset]:
 @pytest.fixture
 def mock_tool_executor():
     """Mock tool executor for controlled performance testing"""
-    with patch('app.tasks.enrichment.SecureToolExecutor') as mock_executor:
+    with patch("app.tasks.enrichment.SecureToolExecutor") as mock_executor:
         instance = MagicMock()
         mock_executor.return_value.__enter__.return_value = instance
 
@@ -176,35 +157,43 @@ def mock_tool_executor():
             time.sleep(random.uniform(0.01, 0.05))  # Simulate execution time
 
             if tool == "httpx":
-                return json.dumps([{
-                    "url": f"https://example.com:{i}",
-                    "status_code": 200,
-                    "title": f"Example {i}",
-                    "technologies": ["nginx", "php"],
-                    "response_time": random.randint(50, 500)
-                } for i in range(10)])
+                return json.dumps(
+                    [
+                        {
+                            "url": f"https://example.com:{i}",
+                            "status_code": 200,
+                            "title": f"Example {i}",
+                            "technologies": ["nginx", "php"],
+                            "response_time": random.randint(50, 500),
+                        }
+                        for i in range(10)
+                    ]
+                )
 
             elif tool == "naabu":
-                return json.dumps([{
-                    "host": f"example.com",
-                    "port": random.choice([80, 443, 8080, 3306, 5432]),
-                    "protocol": "tcp"
-                } for _ in range(5)])
+                return json.dumps(
+                    [
+                        {"host": f"example.com", "port": random.choice([80, 443, 8080, 3306, 5432]), "protocol": "tcp"}
+                        for _ in range(5)
+                    ]
+                )
 
             elif tool == "tlsx":
-                return json.dumps([{
-                    "host": "example.com",
-                    "port": "443",
-                    "subject_cn": "*.example.com",
-                    "issuer": "Let's Encrypt",
-                    "not_after": "2024-12-31"
-                } for _ in range(3)])
+                return json.dumps(
+                    [
+                        {
+                            "host": "example.com",
+                            "port": "443",
+                            "subject_cn": "*.example.com",
+                            "issuer": "Let's Encrypt",
+                            "not_after": "2024-12-31",
+                        }
+                        for _ in range(3)
+                    ]
+                )
 
             elif tool == "katana":
-                return json.dumps([{
-                    "url": f"https://example.com/path{i}",
-                    "method": "GET"
-                } for i in range(20)])
+                return json.dumps([{"url": f"https://example.com/path{i}", "method": "GET"} for i in range(20)])
 
             return "{}"
 
@@ -215,6 +204,7 @@ def mock_tool_executor():
 # =============================================================================
 # TOOL EXECUTION PERFORMANCE TESTS
 # =============================================================================
+
 
 class TestToolExecutionPerformance:
     """Benchmark individual tool execution performance"""
@@ -227,9 +217,7 @@ class TestToolExecutionPerformance:
         def run_httpx_test():
             with SecureToolExecutor(tenant_id=1) as executor:
                 result = mock_tool_executor.execute(
-                    "httpx",
-                    ["-l", "-", "-json", "-mc", "200,301,302,403"],
-                    input_data="\n".join(urls)
+                    "httpx", ["-l", "-", "-json", "-mc", "200,301,302,403"], input_data="\n".join(urls)
                 )
                 return len(json.loads(result))
 
@@ -249,9 +237,7 @@ class TestToolExecutionPerformance:
         def run_httpx_test():
             with SecureToolExecutor(tenant_id=1) as executor:
                 result = mock_tool_executor.execute(
-                    "httpx",
-                    ["-l", "-", "-json", "-mc", "200,301,302,403"],
-                    input_data="\n".join(urls)
+                    "httpx", ["-l", "-", "-json", "-mc", "200,301,302,403"], input_data="\n".join(urls)
                 )
                 return len(json.loads(result))
 
@@ -269,9 +255,7 @@ class TestToolExecutionPerformance:
         def run_httpx_test():
             with SecureToolExecutor(tenant_id=1) as executor:
                 result = mock_tool_executor.execute(
-                    "httpx",
-                    ["-l", "-", "-json", "-mc", "200,301,302,403"],
-                    input_data="\n".join(urls)
+                    "httpx", ["-l", "-", "-json", "-mc", "200,301,302,403"], input_data="\n".join(urls)
                 )
                 return len(json.loads(result))
 
@@ -289,9 +273,7 @@ class TestToolExecutionPerformance:
         def run_naabu_test():
             with SecureToolExecutor(tenant_id=1) as executor:
                 result = mock_tool_executor.execute(
-                    "naabu",
-                    ["-l", "-", "-top-ports", "100", "-json"],
-                    input_data="\n".join(hosts)
+                    "naabu", ["-l", "-", "-top-ports", "100", "-json"], input_data="\n".join(hosts)
                 )
                 return len(json.loads(result))
 
@@ -309,9 +291,7 @@ class TestToolExecutionPerformance:
         def run_naabu_test():
             with SecureToolExecutor(tenant_id=1) as executor:
                 result = mock_tool_executor.execute(
-                    "naabu",
-                    ["-l", "-", "-p", "1-10000", "-json"],
-                    input_data="\n".join(hosts)
+                    "naabu", ["-l", "-", "-p", "1-10000", "-json"], input_data="\n".join(hosts)
                 )
                 return len(json.loads(result))
 
@@ -329,9 +309,7 @@ class TestToolExecutionPerformance:
         def run_tlsx_test():
             with SecureToolExecutor(tenant_id=1) as executor:
                 result = mock_tool_executor.execute(
-                    "tlsx",
-                    ["-l", "-", "-json", "-cn", "-san"],
-                    input_data="\n".join(hosts)
+                    "tlsx", ["-l", "-", "-json", "-cn", "-san"], input_data="\n".join(hosts)
                 )
                 return len(json.loads(result))
 
@@ -348,11 +326,7 @@ class TestToolExecutionPerformance:
 
         def run_katana_test():
             with SecureToolExecutor(tenant_id=1) as executor:
-                result = mock_tool_executor.execute(
-                    "katana",
-                    ["-u", urls[0], "-d", "1", "-json"],
-                    input_data=""
-                )
+                result = mock_tool_executor.execute("katana", ["-u", urls[0], "-d", "1", "-json"], input_data="")
                 return len(json.loads(result))
 
         result = benchmark(run_katana_test)
@@ -368,11 +342,7 @@ class TestToolExecutionPerformance:
 
         def run_katana_test():
             with SecureToolExecutor(tenant_id=1) as executor:
-                result = mock_tool_executor.execute(
-                    "katana",
-                    ["-u", urls[0], "-d", "3", "-json"],
-                    input_data=""
-                )
+                result = mock_tool_executor.execute("katana", ["-u", urls[0], "-d", "3", "-json"], input_data="")
                 return len(json.loads(result))
 
         result = benchmark(run_katana_test)
@@ -386,6 +356,7 @@ class TestToolExecutionPerformance:
 # DATABASE PERFORMANCE TESTS
 # =============================================================================
 
+
 class TestDatabasePerformance:
     """Benchmark database operations"""
 
@@ -397,14 +368,16 @@ class TestDatabasePerformance:
         def bulk_insert():
             assets = []
             for i in range(100):
-                assets.append({
-                    'tenant_id': tenant.id,
-                    'type': 'domain',
-                    'identifier': f'perf-{i}-{time.time()}.example.com',
-                    'first_seen': datetime.now(timezone.utc),
-                    'last_seen': datetime.now(timezone.utc),
-                    'confidence_score': 0.85
-                })
+                assets.append(
+                    {
+                        "tenant_id": tenant.id,
+                        "type": "domain",
+                        "identifier": f"perf-{i}-{time.time()}.example.com",
+                        "first_seen": datetime.now(timezone.utc),
+                        "last_seen": datetime.now(timezone.utc),
+                        "confidence_score": 0.85,
+                    }
+                )
 
             with engine.connect() as conn:
                 conn.execute(
@@ -414,7 +387,7 @@ class TestDatabasePerformance:
                         ON CONFLICT (tenant_id, type, identifier) DO UPDATE
                         SET last_seen = EXCLUDED.last_seen
                     """),
-                    assets
+                    assets,
                 )
                 conn.commit()
 
@@ -434,14 +407,16 @@ class TestDatabasePerformance:
         def bulk_insert():
             assets = []
             for i in range(1000):
-                assets.append({
-                    'tenant_id': tenant.id,
-                    'type': 'subdomain',
-                    'identifier': f'perf-{i}-{time.time()}.example.com',
-                    'first_seen': datetime.now(timezone.utc),
-                    'last_seen': datetime.now(timezone.utc),
-                    'confidence_score': 0.75
-                })
+                assets.append(
+                    {
+                        "tenant_id": tenant.id,
+                        "type": "subdomain",
+                        "identifier": f"perf-{i}-{time.time()}.example.com",
+                        "first_seen": datetime.now(timezone.utc),
+                        "last_seen": datetime.now(timezone.utc),
+                        "confidence_score": 0.75,
+                    }
+                )
 
             with engine.connect() as conn:
                 conn.execute(
@@ -451,7 +426,7 @@ class TestDatabasePerformance:
                         ON CONFLICT (tenant_id, type, identifier) DO UPDATE
                         SET last_seen = EXCLUDED.last_seen
                     """),
-                    assets
+                    assets,
                 )
                 conn.commit()
 
@@ -471,19 +446,21 @@ class TestDatabasePerformance:
         def bulk_insert():
             assets = []
             for i in range(10000):
-                assets.append({
-                    'tenant_id': tenant.id,
-                    'type': 'ip' if i % 3 == 0 else 'domain',
-                    'identifier': f'perf-{i}-{time.time()}.example.com',
-                    'first_seen': datetime.now(timezone.utc),
-                    'last_seen': datetime.now(timezone.utc),
-                    'confidence_score': 0.65 + (i % 35) / 100
-                })
+                assets.append(
+                    {
+                        "tenant_id": tenant.id,
+                        "type": "ip" if i % 3 == 0 else "domain",
+                        "identifier": f"perf-{i}-{time.time()}.example.com",
+                        "first_seen": datetime.now(timezone.utc),
+                        "last_seen": datetime.now(timezone.utc),
+                        "confidence_score": 0.65 + (i % 35) / 100,
+                    }
+                )
 
             # Use batch processing for very large inserts
             batch_size = 1000
             for i in range(0, len(assets), batch_size):
-                batch = assets[i:i + batch_size]
+                batch = assets[i : i + batch_size]
                 with engine.connect() as conn:
                     conn.execute(
                         text("""
@@ -492,7 +469,7 @@ class TestDatabasePerformance:
                             ON CONFLICT (tenant_id, type, identifier) DO UPDATE
                             SET last_seen = EXCLUDED.last_seen
                         """),
-                        batch
+                        batch,
                     )
                     conn.commit()
 
@@ -519,7 +496,7 @@ class TestDatabasePerformance:
                         AND type = :type
                         LIMIT 100
                     """),
-                    {"tenant_id": tenant.id, "type": "domain"}
+                    {"tenant_id": tenant.id, "type": "domain"},
                 )
                 return len(result.fetchall())
 
@@ -549,8 +526,8 @@ class TestDatabasePerformance:
                         "status_code": 200,
                         "title": "Test Site",
                         "server": "nginx",
-                        "last_checked": datetime.now(timezone.utc)
-                    }
+                        "last_checked": datetime.now(timezone.utc),
+                    },
                 )
             conn.commit()
 
@@ -568,10 +545,7 @@ class TestDatabasePerformance:
                         ORDER BY a.confidence_score DESC
                         LIMIT 50
                     """),
-                    {
-                        "tenant_id": tenant.id,
-                        "cutoff_date": datetime.now(timezone.utc) - timedelta(days=7)
-                    }
+                    {"tenant_id": tenant.id, "cutoff_date": datetime.now(timezone.utc) - timedelta(days=7)},
                 )
                 return len(result.fetchall())
 
@@ -591,14 +565,16 @@ class TestDatabasePerformance:
                 with engine.connect() as conn:
                     assets = []
                     for i in range(100):
-                        assets.append({
-                            'tenant_id': tenant.id,
-                            'type': 'domain',
-                            'identifier': f'concurrent-{batch_id}-{i}-{time.time()}.example.com',
-                            'first_seen': datetime.now(timezone.utc),
-                            'last_seen': datetime.now(timezone.utc),
-                            'confidence_score': 0.8
-                        })
+                        assets.append(
+                            {
+                                "tenant_id": tenant.id,
+                                "type": "domain",
+                                "identifier": f"concurrent-{batch_id}-{i}-{time.time()}.example.com",
+                                "first_seen": datetime.now(timezone.utc),
+                                "last_seen": datetime.now(timezone.utc),
+                                "confidence_score": 0.8,
+                            }
+                        )
 
                     conn.execute(
                         text("""
@@ -607,7 +583,7 @@ class TestDatabasePerformance:
                             ON CONFLICT (tenant_id, type, identifier) DO UPDATE
                             SET last_seen = EXCLUDED.last_seen
                         """),
-                        assets
+                        assets,
                     )
                     conn.commit()
                     return len(assets)
@@ -630,6 +606,7 @@ class TestDatabasePerformance:
 # CONCURRENT EXECUTION TESTS
 # =============================================================================
 
+
 class TestConcurrentExecution:
     """Test parallel tool execution and resource utilization"""
 
@@ -640,11 +617,7 @@ class TestConcurrentExecution:
         def parallel_execution():
             def run_tool(tool_name, urls):
                 with SecureToolExecutor(tenant_id=1) as executor:
-                    return mock_tool_executor.execute(
-                        tool_name,
-                        ["-json"],
-                        input_data="\n".join(urls)
-                    )
+                    return mock_tool_executor.execute(tool_name, ["-json"], input_data="\n".join(urls))
 
             urls = [f"https://example-{i}.com" for i in range(20)]
 
@@ -673,11 +646,7 @@ class TestConcurrentExecution:
         def parallel_execution():
             def run_tool(tool_name, urls):
                 with SecureToolExecutor(tenant_id=1) as executor:
-                    return mock_tool_executor.execute(
-                        tool_name,
-                        ["-json"],
-                        input_data="\n".join(urls)
-                    )
+                    return mock_tool_executor.execute(tool_name, ["-json"], input_data="\n".join(urls))
 
             urls = [f"https://example-{i}.com" for i in range(20)]
             tools = ["httpx", "naabu", "tlsx", "katana"]
@@ -705,11 +674,7 @@ class TestConcurrentExecution:
         def parallel_execution():
             def run_tool(tool_name, urls):
                 with SecureToolExecutor(tenant_id=1) as executor:
-                    return mock_tool_executor.execute(
-                        tool_name,
-                        ["-json"],
-                        input_data="\n".join(urls)
-                    )
+                    return mock_tool_executor.execute(tool_name, ["-json"], input_data="\n".join(urls))
 
             urls = [f"https://example-{i}.com" for i in range(20)]
             tools = ["httpx", "naabu", "tlsx", "katana"]
@@ -737,11 +702,7 @@ class TestConcurrentExecution:
 
         def run_tool(tool_name, urls):
             with SecureToolExecutor(tenant_id=1) as executor:
-                return mock_tool_executor.execute(
-                    tool_name,
-                    ["-json"],
-                    input_data="\n".join(urls)
-                )
+                return mock_tool_executor.execute(tool_name, ["-json"], input_data="\n".join(urls))
 
         urls = [f"https://example-{i}.com" for i in range(100)]
         tools = ["httpx", "naabu", "tlsx", "katana"]
@@ -790,8 +751,7 @@ class TestConcurrentExecution:
                     time.sleep(random.uniform(0.01, 0.1))
 
                     result = conn.execute(
-                        text("SELECT COUNT(*) FROM assets WHERE tenant_id = :tenant_id"),
-                        {"tenant_id": tenant.id}
+                        text("SELECT COUNT(*) FROM assets WHERE tenant_id = :tenant_id"), {"tenant_id": tenant.id}
                     )
                     count = result.scalar()
 
@@ -808,8 +768,8 @@ class TestConcurrentExecution:
                             "identifier": f"pool-test-{op_id}-{time.time()}.example.com",
                             "first_seen": datetime.now(timezone.utc),
                             "last_seen": datetime.now(timezone.utc),
-                            "confidence_score": 0.75
-                        }
+                            "confidence_score": 0.75,
+                        },
                     )
                     conn.commit()
 
@@ -850,21 +810,17 @@ class TestConcurrentExecution:
                         # Even: lock assets then http_endpoints
                         conn.execute(
                             text("SELECT * FROM assets WHERE tenant_id = :tenant_id FOR UPDATE"),
-                            {"tenant_id": tenant.id}
+                            {"tenant_id": tenant.id},
                         )
                         time.sleep(0.01)
-                        conn.execute(
-                            text("SELECT * FROM http_endpoints FOR UPDATE")
-                        )
+                        conn.execute(text("SELECT * FROM http_endpoints FOR UPDATE"))
                     else:
                         # Odd: lock http_endpoints then assets
-                        conn.execute(
-                            text("SELECT * FROM http_endpoints FOR UPDATE")
-                        )
+                        conn.execute(text("SELECT * FROM http_endpoints FOR UPDATE"))
                         time.sleep(0.01)
                         conn.execute(
                             text("SELECT * FROM assets WHERE tenant_id = :tenant_id FOR UPDATE"),
-                            {"tenant_id": tenant.id}
+                            {"tenant_id": tenant.id},
                         )
 
                     trans.commit()
@@ -883,7 +839,7 @@ class TestConcurrentExecution:
         print(f"\nDeadlock Detection Results:")
         print(f"Total Operations: {len(results)}")
         print(f"Deadlocks Detected: {len(deadlocks)}")
-        print(f"Deadlock Rate: {len(deadlocks)/len(results)*100:.1f}%")
+        print(f"Deadlock Rate: {len(deadlocks) / len(results) * 100:.1f}%")
 
         # Some deadlocks are expected with this pattern, but should be handled gracefully
         assert len(deadlocks) < len(results), "All operations should not deadlock"
@@ -892,6 +848,7 @@ class TestConcurrentExecution:
 # =============================================================================
 # STRESS TESTING
 # =============================================================================
+
 
 class TestStressTesting:
     """Find breaking points and test resilience"""
@@ -907,32 +864,19 @@ class TestStressTesting:
             try:
                 with SecureToolExecutor(tenant_id=1) as executor:
                     result = mock_tool_executor.execute(
-                        "httpx",
-                        ["-l", "-", "-json"],
-                        input_data="\n".join(urls),
-                        timeout=60
+                        "httpx", ["-l", "-", "-json"], input_data="\n".join(urls), timeout=60
                     )
 
                     elapsed = time.time() - start_time
                     throughput = num_urls / elapsed
 
-                    results.append({
-                        "urls": num_urls,
-                        "time": elapsed,
-                        "throughput": throughput,
-                        "status": "success"
-                    })
+                    results.append({"urls": num_urls, "time": elapsed, "throughput": throughput, "status": "success"})
 
                     print(f"HTTPx processed {num_urls} URLs in {elapsed:.2f}s ({throughput:.1f} URLs/s)")
 
             except (ToolExecutionError, TimeoutError) as e:
                 elapsed = time.time() - start_time
-                results.append({
-                    "urls": num_urls,
-                    "time": elapsed,
-                    "throughput": 0,
-                    "status": f"failed: {e}"
-                })
+                results.append({"urls": num_urls, "time": elapsed, "throughput": 0, "status": f"failed: {e}"})
                 print(f"HTTPx failed at {num_urls} URLs: {e}")
                 break
 
@@ -959,19 +903,21 @@ class TestStressTesting:
             try:
                 assets = []
                 for i in range(batch_size):
-                    assets.append({
-                        'tenant_id': tenant.id,
-                        'type': 'domain',
-                        'identifier': f'stress-{batch_size}-{i}.example.com',
-                        'first_seen': datetime.now(timezone.utc),
-                        'last_seen': datetime.now(timezone.utc),
-                        'confidence_score': 0.7
-                    })
+                    assets.append(
+                        {
+                            "tenant_id": tenant.id,
+                            "type": "domain",
+                            "identifier": f"stress-{batch_size}-{i}.example.com",
+                            "first_seen": datetime.now(timezone.utc),
+                            "last_seen": datetime.now(timezone.utc),
+                            "confidence_score": 0.7,
+                        }
+                    )
 
                 # Use batch processing for large inserts
                 chunk_size = 5000
                 for i in range(0, len(assets), chunk_size):
-                    chunk = assets[i:i + chunk_size]
+                    chunk = assets[i : i + chunk_size]
                     with engine.connect() as conn:
                         conn.execute(
                             text("""
@@ -979,30 +925,22 @@ class TestStressTesting:
                                 VALUES (:tenant_id, :type, :identifier, :first_seen, :last_seen, :confidence_score)
                                 ON CONFLICT (tenant_id, type, identifier) DO NOTHING
                             """),
-                            chunk
+                            chunk,
                         )
                         conn.commit()
 
                 elapsed = time.time() - start_time
                 throughput = batch_size / elapsed
 
-                results.append({
-                    "batch_size": batch_size,
-                    "time": elapsed,
-                    "throughput": throughput,
-                    "status": "success"
-                })
+                results.append(
+                    {"batch_size": batch_size, "time": elapsed, "throughput": throughput, "status": "success"}
+                )
 
                 print(f"Database inserted {batch_size} records in {elapsed:.2f}s ({throughput:.1f} records/s)")
 
             except Exception as e:
                 elapsed = time.time() - start_time
-                results.append({
-                    "batch_size": batch_size,
-                    "time": elapsed,
-                    "throughput": 0,
-                    "status": f"failed: {e}"
-                })
+                results.append({"batch_size": batch_size, "time": elapsed, "throughput": 0, "status": f"failed: {e}"})
                 print(f"Database failed at {batch_size} records: {e}")
                 break
 
@@ -1050,12 +988,7 @@ class TestStressTesting:
         for test_input in test_cases:
             try:
                 with SecureToolExecutor(tenant_id=1) as executor:
-                    result = mock_tool_executor.execute(
-                        "httpx",
-                        ["-l", "-", "-json"],
-                        input_data=test_input,
-                        timeout=5
-                    )
+                    result = mock_tool_executor.execute("httpx", ["-l", "-", "-json"], input_data=test_input, timeout=5)
 
                     # Check if result is valid JSON
                     try:
@@ -1087,7 +1020,7 @@ class TestStressTesting:
                 # Simulate CPU-intensive operation
                 start = time.time()
                 while time.time() - start < 20:  # Try to run for 20 seconds
-                    _ = sum(i*i for i in range(1000000))
+                    _ = sum(i * i for i in range(1000000))
 
         # Test memory limit
         def memory_intensive():
@@ -1104,14 +1037,14 @@ class TestStressTesting:
                     "httpx",
                     ["-l", "-", "-json"],
                     input_data="https://example.com",
-                    timeout=1  # 1 second timeout
+                    timeout=1,  # 1 second timeout
                 )
 
         # These should be terminated by resource limits
         import signal
 
         # CPU limit test (Unix only)
-        if hasattr(signal, 'SIGXCPU'):
+        if hasattr(signal, "SIGXCPU"):
             try:
                 signal.signal(signal.SIGXCPU, lambda *args: None)
                 cpu_intensive()
@@ -1166,11 +1099,7 @@ class TestStressTesting:
                     mock_tool_executor.execute.side_effect = lambda *args, **kwargs: tool_with_failures()
 
                     with SecureToolExecutor(tenant_id=1) as executor:
-                        result = mock_tool_executor.execute(
-                            "httpx",
-                            ["-json"],
-                            input_data="https://example.com"
-                        )
+                        result = mock_tool_executor.execute("httpx", ["-json"], input_data="https://example.com")
 
                     successes += 1
                     break
@@ -1208,6 +1137,7 @@ class TestStressTesting:
 # =============================================================================
 # OPTIMIZATION RECOMMENDATIONS GENERATOR
 # =============================================================================
+
 
 def generate_performance_report(results_file: Optional[str] = None):
     """
@@ -1490,7 +1420,7 @@ def generate_performance_report(results_file: Optional[str] = None):
 
     # Save report to file if specified
     if results_file:
-        with open(results_file, 'w') as f:
+        with open(results_file, "w") as f:
             f.write(report)
         print(f"Performance report saved to {results_file}")
 
@@ -1510,14 +1440,17 @@ if __name__ == "__main__":
         print(report)
     else:
         # Run performance tests
-        pytest.main([
-            __file__,
-            "-v",
-            "--benchmark-only",
-            "--benchmark-histogram",
-            "--benchmark-save=enrichment_baseline",
-            "--benchmark-compare",
-            "--benchmark-max-time=60",
-            "--benchmark-min-rounds=2",
-            "-k", "performance",
-        ])
+        pytest.main(
+            [
+                __file__,
+                "-v",
+                "--benchmark-only",
+                "--benchmark-histogram",
+                "--benchmark-save=enrichment_baseline",
+                "--benchmark-compare",
+                "--benchmark-max-time=60",
+                "--benchmark-min-rounds=2",
+                "-k",
+                "performance",
+            ]
+        )

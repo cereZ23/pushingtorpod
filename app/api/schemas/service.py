@@ -36,7 +36,7 @@ class ServiceResponse(BaseModel):
     enriched_at: Optional[datetime] = Field(None, description="Last enrichment timestamp")
     enrichment_source: Optional[str] = Field(None, description="Enrichment source (httpx, naabu, tlsx)")
 
-    @field_validator('http_technologies', mode='before')
+    @field_validator("http_technologies", mode="before")
     @classmethod
     def extract_technologies(cls, v: Union[Dict, List, None]) -> Optional[List[str]]:
         """
@@ -53,8 +53,8 @@ class ServiceResponse(BaseModel):
             return v
 
         # If it's a dict with 'technologies' key, extract the list
-        if isinstance(v, dict) and 'technologies' in v:
-            return v['technologies']
+        if isinstance(v, dict) and "technologies" in v:
+            return v["technologies"]
 
         return None
 
@@ -80,9 +80,9 @@ class ServiceResponse(BaseModel):
                 "first_seen": "2024-01-01T00:00:00Z",
                 "last_seen": "2024-01-15T12:00:00Z",
                 "enriched_at": "2024-01-15T10:00:00Z",
-                "enrichment_source": "httpx"
+                "enrichment_source": "httpx",
             }
-        }
+        },
     )
 
 
@@ -107,7 +107,7 @@ class ServiceListRequest(BaseModel):
                 "has_tls": True,
                 "product": "nginx",
                 "sort_by": "last_seen",
-                "sort_order": "desc"
+                "sort_order": "desc",
             }
         }
     )
@@ -126,12 +126,8 @@ class TechnologyStackResponse(BaseModel):
             "example": {
                 "technology": "nginx",
                 "count": 150,
-                "versions": {
-                    "1.21.0": 50,
-                    "1.20.2": 75,
-                    "1.19.6": 25
-                },
-                "risk_level": "medium"
+                "versions": {"1.21.0": 50, "1.20.2": 75, "1.19.6": 25},
+                "risk_level": "medium",
             }
         }
     )
@@ -173,11 +169,6 @@ class PortDistributionResponse(BaseModel):
 
     model_config = ConfigDict(
         json_schema_extra={
-            "example": {
-                "port": 443,
-                "count": 350,
-                "protocols": ["tcp"],
-                "common_products": ["nginx", "Apache", "IIS"]
-            }
+            "example": {"port": 443, "count": 350, "protocols": ["tcp"], "common_products": ["nginx", "Apache", "IIS"]}
         }
     )

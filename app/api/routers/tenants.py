@@ -35,8 +35,14 @@ from app.api.schemas.tenant import (
 from app.core.audit import log_data_modification
 from app.core.cache import cache_get_async, cache_set_async
 from app.models.database import (
-    Tenant, Asset, Service, Finding, Event,
-    AssetType, FindingSeverity, FindingStatus,
+    Tenant,
+    Asset,
+    Service,
+    Finding,
+    Event,
+    AssetType,
+    FindingSeverity,
+    FindingStatus,
 )
 from app.models.enrichment import Certificate, Endpoint
 from app.models.auth import User, TenantMembership
@@ -50,6 +56,7 @@ router = APIRouter(prefix="/api/v1/tenants", tags=["Tenants"])
 
 # ─── Async read endpoints ────────────────────────────────────────
 
+
 @router.get("", response_model=list[TenantResponse])
 async def list_tenants(
     db: AsyncSession = Depends(get_async_db),
@@ -60,10 +67,7 @@ async def list_tenants(
         result = await db.execute(select(Tenant))
         tenants = result.scalars().all()
     else:
-        tenants = [
-            m.tenant for m in current_user.tenant_memberships
-            if m.is_active
-        ]
+        tenants = [m.tenant for m in current_user.tenant_memberships if m.is_active]
 
     return [TenantResponse.model_validate(t) for t in tenants]
 
@@ -184,6 +188,7 @@ async def get_tenant_stats(
 
 # ─── Sync mutation endpoints ─────────────────────────────────────
 
+
 @router.post("", response_model=TenantResponse)
 def create_tenant(
     tenant_data: TenantCreate,
@@ -261,9 +266,8 @@ async def update_tenant(
 
 # ─── Async stats helper ──────────────────────────────────────────
 
-async def _calculate_tenant_stats_async(
-    db: AsyncSession, tenant_id: int
-) -> TenantStats:
+
+async def _calculate_tenant_stats_async(db: AsyncSession, tenant_id: int) -> TenantStats:
     """Calculate comprehensive tenant statistics using async queries.
 
     Consolidates ~20 individual COUNT queries into 6 grouped queries
@@ -274,10 +278,7 @@ async def _calculate_tenant_stats_async(
     # ── Query 1: Assets — total + per-type counts (replaces 6 queries) ──
     asset_query = select(
         func.count(Asset.id).label("total"),
-        *[
-            func.count(case((Asset.type == at, literal(1)))).label(at.value)
-            for at in AssetType
-        ],
+        *[func.count(case((Asset.type == at, literal(1)))).label(at.value) for at in AssetType],
     ).where(
         Asset.tenant_id == tenant_id,
         Asset.is_active.is_(True),
@@ -293,22 +294,23 @@ async def _calculate_tenant_stats_async(
     finding_query = (
         select(
             func.count(Finding.id).label("total"),
-            *[
-                func.count(case((Finding.severity == sev, literal(1)))).label(sev.value)
-                for sev in FindingSeverity
-            ],
+            *[func.count(case((Finding.severity == sev, literal(1)))).label(sev.value) for sev in FindingSeverity],
             func.count(case((is_open, literal(1)))).label("open"),
             func.count(
-                case((
-                    (Finding.severity == FindingSeverity.CRITICAL) & is_open,
-                    literal(1),
-                ))
+                case(
+                    (
+                        (Finding.severity == FindingSeverity.CRITICAL) & is_open,
+                        literal(1),
+                    )
+                )
             ).label("critical_open"),
             func.count(
-                case((
-                    (Finding.severity == FindingSeverity.HIGH) & is_open,
-                    literal(1),
-                ))
+                case(
+                    (
+                        (Finding.severity == FindingSeverity.HIGH) & is_open,
+                        literal(1),
+                    )
+                )
             ).label("high_open"),
         )
         .join(Asset)
@@ -323,11 +325,11 @@ async def _calculate_tenant_stats_async(
     high_findings = finding_row.high_open or 0
 
     # ── Query 3: Services count (active assets only) ──
-    total_services = (await db.execute(
-        select(func.count(Service.id))
-        .join(Asset)
-        .where(Asset.tenant_id == tenant_id, Asset.is_active.is_(True))
-    )).scalar() or 0
+    total_services = (
+        await db.execute(
+            select(func.count(Service.id)).join(Asset).where(Asset.tenant_id == tenant_id, Asset.is_active.is_(True))
+        )
+    ).scalar() or 0
 
     # ── Query 4: Certificates — total + expiring within 30 days (replaces 2 queries) ──
     # certificates.not_after is TIMESTAMP WITHOUT TIME ZONE, so strip tzinfo
@@ -336,10 +338,12 @@ async def _calculate_tenant_stats_async(
         select(
             func.count(Certificate.id).label("total"),
             func.count(
-                case((
-                    (Certificate.is_expired == False) & (Certificate.not_after <= thirty_days),  # noqa: E712
-                    literal(1),
-                ))
+                case(
+                    (
+                        (Certificate.is_expired == False) & (Certificate.not_after <= thirty_days),  # noqa: E712
+                        literal(1),
+                    )
+                )
             ).label("expiring"),
         )
         .join(Asset)
@@ -351,32 +355,34 @@ async def _calculate_tenant_stats_async(
     expiring_certificates = cert_row.expiring or 0
 
     # ── Query 5: Endpoints count ──
-    total_endpoints = (await db.execute(
-        select(func.count(Endpoint.id))
-        .join(Asset)
-        .where(Asset.tenant_id == tenant_id)
-    )).scalar() or 0
+    total_endpoints = (
+        await db.execute(select(func.count(Endpoint.id)).join(Asset).where(Asset.tenant_id == tenant_id))
+    ).scalar() or 0
 
     # ── Query 6: Organization risk score (with avg fallback) ──
-    org_score_row = (await db.execute(
-        select(RiskScore.score)
-        .where(
-            RiskScore.tenant_id == tenant_id,
-            RiskScore.scope_type == 'organization',
+    org_score_row = (
+        await db.execute(
+            select(RiskScore.score)
+            .where(
+                RiskScore.tenant_id == tenant_id,
+                RiskScore.scope_type == "organization",
+            )
+            .order_by(RiskScore.scored_at.desc())
+            .limit(1)
         )
-        .order_by(RiskScore.scored_at.desc())
-        .limit(1)
-    )).scalar_one_or_none()
+    ).scalar_one_or_none()
 
     if org_score_row is not None:
         average_risk_score = round(float(org_score_row), 2)
     else:
-        avg_risk = (await db.execute(
-            select(func.avg(Asset.risk_score)).where(
-                Asset.tenant_id == tenant_id,
-                Asset.is_active.is_(True),
+        avg_risk = (
+            await db.execute(
+                select(func.avg(Asset.risk_score)).where(
+                    Asset.tenant_id == tenant_id,
+                    Asset.is_active.is_(True),
+                )
             )
-        )).scalar() or 0.0
+        ).scalar() or 0.0
         average_risk_score = round(float(avg_risk), 2)
 
     return TenantStats(
@@ -396,6 +402,7 @@ async def _calculate_tenant_stats_async(
 
 
 # ─── Helpers ─────────────────────────────────────────────────────
+
 
 def _format_event_description(event: Event) -> str:
     """Format event description for display"""

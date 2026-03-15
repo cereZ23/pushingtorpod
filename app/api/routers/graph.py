@@ -168,10 +168,7 @@ def get_graph_edges(
 
     _verify_tenant_exists(db, tenant_id)
 
-    query = (
-        db.query(Relationship)
-        .filter(Relationship.tenant_id == tenant_id)
-    )
+    query = db.query(Relationship).filter(Relationship.tenant_id == tenant_id)
 
     if rel_type is not None:
         query = query.filter(Relationship.rel_type == rel_type)
@@ -223,11 +220,7 @@ def get_asset_neighbors(
     _verify_tenant_exists(db, tenant_id)
 
     # Load the central asset
-    central_asset = (
-        db.query(Asset)
-        .filter(Asset.id == asset_id, Asset.tenant_id == tenant_id)
-        .first()
-    )
+    central_asset = db.query(Asset).filter(Asset.id == asset_id, Asset.tenant_id == tenant_id).first()
     if not central_asset:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -308,12 +301,7 @@ def get_asset_neighbors(
         .scalar()
         or 0
     )
-    central_service_count = (
-        db.query(func.count(Service.id))
-        .filter(Service.asset_id == asset_id)
-        .scalar()
-        or 0
-    )
+    central_service_count = db.query(func.count(Service.id)).filter(Service.asset_id == asset_id).scalar() or 0
 
     central_node = GraphNode(
         id=central_asset.id,
@@ -420,9 +408,9 @@ def get_graph_stats(
     )
 
     # Combine source + target counts
-    connection_count = (
-        func.coalesce(source_counts.c.cnt, 0) + func.coalesce(target_counts.c.cnt, 0)
-    ).label("connection_count")
+    connection_count = (func.coalesce(source_counts.c.cnt, 0) + func.coalesce(target_counts.c.cnt, 0)).label(
+        "connection_count"
+    )
 
     most_connected_rows = (
         db.query(Asset, connection_count)
@@ -460,6 +448,7 @@ def get_graph_stats(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _verify_tenant_exists(db: Session, tenant_id: int) -> None:
     """

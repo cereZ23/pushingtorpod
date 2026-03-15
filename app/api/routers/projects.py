@@ -43,8 +43,10 @@ router = APIRouter(prefix="/api/v1/tenants/{tenant_id}", tags=["Projects & Scans
 # Pydantic schemas (inline for this router)
 # ---------------------------------------------------------------------------
 
+
 class ProjectCreate(BaseModel):
     """Schema for creating a new project."""
+
     name: str = Field(..., max_length=255)
     description: str | None = None
     seeds: list[dict] | None = None  # [{"type": "domain", "value": "example.com"}]
@@ -53,6 +55,7 @@ class ProjectCreate(BaseModel):
 
 class ProjectUpdate(BaseModel):
     """Schema for updating a project."""
+
     name: str | None = Field(None, max_length=255)
     description: str | None = None
     seeds: list[dict] | None = None
@@ -61,6 +64,7 @@ class ProjectUpdate(BaseModel):
 
 class ProjectResponse(BaseModel):
     """Schema returned for project objects."""
+
     id: int
     tenant_id: int
     name: str
@@ -76,6 +80,7 @@ class ProjectResponse(BaseModel):
 
 class ProjectDetailResponse(ProjectResponse):
     """Extended project response including aggregate statistics."""
+
     asset_count: int = 0
     finding_count: int = 0
     scan_run_count: int = 0
@@ -84,6 +89,7 @@ class ProjectDetailResponse(ProjectResponse):
 
 class ScopeCreate(BaseModel):
     """Schema for adding a scope rule."""
+
     rule_type: str = Field(..., pattern="^(include|exclude)$")
     match_type: str = Field(..., pattern="^(domain|ip|cidr|regex)$")
     pattern: str = Field(..., max_length=500)
@@ -92,6 +98,7 @@ class ScopeCreate(BaseModel):
 
 class ScopeResponse(BaseModel):
     """Schema returned for scope objects."""
+
     id: int
     project_id: int
     rule_type: str
@@ -105,6 +112,7 @@ class ScopeResponse(BaseModel):
 
 class ScanProfileCreate(BaseModel):
     """Schema for creating a scan profile."""
+
     name: str = Field(..., max_length=255)
     scan_tier: int = Field(1, ge=1, le=3)
     port_scan_mode: str = "top-100"
@@ -116,6 +124,7 @@ class ScanProfileCreate(BaseModel):
 
 class ScanProfileResponse(BaseModel):
     """Schema returned for scan profile objects."""
+
     id: int
     project_id: int
     name: str
@@ -134,11 +143,13 @@ class ScanProfileResponse(BaseModel):
 
 class ScheduleUpdate(BaseModel):
     """Schema for updating a scan profile schedule."""
+
     schedule_cron: str | None = None  # null to clear
 
 
 class ScanTrigger(BaseModel):
     """Schema for triggering a scan."""
+
     profile_id: int | None = None
     scan_tier: int = Field(1, ge=1, le=3, description="Scan tier: 1=Safe, 2=Moderate, 3=Aggressive")
     triggered_by: str = "manual"
@@ -146,6 +157,7 @@ class ScanTrigger(BaseModel):
 
 class ScanRunResponse(BaseModel):
     """Schema returned for scan run objects."""
+
     id: int
     project_id: int
     profile_id: int | None
@@ -165,6 +177,7 @@ class ScanRunResponse(BaseModel):
 
 class PhaseResultResponse(BaseModel):
     """Schema returned for phase result objects."""
+
     id: int
     scan_run_id: int
     phase: str
@@ -180,12 +193,14 @@ class PhaseResultResponse(BaseModel):
 
 class ScanProgressResponse(BaseModel):
     """Schema for real-time scan progress."""
+
     scan_run: ScanRunResponse
     phases: list[PhaseResultResponse]
 
 
 class ChangeEventResponse(BaseModel):
     """Schema for scan change events extracted from stats."""
+
     phase: str
     event_type: str
     detail: dict
@@ -193,6 +208,7 @@ class ChangeEventResponse(BaseModel):
 
 class MonitoringStatusResponse(BaseModel):
     """Schema for project monitoring status."""
+
     project_id: int
     active_profiles: int
     scheduled_profiles: int
@@ -205,16 +221,21 @@ class MonitoringStatusResponse(BaseModel):
 # Helper functions
 # ---------------------------------------------------------------------------
 
+
 def _get_project_or_404(
     db: Session,
     tenant_id: int,
     project_id: int,
 ) -> Project:
     """Fetch a project scoped to the given tenant, or raise 404."""
-    project = db.query(Project).filter(
-        Project.id == project_id,
-        Project.tenant_id == tenant_id,
-    ).first()
+    project = (
+        db.query(Project)
+        .filter(
+            Project.id == project_id,
+            Project.tenant_id == tenant_id,
+        )
+        .first()
+    )
     if not project:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -261,6 +282,7 @@ def _serialize_phase_result(phase: PhaseResult) -> dict:
 # PROJECT ENDPOINTS
 # ===========================================================================
 
+
 @router.post("/projects", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 def create_project(
     tenant_id: int,
@@ -292,10 +314,14 @@ def create_project(
         )
 
     # Check for duplicate name within tenant
-    existing = db.query(Project).filter(
-        Project.tenant_id == tenant_id,
-        Project.name == project_data.name,
-    ).first()
+    existing = (
+        db.query(Project)
+        .filter(
+            Project.tenant_id == tenant_id,
+            Project.name == project_data.name,
+        )
+        .first()
+    )
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -391,34 +417,56 @@ def get_project(
     project = _get_project_or_404(db, tenant_id, project_id)
 
     # Count assets created via this project's scan runs
-    asset_count = db.query(func.count(Observation.id)).filter(
-        Observation.scan_run_id.in_(
-            db.query(ScanRun.id).filter(ScanRun.project_id == project_id)
-        )
-    ).scalar() or 0
+    asset_count = (
+        db.query(func.count(Observation.id))
+        .filter(Observation.scan_run_id.in_(db.query(ScanRun.id).filter(ScanRun.project_id == project_id)))
+        .scalar()
+        or 0
+    )
 
     # Fall back to counting tenant assets when observations are sparse
     if asset_count == 0:
-        asset_count = db.query(func.count(Asset.id)).filter(
-            Asset.tenant_id == tenant_id,
-            Asset.is_active == True,
-        ).scalar() or 0
+        asset_count = (
+            db.query(func.count(Asset.id))
+            .filter(
+                Asset.tenant_id == tenant_id,
+                Asset.is_active == True,
+            )
+            .scalar()
+            or 0
+        )
 
     # Count findings through tenant scope
-    finding_count = db.query(func.count(Finding.id)).join(Asset).filter(
-        Asset.tenant_id == tenant_id,
-    ).scalar() or 0
+    finding_count = (
+        db.query(func.count(Finding.id))
+        .join(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+        )
+        .scalar()
+        or 0
+    )
 
     # Count scan runs for this project
-    scan_run_count = db.query(func.count(ScanRun.id)).filter(
-        ScanRun.project_id == project_id,
-    ).scalar() or 0
+    scan_run_count = (
+        db.query(func.count(ScanRun.id))
+        .filter(
+            ScanRun.project_id == project_id,
+        )
+        .scalar()
+        or 0
+    )
 
     # Last completed scan
-    last_scan = db.query(ScanRun).filter(
-        ScanRun.project_id == project_id,
-        ScanRun.status == ScanRunStatus.COMPLETED,
-    ).order_by(ScanRun.completed_at.desc()).first()
+    last_scan = (
+        db.query(ScanRun)
+        .filter(
+            ScanRun.project_id == project_id,
+            ScanRun.status == ScanRunStatus.COMPLETED,
+        )
+        .order_by(ScanRun.completed_at.desc())
+        .first()
+    )
 
     response = ProjectDetailResponse.model_validate(project)
     response.asset_count = asset_count
@@ -464,11 +512,15 @@ def update_project(
     project = _get_project_or_404(db, tenant_id, project_id)
 
     if updates.name is not None and updates.name != project.name:
-        duplicate = db.query(Project).filter(
-            Project.tenant_id == tenant_id,
-            Project.name == updates.name,
-            Project.id != project_id,
-        ).first()
+        duplicate = (
+            db.query(Project)
+            .filter(
+                Project.tenant_id == tenant_id,
+                Project.name == updates.name,
+                Project.id != project_id,
+            )
+            .first()
+        )
         if duplicate:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -503,6 +555,7 @@ def update_project(
 # ===========================================================================
 # SCOPE ENDPOINTS
 # ===========================================================================
+
 
 @router.post(
     "/projects/{project_id}/scopes",
@@ -553,10 +606,7 @@ def add_scope_rule(
     db.commit()
     db.refresh(scope)
 
-    logger.info(
-        f"Added scope rule ({scope.rule_type}/{scope.match_type}: {scope.pattern}) "
-        f"to project {project.id}"
-    )
+    logger.info(f"Added scope rule ({scope.rule_type}/{scope.match_type}: {scope.pattern}) to project {project.id}")
 
     return ScopeResponse.model_validate(scope)
 
@@ -583,9 +633,14 @@ def list_scopes(
     """
     _get_project_or_404(db, tenant_id, project_id)
 
-    scopes = db.query(Scope).filter(
-        Scope.project_id == project_id,
-    ).order_by(Scope.created_at.asc()).all()
+    scopes = (
+        db.query(Scope)
+        .filter(
+            Scope.project_id == project_id,
+        )
+        .order_by(Scope.created_at.asc())
+        .all()
+    )
 
     return [ScopeResponse.model_validate(s) for s in scopes]
 
@@ -593,6 +648,7 @@ def list_scopes(
 # ===========================================================================
 # SCAN RUN ENDPOINTS
 # ===========================================================================
+
 
 @router.post("/projects/{project_id}/scans", response_model=TaskResponse)
 def trigger_scan(
@@ -632,10 +688,14 @@ def trigger_scan(
     # Validate profile if provided, otherwise auto-create from scan_tier
     profile_id = trigger.profile_id
     if profile_id is not None:
-        profile = db.query(ScanProfile).filter(
-            ScanProfile.id == profile_id,
-            ScanProfile.project_id == project_id,
-        ).first()
+        profile = (
+            db.query(ScanProfile)
+            .filter(
+                ScanProfile.id == profile_id,
+                ScanProfile.project_id == project_id,
+            )
+            .first()
+        )
         if not profile:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -650,10 +710,14 @@ def trigger_scan(
         tier_timeouts = {1: 60, 2: 120, 3: 240}
         default_name = f"Default {tier_names.get(tier, 'Safe')} (Tier {tier})"
 
-        profile = db.query(ScanProfile).filter(
-            ScanProfile.project_id == project_id,
-            ScanProfile.name == default_name,
-        ).first()
+        profile = (
+            db.query(ScanProfile)
+            .filter(
+                ScanProfile.project_id == project_id,
+                ScanProfile.name == default_name,
+            )
+            .first()
+        )
 
         if not profile:
             profile = ScanProfile(
@@ -683,6 +747,7 @@ def trigger_scan(
 
     # Dispatch to Celery
     from app.tasks.pipeline import run_scan_pipeline
+
     task = run_scan_pipeline.delay(scan_run.id)
 
     # Store celery task id
@@ -786,20 +851,29 @@ def get_scan_progress(
     """
     _get_project_or_404(db, tenant_id, project_id)
 
-    scan_run = db.query(ScanRun).filter(
-        ScanRun.id == run_id,
-        ScanRun.project_id == project_id,
-        ScanRun.tenant_id == tenant_id,
-    ).first()
+    scan_run = (
+        db.query(ScanRun)
+        .filter(
+            ScanRun.id == run_id,
+            ScanRun.project_id == project_id,
+            ScanRun.tenant_id == tenant_id,
+        )
+        .first()
+    )
     if not scan_run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Scan run not found",
         )
 
-    phases = db.query(PhaseResult).filter(
-        PhaseResult.scan_run_id == run_id,
-    ).order_by(PhaseResult.phase.asc()).all()
+    phases = (
+        db.query(PhaseResult)
+        .filter(
+            PhaseResult.scan_run_id == run_id,
+        )
+        .order_by(PhaseResult.phase.asc())
+        .all()
+    )
 
     return ScanProgressResponse(
         scan_run=_serialize_scan_run(scan_run),
@@ -834,11 +908,15 @@ def get_scan_changes(
     """
     _get_project_or_404(db, tenant_id, project_id)
 
-    scan_run = db.query(ScanRun).filter(
-        ScanRun.id == run_id,
-        ScanRun.project_id == project_id,
-        ScanRun.tenant_id == tenant_id,
-    ).first()
+    scan_run = (
+        db.query(ScanRun)
+        .filter(
+            ScanRun.id == run_id,
+            ScanRun.project_id == project_id,
+            ScanRun.tenant_id == tenant_id,
+        )
+        .first()
+    )
     if not scan_run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -850,66 +928,89 @@ def get_scan_changes(
     # Extract change events from scan run stats
     run_stats = scan_run.stats or {}
     for change_event in run_stats.get("change_events", []):
-        changes.append(ChangeEventResponse(
-            phase="aggregate",
-            event_type=change_event.get("type", "unknown"),
-            detail=change_event,
-        ))
+        changes.append(
+            ChangeEventResponse(
+                phase="aggregate",
+                event_type=change_event.get("type", "unknown"),
+                detail=change_event,
+            )
+        )
 
     # Extract change events from phase results
-    phases = db.query(PhaseResult).filter(
-        PhaseResult.scan_run_id == run_id,
-    ).all()
+    phases = (
+        db.query(PhaseResult)
+        .filter(
+            PhaseResult.scan_run_id == run_id,
+        )
+        .all()
+    )
 
     for phase in phases:
         phase_stats = phase.stats or {}
 
         if phase_stats.get("assets_discovered", 0) > 0:
-            changes.append(ChangeEventResponse(
-                phase=phase.phase,
-                event_type="new_assets",
-                detail={"count": phase_stats["assets_discovered"]},
-            ))
+            changes.append(
+                ChangeEventResponse(
+                    phase=phase.phase,
+                    event_type="new_assets",
+                    detail={"count": phase_stats["assets_discovered"]},
+                )
+            )
 
         if phase_stats.get("findings_created", 0) > 0:
-            changes.append(ChangeEventResponse(
-                phase=phase.phase,
-                event_type="new_findings",
-                detail={"count": phase_stats["findings_created"]},
-            ))
+            changes.append(
+                ChangeEventResponse(
+                    phase=phase.phase,
+                    event_type="new_findings",
+                    detail={"count": phase_stats["findings_created"]},
+                )
+            )
 
         if phase_stats.get("ports_discovered", 0) > 0:
-            changes.append(ChangeEventResponse(
-                phase=phase.phase,
-                event_type="new_ports",
-                detail={"count": phase_stats["ports_discovered"]},
-            ))
+            changes.append(
+                ChangeEventResponse(
+                    phase=phase.phase,
+                    event_type="new_ports",
+                    detail={"count": phase_stats["ports_discovered"]},
+                )
+            )
 
         if phase_stats.get("services_discovered", 0) > 0:
-            changes.append(ChangeEventResponse(
-                phase=phase.phase,
-                event_type="new_services",
-                detail={"count": phase_stats["services_discovered"]},
-            ))
+            changes.append(
+                ChangeEventResponse(
+                    phase=phase.phase,
+                    event_type="new_services",
+                    detail={"count": phase_stats["services_discovered"]},
+                )
+            )
 
         if phase_stats.get("endpoints_discovered", 0) > 0:
-            changes.append(ChangeEventResponse(
-                phase=phase.phase,
-                event_type="new_endpoints",
-                detail={"count": phase_stats["endpoints_discovered"]},
-            ))
+            changes.append(
+                ChangeEventResponse(
+                    phase=phase.phase,
+                    event_type="new_endpoints",
+                    detail={"count": phase_stats["endpoints_discovered"]},
+                )
+            )
 
     # Include observations summary
-    observation_count = db.query(func.count(Observation.id)).filter(
-        Observation.scan_run_id == run_id,
-    ).scalar() or 0
+    observation_count = (
+        db.query(func.count(Observation.id))
+        .filter(
+            Observation.scan_run_id == run_id,
+        )
+        .scalar()
+        or 0
+    )
 
     if observation_count > 0:
-        changes.append(ChangeEventResponse(
-            phase="all",
-            event_type="observations_collected",
-            detail={"count": observation_count},
-        ))
+        changes.append(
+            ChangeEventResponse(
+                phase="all",
+                event_type="observations_collected",
+                detail={"count": observation_count},
+            )
+        )
 
     return changes
 
@@ -949,11 +1050,15 @@ def cancel_scan_run(
 
     _get_project_or_404(db, tenant_id, project_id)
 
-    scan_run = db.query(ScanRun).filter(
-        ScanRun.id == run_id,
-        ScanRun.project_id == project_id,
-        ScanRun.tenant_id == tenant_id,
-    ).first()
+    scan_run = (
+        db.query(ScanRun)
+        .filter(
+            ScanRun.id == run_id,
+            ScanRun.project_id == project_id,
+            ScanRun.tenant_id == tenant_id,
+        )
+        .first()
+    )
     if not scan_run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -967,6 +1072,7 @@ def cancel_scan_run(
         )
 
     from app.tasks.pipeline import cancel_scan
+
     cancel_scan.delay(scan_run.id)
 
     logger.info(f"Cancellation requested for scan run {run_id} (project {project_id})")
@@ -980,6 +1086,7 @@ def cancel_scan_run(
 # ===========================================================================
 # SCAN PROFILE ENDPOINTS
 # ===========================================================================
+
 
 @router.get("/projects/{project_id}/profiles", response_model=list[ScanProfileResponse])
 def list_profiles(
@@ -1003,9 +1110,14 @@ def list_profiles(
     """
     _get_project_or_404(db, tenant_id, project_id)
 
-    profiles = db.query(ScanProfile).filter(
-        ScanProfile.project_id == project_id,
-    ).order_by(ScanProfile.created_at.asc()).all()
+    profiles = (
+        db.query(ScanProfile)
+        .filter(
+            ScanProfile.project_id == project_id,
+        )
+        .order_by(ScanProfile.created_at.asc())
+        .all()
+    )
 
     return [ScanProfileResponse.model_validate(p) for p in profiles]
 
@@ -1062,10 +1174,7 @@ def create_profile(
     db.commit()
     db.refresh(profile)
 
-    logger.info(
-        f"Created scan profile '{profile.name}' (id={profile.id}) "
-        f"for project {project.id}"
-    )
+    logger.info(f"Created scan profile '{profile.name}' (id={profile.id}) for project {project.id}")
 
     return ScanProfileResponse.model_validate(profile)
 
@@ -1108,10 +1217,14 @@ def update_profile_schedule(
 
     _get_project_or_404(db, tenant_id, project_id)
 
-    profile = db.query(ScanProfile).filter(
-        ScanProfile.id == profile_id,
-        ScanProfile.project_id == project_id,
-    ).first()
+    profile = (
+        db.query(ScanProfile)
+        .filter(
+            ScanProfile.id == profile_id,
+            ScanProfile.project_id == project_id,
+        )
+        .first()
+    )
     if not profile:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1131,6 +1244,7 @@ def update_profile_schedule(
 # ===========================================================================
 # MONITORING STATUS
 # ===========================================================================
+
 
 @router.get("/projects/{project_id}/monitoring-status", response_model=MonitoringStatusResponse)
 def get_monitoring_status(
@@ -1158,38 +1272,63 @@ def get_monitoring_status(
     _get_project_or_404(db, tenant_id, project_id)
 
     # Count active profiles
-    active_profiles = db.query(func.count(ScanProfile.id)).filter(
-        ScanProfile.project_id == project_id,
-        ScanProfile.enabled == True,
-    ).scalar() or 0
+    active_profiles = (
+        db.query(func.count(ScanProfile.id))
+        .filter(
+            ScanProfile.project_id == project_id,
+            ScanProfile.enabled == True,
+        )
+        .scalar()
+        or 0
+    )
 
     # Count scheduled profiles (have a cron expression)
-    scheduled_profiles = db.query(func.count(ScanProfile.id)).filter(
-        ScanProfile.project_id == project_id,
-        ScanProfile.enabled == True,
-        ScanProfile.schedule_cron.isnot(None),
-    ).scalar() or 0
+    scheduled_profiles = (
+        db.query(func.count(ScanProfile.id))
+        .filter(
+            ScanProfile.project_id == project_id,
+            ScanProfile.enabled == True,
+            ScanProfile.schedule_cron.isnot(None),
+        )
+        .scalar()
+        or 0
+    )
 
     # Count running scans
-    running_scans = db.query(func.count(ScanRun.id)).filter(
-        ScanRun.project_id == project_id,
-        ScanRun.tenant_id == tenant_id,
-        ScanRun.status.in_([ScanRunStatus.PENDING, ScanRunStatus.RUNNING]),
-    ).scalar() or 0
+    running_scans = (
+        db.query(func.count(ScanRun.id))
+        .filter(
+            ScanRun.project_id == project_id,
+            ScanRun.tenant_id == tenant_id,
+            ScanRun.status.in_([ScanRunStatus.PENDING, ScanRunStatus.RUNNING]),
+        )
+        .scalar()
+        or 0
+    )
 
     # Last completed scan
-    last_completed = db.query(ScanRun).filter(
-        ScanRun.project_id == project_id,
-        ScanRun.tenant_id == tenant_id,
-        ScanRun.status == ScanRunStatus.COMPLETED,
-    ).order_by(ScanRun.completed_at.desc()).first()
+    last_completed = (
+        db.query(ScanRun)
+        .filter(
+            ScanRun.project_id == project_id,
+            ScanRun.tenant_id == tenant_id,
+            ScanRun.status == ScanRunStatus.COMPLETED,
+        )
+        .order_by(ScanRun.completed_at.desc())
+        .first()
+    )
 
     # Next scheduled profile (first enabled profile with a cron expression)
-    next_scheduled = db.query(ScanProfile).filter(
-        ScanProfile.project_id == project_id,
-        ScanProfile.enabled == True,
-        ScanProfile.schedule_cron.isnot(None),
-    ).order_by(ScanProfile.created_at.asc()).first()
+    next_scheduled = (
+        db.query(ScanProfile)
+        .filter(
+            ScanProfile.project_id == project_id,
+            ScanProfile.enabled == True,
+            ScanProfile.schedule_cron.isnot(None),
+        )
+        .order_by(ScanProfile.created_at.asc())
+        .first()
+    )
 
     return MonitoringStatusResponse(
         project_id=project_id,
@@ -1197,15 +1336,14 @@ def get_monitoring_status(
         scheduled_profiles=scheduled_profiles,
         running_scans=running_scans,
         last_completed_scan=_serialize_scan_run(last_completed) if last_completed else None,
-        next_scheduled_profile=(
-            ScanProfileResponse.model_validate(next_scheduled) if next_scheduled else None
-        ),
+        next_scheduled_profile=(ScanProfileResponse.model_validate(next_scheduled) if next_scheduled else None),
     )
 
 
 # ===========================================================================
 # CONVENIENCE SCAN RUN ENDPOINTS (by run ID, no project_id needed)
 # ===========================================================================
+
 
 @router.get("/scans/{run_id}", response_model=ScanRunResponse)
 def get_scan_run_by_id(
@@ -1215,10 +1353,14 @@ def get_scan_run_by_id(
     membership=Depends(verify_tenant_access),
 ):
     """Get a scan run by its ID (scoped to tenant)."""
-    scan_run = db.query(ScanRun).filter(
-        ScanRun.id == run_id,
-        ScanRun.tenant_id == tenant_id,
-    ).first()
+    scan_run = (
+        db.query(ScanRun)
+        .filter(
+            ScanRun.id == run_id,
+            ScanRun.tenant_id == tenant_id,
+        )
+        .first()
+    )
     if not scan_run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1235,19 +1377,28 @@ def get_scan_run_progress_by_id(
     membership=Depends(verify_tenant_access),
 ):
     """Get scan run progress by run ID (scoped to tenant)."""
-    scan_run = db.query(ScanRun).filter(
-        ScanRun.id == run_id,
-        ScanRun.tenant_id == tenant_id,
-    ).first()
+    scan_run = (
+        db.query(ScanRun)
+        .filter(
+            ScanRun.id == run_id,
+            ScanRun.tenant_id == tenant_id,
+        )
+        .first()
+    )
     if not scan_run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Scan run not found",
         )
 
-    phases = db.query(PhaseResult).filter(
-        PhaseResult.scan_run_id == run_id,
-    ).order_by(PhaseResult.phase.asc()).all()
+    phases = (
+        db.query(PhaseResult)
+        .filter(
+            PhaseResult.scan_run_id == run_id,
+        )
+        .order_by(PhaseResult.phase.asc())
+        .all()
+    )
 
     return ScanProgressResponse(
         scan_run=_serialize_scan_run(scan_run),
@@ -1273,10 +1424,14 @@ def delete_scan_run_by_id(
             detail="Admin permission required",
         )
 
-    scan_run = db.query(ScanRun).filter(
-        ScanRun.id == run_id,
-        ScanRun.tenant_id == tenant_id,
-    ).first()
+    scan_run = (
+        db.query(ScanRun)
+        .filter(
+            ScanRun.id == run_id,
+            ScanRun.tenant_id == tenant_id,
+        )
+        .first()
+    )
     if not scan_run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1291,6 +1446,7 @@ def delete_scan_run_by_id(
 
     # Delete dependent records first (FK constraints)
     from app.models.risk import RiskScore
+
     db.query(RiskScore).filter(RiskScore.scan_run_id == run_id).delete()
     db.query(PhaseResult).filter(PhaseResult.scan_run_id == run_id).delete()
     db.query(Observation).filter(Observation.scan_run_id == run_id).delete()
@@ -1319,10 +1475,14 @@ def cancel_scan_run_by_id(
             detail="Write permission required",
         )
 
-    scan_run = db.query(ScanRun).filter(
-        ScanRun.id == run_id,
-        ScanRun.tenant_id == tenant_id,
-    ).first()
+    scan_run = (
+        db.query(ScanRun)
+        .filter(
+            ScanRun.id == run_id,
+            ScanRun.tenant_id == tenant_id,
+        )
+        .first()
+    )
     if not scan_run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1336,6 +1496,7 @@ def cancel_scan_run_by_id(
         )
 
     from app.tasks.pipeline import cancel_scan
+
     cancel_scan.delay(scan_run.id)
 
     return SuccessResponse(

@@ -64,6 +64,7 @@ _REMEDIATION_MAP: Dict[str, str] = {
 # Compliance framework mapping
 # ---------------------------------------------------------------------------
 
+
 class _FrameworkCategory:
     """Lightweight container for a compliance framework category."""
 
@@ -77,56 +78,105 @@ class _FrameworkCategory:
 
 # SOC 2 Trust Service Criteria categories
 TSC_CATEGORIES: List[_FrameworkCategory] = [
-    _FrameworkCategory("CC1", "Control Environment",
-                       "Management's commitment to integrity and ethical values, governance oversight, and organizational structure."),
-    _FrameworkCategory("CC2", "Communication and Information",
-                       "Information needed to carry out internal control responsibilities and communication of objectives."),
-    _FrameworkCategory("CC3", "Risk Assessment",
-                       "Identification and assessment of risks to the achievement of the entity's objectives."),
-    _FrameworkCategory("CC4", "Monitoring Activities",
-                       "Selection, development, and performance of ongoing and/or separate evaluations."),
-    _FrameworkCategory("CC5", "Control Activities",
-                       "Selection and development of control activities that mitigate risks."),
-    _FrameworkCategory("CC6", "Logical and Physical Access Controls",
-                       "Logical access security, physical access restrictions, and data protection."),
-    _FrameworkCategory("CC7", "System Operations",
-                       "Detection and monitoring of anomalies, including security incidents and vulnerabilities."),
-    _FrameworkCategory("CC8", "Change Management",
-                       "Authorized, tested, and approved system changes, including emergency changes."),
-    _FrameworkCategory("CC9", "Risk Mitigation",
-                       "Risk mitigation through business continuity and vendor management activities."),
+    _FrameworkCategory(
+        "CC1",
+        "Control Environment",
+        "Management's commitment to integrity and ethical values, governance oversight, and organizational structure.",
+    ),
+    _FrameworkCategory(
+        "CC2",
+        "Communication and Information",
+        "Information needed to carry out internal control responsibilities and communication of objectives.",
+    ),
+    _FrameworkCategory(
+        "CC3",
+        "Risk Assessment",
+        "Identification and assessment of risks to the achievement of the entity's objectives.",
+    ),
+    _FrameworkCategory(
+        "CC4",
+        "Monitoring Activities",
+        "Selection, development, and performance of ongoing and/or separate evaluations.",
+    ),
+    _FrameworkCategory(
+        "CC5", "Control Activities", "Selection and development of control activities that mitigate risks."
+    ),
+    _FrameworkCategory(
+        "CC6",
+        "Logical and Physical Access Controls",
+        "Logical access security, physical access restrictions, and data protection.",
+    ),
+    _FrameworkCategory(
+        "CC7",
+        "System Operations",
+        "Detection and monitoring of anomalies, including security incidents and vulnerabilities.",
+    ),
+    _FrameworkCategory(
+        "CC8", "Change Management", "Authorized, tested, and approved system changes, including emergency changes."
+    ),
+    _FrameworkCategory(
+        "CC9", "Risk Mitigation", "Risk mitigation through business continuity and vendor management activities."
+    ),
 ]
 
 # ISO 27001:2022 Annex A control domains
 ANNEX_A_DOMAINS: List[_FrameworkCategory] = [
-    _FrameworkCategory("A.5", "Information Security Policies",
-                       "Management direction for information security in accordance with business requirements and relevant laws."),
-    _FrameworkCategory("A.6", "Organization of Information Security",
-                       "Internal organization, mobile devices, and teleworking security controls."),
-    _FrameworkCategory("A.7", "Human Resource Security",
-                       "Security controls for before, during, and termination of employment."),
-    _FrameworkCategory("A.8", "Asset Management",
-                       "Responsibility for assets, information classification, and media handling."),
-    _FrameworkCategory("A.9", "Access Control",
-                       "Business requirements, user access management, and system/application access control."),
-    _FrameworkCategory("A.10", "Cryptography",
-                       "Cryptographic controls for protection of information confidentiality, integrity, and authenticity."),
-    _FrameworkCategory("A.11", "Physical and Environmental Security",
-                       "Secure areas, equipment security, and environmental controls."),
-    _FrameworkCategory("A.12", "Operations Security",
-                       "Operational procedures, malware protection, backup, logging, and technical vulnerability management."),
-    _FrameworkCategory("A.13", "Communications Security",
-                       "Network security management, information transfer policies, and controls."),
-    _FrameworkCategory("A.14", "System Acquisition, Development and Maintenance",
-                       "Security requirements, development/support processes, and test data protection."),
-    _FrameworkCategory("A.15", "Supplier Relationships",
-                       "Information security in supplier relationships and service delivery management."),
-    _FrameworkCategory("A.16", "Information Security Incident Management",
-                       "Management of incidents, reporting, and collection of evidence."),
-    _FrameworkCategory("A.17", "Business Continuity Management",
-                       "Information security continuity and redundancies."),
-    _FrameworkCategory("A.18", "Compliance",
-                       "Compliance with legal, contractual, and policy requirements; information security reviews."),
+    _FrameworkCategory(
+        "A.5",
+        "Information Security Policies",
+        "Management direction for information security in accordance with business requirements and relevant laws.",
+    ),
+    _FrameworkCategory(
+        "A.6",
+        "Organization of Information Security",
+        "Internal organization, mobile devices, and teleworking security controls.",
+    ),
+    _FrameworkCategory(
+        "A.7", "Human Resource Security", "Security controls for before, during, and termination of employment."
+    ),
+    _FrameworkCategory(
+        "A.8", "Asset Management", "Responsibility for assets, information classification, and media handling."
+    ),
+    _FrameworkCategory(
+        "A.9", "Access Control", "Business requirements, user access management, and system/application access control."
+    ),
+    _FrameworkCategory(
+        "A.10",
+        "Cryptography",
+        "Cryptographic controls for protection of information confidentiality, integrity, and authenticity.",
+    ),
+    _FrameworkCategory(
+        "A.11", "Physical and Environmental Security", "Secure areas, equipment security, and environmental controls."
+    ),
+    _FrameworkCategory(
+        "A.12",
+        "Operations Security",
+        "Operational procedures, malware protection, backup, logging, and technical vulnerability management.",
+    ),
+    _FrameworkCategory(
+        "A.13", "Communications Security", "Network security management, information transfer policies, and controls."
+    ),
+    _FrameworkCategory(
+        "A.14",
+        "System Acquisition, Development and Maintenance",
+        "Security requirements, development/support processes, and test data protection.",
+    ),
+    _FrameworkCategory(
+        "A.15",
+        "Supplier Relationships",
+        "Information security in supplier relationships and service delivery management.",
+    ),
+    _FrameworkCategory(
+        "A.16",
+        "Information Security Incident Management",
+        "Management of incidents, reporting, and collection of evidence.",
+    ),
+    _FrameworkCategory("A.17", "Business Continuity Management", "Information security continuity and redundancies."),
+    _FrameworkCategory(
+        "A.18",
+        "Compliance",
+        "Compliance with legal, contractual, and policy requirements; information security reviews.",
+    ),
 ]
 
 # Mapping: Nuclei template prefix → (SOC2 TSC ID, ISO 27001 Annex A ID)
@@ -304,18 +354,13 @@ class ReportGenerator:
             .all()
         )
         score_trend = [
-            {"date": row.scored_at, "score": round(row.score, 2), "grade": row.grade or "N/A"}
-            for row in score_rows
+            {"date": row.scored_at, "score": round(row.score, 2), "grade": row.grade or "N/A"} for row in score_rows
         ]
 
         # Asset counts
         asset_counts: Dict[str, int] = {}
         for at in AssetType:
-            c = (
-                db.query(func.count(Asset.id))
-                .filter(Asset.tenant_id == tid, Asset.type == at)
-                .scalar() or 0
-            )
+            c = db.query(func.count(Asset.id)).filter(Asset.tenant_id == tid, Asset.type == at).scalar() or 0
             asset_counts[at.value] = c
         total_assets = sum(asset_counts.values())
 
@@ -326,7 +371,8 @@ class ReportGenerator:
                 db.query(func.count(Finding.id))
                 .join(Asset)
                 .filter(Asset.tenant_id == tid, Finding.severity == sev)
-                .scalar() or 0
+                .scalar()
+                or 0
             )
             sev_counts[sev.value] = c
 
@@ -337,7 +383,8 @@ class ReportGenerator:
                 db.query(func.count(Finding.id))
                 .join(Asset)
                 .filter(Asset.tenant_id == tid, Finding.status == st)
-                .scalar() or 0
+                .scalar()
+                or 0
             )
             status_counts[st.value] = c
 
@@ -463,62 +510,72 @@ class ReportGenerator:
         medium = sev_counts.get("medium", 0)
 
         if critical > 0:
-            recs.append({
-                "priority": priority,
-                "title": "Remediate critical vulnerabilities immediately",
-                "description": (
-                    f"{critical} critical finding(s) detected. These represent the highest risk "
-                    "and should be patched or mitigated within 24 hours."
-                ),
-                "affected_count": critical,
-            })
+            recs.append(
+                {
+                    "priority": priority,
+                    "title": "Remediate critical vulnerabilities immediately",
+                    "description": (
+                        f"{critical} critical finding(s) detected. These represent the highest risk "
+                        "and should be patched or mitigated within 24 hours."
+                    ),
+                    "affected_count": critical,
+                }
+            )
             priority += 1
 
         if high > 0:
-            recs.append({
-                "priority": priority,
-                "title": "Address high-severity findings within SLA",
-                "description": (
-                    f"{high} high-severity finding(s) require attention. Schedule remediation "
-                    "within the 7-day SLA window."
-                ),
-                "affected_count": high,
-            })
+            recs.append(
+                {
+                    "priority": priority,
+                    "title": "Address high-severity findings within SLA",
+                    "description": (
+                        f"{high} high-severity finding(s) require attention. Schedule remediation "
+                        "within the 7-day SLA window."
+                    ),
+                    "affected_count": high,
+                }
+            )
             priority += 1
 
         if medium > 0:
-            recs.append({
-                "priority": priority,
-                "title": "Plan remediation of medium-severity issues",
-                "description": (
-                    f"{medium} medium-severity finding(s) should be addressed in the next "
-                    "sprint or maintenance cycle."
-                ),
-                "affected_count": medium,
-            })
+            recs.append(
+                {
+                    "priority": priority,
+                    "title": "Plan remediation of medium-severity issues",
+                    "description": (
+                        f"{medium} medium-severity finding(s) should be addressed in the next "
+                        "sprint or maintenance cycle."
+                    ),
+                    "affected_count": medium,
+                }
+            )
             priority += 1
 
         if open_count > 0:
-            recs.append({
-                "priority": priority,
-                "title": "Review and triage all open findings",
-                "description": (
-                    f"{open_count} finding(s) are currently open. Triage to suppress "
-                    "false positives and assign ownership."
-                ),
-                "affected_count": open_count,
-            })
+            recs.append(
+                {
+                    "priority": priority,
+                    "title": "Review and triage all open findings",
+                    "description": (
+                        f"{open_count} finding(s) are currently open. Triage to suppress "
+                        "false positives and assign ownership."
+                    ),
+                    "affected_count": open_count,
+                }
+            )
             priority += 1
 
-        recs.append({
-            "priority": priority,
-            "title": "Maintain continuous monitoring",
-            "description": (
-                "Ensure scheduled scans are active and alert policies configured "
-                "for critical and high-severity events."
-            ),
-            "affected_count": 0,
-        })
+        recs.append(
+            {
+                "priority": priority,
+                "title": "Maintain continuous monitoring",
+                "description": (
+                    "Ensure scheduled scans are active and alert policies configured "
+                    "for critical and high-severity events."
+                ),
+                "affected_count": 0,
+            }
+        )
 
         return recs
 
@@ -578,11 +635,9 @@ class ReportGenerator:
 
         # Count controls with issues
         gap_count = sum(
-            1 for cat_data in compliance_map.values()
-            if any(
-                f.get("severity") in ("critical", "high", "medium")
-                for f in cat_data["findings"]
-            )
+            1
+            for cat_data in compliance_map.values()
+            if any(f.get("severity") in ("critical", "high", "medium") for f in cat_data["findings"])
         )
 
         context = {
@@ -591,27 +646,31 @@ class ReportGenerator:
         }
 
         if framework == "soc2":
-            context.update({
-                "tsc_categories": categories,
-                "tsc_total_controls": len(categories),
-                "tsc_gap_count": gap_count,
-                "gap_analysis": {
-                    "control_failures": control_failures,
-                    "control_weaknesses": control_weaknesses,
-                    "observations": observations,
-                },
-            })
+            context.update(
+                {
+                    "tsc_categories": categories,
+                    "tsc_total_controls": len(categories),
+                    "tsc_gap_count": gap_count,
+                    "gap_analysis": {
+                        "control_failures": control_failures,
+                        "control_weaknesses": control_weaknesses,
+                        "observations": observations,
+                    },
+                }
+            )
         else:
-            context.update({
-                "annex_a_domains": categories,
-                "annex_a_total_controls": len(categories),
-                "annex_a_nc_count": gap_count,
-                "nonconformities": {
-                    "major": control_failures,
-                    "minor": control_weaknesses,
-                    "observations": observations,
-                },
-            })
+            context.update(
+                {
+                    "annex_a_domains": categories,
+                    "annex_a_total_controls": len(categories),
+                    "annex_a_nc_count": gap_count,
+                    "nonconformities": {
+                        "major": control_failures,
+                        "minor": control_weaknesses,
+                        "observations": observations,
+                    },
+                }
+            )
 
         return context
 
@@ -718,22 +777,26 @@ class ReportGenerator:
                 sev = f.get("severity", "info")
                 group_key = f"{sev}|{f.get('name', '')}"
                 if group_key in seen_groups:
-                    seen_groups[group_key]["affected_assets"].append({
-                        "identifier": f["asset_identifier"],
-                        "asset_type": f.get("asset_type", "unknown"),
-                        "first_seen": f.get("first_seen", "-"),
-                        "last_seen": f.get("last_seen", "-"),
-                        "status": f.get("status", "open"),
-                    })
+                    seen_groups[group_key]["affected_assets"].append(
+                        {
+                            "identifier": f["asset_identifier"],
+                            "asset_type": f.get("asset_type", "unknown"),
+                            "first_seen": f.get("first_seen", "-"),
+                            "last_seen": f.get("last_seen", "-"),
+                            "status": f.get("status", "open"),
+                        }
+                    )
                 else:
                     group = dict(f)
-                    group["affected_assets"] = [{
-                        "identifier": f["asset_identifier"],
-                        "asset_type": f.get("asset_type", "unknown"),
-                        "first_seen": f.get("first_seen", "-"),
-                        "last_seen": f.get("last_seen", "-"),
-                        "status": f.get("status", "open"),
-                    }]
+                    group["affected_assets"] = [
+                        {
+                            "identifier": f["asset_identifier"],
+                            "asset_type": f.get("asset_type", "unknown"),
+                            "first_seen": f.get("first_seen", "-"),
+                            "last_seen": f.get("last_seen", "-"),
+                            "status": f.get("status", "open"),
+                        }
+                    ]
                     seen_groups[group_key] = group
                     if sev in grouped:
                         grouped[sev].append(group)
@@ -742,10 +805,7 @@ class ReportGenerator:
 
         elif is_compliance:
             # Merge compliance-specific context (categories, mappings, etc.)
-            context.update({
-                k: v for k, v in data.items()
-                if k not in context
-            })
+            context.update({k: v for k, v in data.items() if k not in context})
             context["asset_counts"] = data["asset_counts"]
 
         env = Environment(
@@ -859,17 +919,13 @@ class ReportGenerator:
 
         # -- Helper: cell shading ------------------------------------------
         def _shade_cell(cell, hex_color: str):
-            shading = parse_xml(
-                f'<w:shd {nsdecls("w")} w:fill="{hex_color}" w:val="clear"/>'
-            )
+            shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{hex_color}" w:val="clear"/>')
             cell._tc.get_or_add_tcPr().append(shading)
 
         # -- Helper: set cell width ----------------------------------------
         def _set_cell_width(cell, width_inches: float):
             tc_pr = cell._tc.get_or_add_tcPr()
-            tc_w = parse_xml(
-                f'<w:tcW {nsdecls("w")} w:w="{int(width_inches * 1440)}" w:type="dxa"/>'
-            )
+            tc_w = parse_xml(f'<w:tcW {nsdecls("w")} w:w="{int(width_inches * 1440)}" w:type="dxa"/>')
             tc_pr.append(tc_w)
 
         # -- Helper: set cell vertical alignment ---------------------------
@@ -882,30 +938,28 @@ class ReportGenerator:
         def _set_cell_margins(cell, top=40, bottom=40, left=80, right=80):
             tc_pr = cell._tc.get_or_add_tcPr()
             margins = parse_xml(
-                f'<w:tcMar {nsdecls("w")}>'
+                f"<w:tcMar {nsdecls('w')}>"
                 f'  <w:top w:w="{top}" w:type="dxa"/>'
                 f'  <w:bottom w:w="{bottom}" w:type="dxa"/>'
                 f'  <w:left w:w="{left}" w:type="dxa"/>'
                 f'  <w:right w:w="{right}" w:type="dxa"/>'
-                f'</w:tcMar>'
+                f"</w:tcMar>"
             )
             tc_pr.append(margins)
 
         # -- Helper: remove all table borders ------------------------------
         def _remove_table_borders(table):
             tbl = table._tbl
-            tbl_pr = tbl.tblPr if tbl.tblPr is not None else parse_xml(
-                f'<w:tblPr {nsdecls("w")}/>'
-            )
+            tbl_pr = tbl.tblPr if tbl.tblPr is not None else parse_xml(f"<w:tblPr {nsdecls('w')}/>")
             borders = parse_xml(
-                f'<w:tblBorders {nsdecls("w")}>'
+                f"<w:tblBorders {nsdecls('w')}>"
                 f'  <w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
                 f'  <w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
                 f'  <w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
                 f'  <w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
                 f'  <w:insideH w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
                 f'  <w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
-                f'</w:tblBorders>'
+                f"</w:tblBorders>"
             )
             # Remove existing borders element if present
             for existing in tbl_pr.findall(qn("w:tblBorders")):
@@ -915,18 +969,16 @@ class ReportGenerator:
         # -- Helper: set clean table borders (light grid) ------------------
         def _set_table_light_borders(table, color_hex: str = ROW_BORDER_HEX):
             tbl = table._tbl
-            tbl_pr = tbl.tblPr if tbl.tblPr is not None else parse_xml(
-                f'<w:tblPr {nsdecls("w")}/>'
-            )
+            tbl_pr = tbl.tblPr if tbl.tblPr is not None else parse_xml(f"<w:tblPr {nsdecls('w')}/>")
             borders = parse_xml(
-                f'<w:tblBorders {nsdecls("w")}>'
+                f"<w:tblBorders {nsdecls('w')}>"
                 f'  <w:top w:val="single" w:sz="4" w:space="0" w:color="{color_hex}"/>'
                 f'  <w:left w:val="single" w:sz="4" w:space="0" w:color="{color_hex}"/>'
                 f'  <w:bottom w:val="single" w:sz="4" w:space="0" w:color="{color_hex}"/>'
                 f'  <w:right w:val="single" w:sz="4" w:space="0" w:color="{color_hex}"/>'
                 f'  <w:insideH w:val="single" w:sz="4" w:space="0" w:color="{color_hex}"/>'
                 f'  <w:insideV w:val="single" w:sz="4" w:space="0" w:color="{color_hex}"/>'
-                f'</w:tblBorders>'
+                f"</w:tblBorders>"
             )
             for existing in tbl_pr.findall(qn("w:tblBorders")):
                 tbl_pr.remove(existing)
@@ -954,8 +1006,7 @@ class ReportGenerator:
                 p.paragraph_format.space_after = Pt(0)
 
         # -- Helper: add a clean data row (no alternating shading) ----------
-        def _add_data_row(table, values, row_idx, font_size=Pt(8),
-                          bold_cols=None, color_map=None):
+        def _add_data_row(table, values, row_idx, font_size=Pt(8), bold_cols=None, color_map=None):
             row_cells = table.add_row().cells
             for i, val in enumerate(values):
                 cell = row_cells[i]
@@ -976,8 +1027,7 @@ class ReportGenerator:
             return row_cells
 
         # -- Helper: add paragraph with controlled spacing -----------------
-        def _add_spaced_para(doc, text="", before=0, after=6, size=Pt(10),
-                             color=BODY_TEXT, bold=False, alignment=None):
+        def _add_spaced_para(doc, text="", before=0, after=6, size=Pt(10), color=BODY_TEXT, bold=False, alignment=None):
             p = doc.add_paragraph()
             if alignment is not None:
                 p.alignment = alignment
@@ -999,9 +1049,9 @@ class ReportGenerator:
             p.paragraph_format.space_after = Pt(4)
             pPr = p._p.get_or_add_pPr()
             pBdr = parse_xml(
-                f'<w:pBdr {nsdecls("w")}>'
+                f"<w:pBdr {nsdecls('w')}>"
                 f'  <w:bottom w:val="single" w:sz="12" w:space="1" w:color="{color_hex}"/>'
-                f'</w:pBdr>'
+                f"</w:pBdr>"
             )
             pPr.append(pBdr)
 
@@ -1013,10 +1063,7 @@ class ReportGenerator:
         now_display = datetime.now(timezone.utc).strftime("%B %d, %Y  %H:%M UTC")
         now_short = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         report_id = f"EASM-{uuid.uuid4().hex[:12].upper()}"
-        subtitle_text = (
-            "Executive Summary" if report_type == "executive"
-            else "Technical Assessment Report"
-        )
+        subtitle_text = "Executive Summary" if report_type == "executive" else "Technical Assessment Report"
 
         doc = Document()
 
@@ -1094,9 +1141,7 @@ class ReportGenerator:
         # Header bottom border
         h_pPr = h_para._p.get_or_add_pPr()
         h_bdr = parse_xml(
-            f'<w:pBdr {nsdecls("w")}>'
-            f'  <w:bottom w:val="single" w:sz="4" w:space="4" w:color="E5E7EB"/>'
-            f'</w:pBdr>'
+            f'<w:pBdr {nsdecls("w")}>  <w:bottom w:val="single" w:sz="4" w:space="4" w:color="E5E7EB"/></w:pBdr>'
         )
         h_pPr.append(h_bdr)
 
@@ -1114,9 +1159,7 @@ class ReportGenerator:
         # Top border on footer
         f_pPr = f_para._p.get_or_add_pPr()
         f_bdr = parse_xml(
-            f'<w:pBdr {nsdecls("w")}>'
-            f'  <w:top w:val="single" w:sz="4" w:space="6" w:color="E5E7EB"/>'
-            f'</w:pBdr>'
+            f'<w:pBdr {nsdecls("w")}>  <w:top w:val="single" w:sz="4" w:space="6" w:color="E5E7EB"/></w:pBdr>'
         )
         f_pPr.append(f_bdr)
 
@@ -1228,9 +1271,7 @@ class ReportGenerator:
         div_p.paragraph_format.space_after = Pt(16)
         pPr = div_p._p.get_or_add_pPr()
         pBdr = parse_xml(
-            f'<w:pBdr {nsdecls("w")}>'
-            f'  <w:bottom w:val="single" w:sz="12" w:space="1" w:color="{BRAND_HEX}"/>'
-            f'</w:pBdr>'
+            f'<w:pBdr {nsdecls("w")}>  <w:bottom w:val="single" w:sz="12" w:space="1" w:color="{BRAND_HEX}"/></w:pBdr>'
         )
         pPr.append(pBdr)
 
@@ -1340,9 +1381,7 @@ class ReportGenerator:
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(4)
         p.paragraph_format.space_after = Pt(12)
-        r1 = p.add_run(
-            "This report provides an assessment of the external attack surface for "
-        )
+        r1 = p.add_run("This report provides an assessment of the external attack surface for ")
         r1.font.size = Pt(10)
         r1.font.name = "Inter"
         r2 = p.add_run(tenant_name)
@@ -1439,8 +1478,7 @@ class ReportGenerator:
         sev_tbl = doc.add_table(rows=1, cols=4)
         sev_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
         _set_table_light_borders(sev_tbl)
-        _style_header_row(sev_tbl, ["Severity", "Count", "% of Total", "Risk Level"],
-                          col_widths=[2.0, 1.2, 1.5, 1.8])
+        _style_header_row(sev_tbl, ["Severity", "Count", "% of Total", "Risk Level"], col_widths=[2.0, 1.2, 1.5, 1.8])
 
         risk_labels = {
             "critical": "Immediate Action",
@@ -1515,9 +1553,9 @@ class ReportGenerator:
             # Top border for totals separation
             tc_pr = cell._tc.get_or_add_tcPr()
             top_bdr = parse_xml(
-                f'<w:tcBorders {nsdecls("w")}>'
+                f"<w:tcBorders {nsdecls('w')}>"
                 f'  <w:top w:val="single" w:sz="8" w:space="0" w:color="CBD5E1"/>'
-                f'</w:tcBorders>'
+                f"</w:tcBorders>"
             )
             tc_pr.append(top_bdr)
 
@@ -1569,9 +1607,12 @@ class ReportGenerator:
         _add_spaced_para(
             doc,
             text="The following charts illustrate the current risk posture, "
-                 "severity distribution across findings, asset composition, "
-                 "and 30-day risk score trend.",
-            before=2, after=10, size=Pt(9.5), color=DESC_TEXT,
+            "severity distribution across findings, asset composition, "
+            "and 30-day risk score trend.",
+            before=2,
+            after=10,
+            size=Pt(9.5),
+            color=DESC_TEXT,
         )
 
         chart_images = self._generate_chart_images_png(data)
@@ -1598,8 +1639,13 @@ class ReportGenerator:
 
         if chart_count == 0:
             _add_spaced_para(
-                doc, text="No chart data available for the current period.",
-                before=4, after=8, size=Pt(9.5), color=MUTED_TEXT, bold=False,
+                doc,
+                text="No chart data available for the current period.",
+                before=4,
+                after=8,
+                size=Pt(9.5),
+                color=MUTED_TEXT,
+                bold=False,
             )
 
         # ==================================================================
@@ -1611,8 +1657,11 @@ class ReportGenerator:
         _add_spaced_para(
             doc,
             text="The following table lists the highest-priority open findings "
-                 "ranked by a composite score of severity weight and CVSS rating.",
-            before=2, after=10, size=Pt(9.5), color=DESC_TEXT,
+            "ranked by a composite score of severity weight and CVSS rating.",
+            before=2,
+            after=10,
+            size=Pt(9.5),
+            color=DESC_TEXT,
         )
 
         if data["top_issues"]:
@@ -1628,14 +1677,18 @@ class ReportGenerator:
 
             for idx, issue in enumerate(data["top_issues"], 1):
                 sev = issue.get("severity", "info")
-                cvss_text = (
-                    f"{issue['cvss_score']:.1f}" if issue.get("cvss_score") else "--"
-                )
+                cvss_text = f"{issue['cvss_score']:.1f}" if issue.get("cvss_score") else "--"
                 sev_color = SEV_COLORS.get(sev, BODY_TEXT)
                 row_cells = _add_data_row(
                     issues_tbl,
-                    [str(idx), issue["name"], sev.upper(), cvss_text,
-                     issue["asset_identifier"], issue.get("first_seen", "--")],
+                    [
+                        str(idx),
+                        issue["name"],
+                        sev.upper(),
+                        cvss_text,
+                        issue["asset_identifier"],
+                        issue.get("first_seen", "--"),
+                    ],
                     row_idx=idx,
                     font_size=Pt(8),
                     bold_cols={2},
@@ -1649,7 +1702,10 @@ class ReportGenerator:
             _add_spaced_para(
                 doc,
                 text="No open issues found. The external attack surface appears clean.",
-                before=4, after=8, size=Pt(10), color=MUTED_TEXT,
+                before=4,
+                after=8,
+                size=Pt(10),
+                color=MUTED_TEXT,
             )
 
         _add_spaced_para(doc, before=6, after=2)
@@ -1661,9 +1717,11 @@ class ReportGenerator:
 
         _add_spaced_para(
             doc,
-            text="Based on the current assessment, the following actions are "
-                 "recommended in order of priority.",
-            before=2, after=10, size=Pt(9.5), color=DESC_TEXT,
+            text="Based on the current assessment, the following actions are recommended in order of priority.",
+            before=2,
+            after=10,
+            size=Pt(9.5),
+            color=DESC_TEXT,
         )
 
         for rec in data["recommendations"]:
@@ -1750,7 +1808,10 @@ class ReportGenerator:
                     "grouped by severity level. Each finding includes the affected "
                     "asset, CVSS score, occurrence count, and recommended remediation."
                 ),
-                before=2, after=10, size=Pt(9.5), color=DESC_TEXT,
+                before=2,
+                after=10,
+                size=Pt(9.5),
+                color=DESC_TEXT,
             )
 
             if findings:
@@ -1787,26 +1848,21 @@ class ReportGenerator:
                     bp.paragraph_format.space_before = Pt(0)
                     bp.paragraph_format.space_after = Pt(0)
                     sev_icon = {
-                        "critical": "\u26A0",
-                        "high": "\u26A0",
-                        "medium": "\u25B2",
-                        "low": "\u25CF",
+                        "critical": "\u26a0",
+                        "high": "\u26a0",
+                        "medium": "\u25b2",
+                        "low": "\u25cf",
                         "info": "\u2139",
                     }
                     icon_run = bp.add_run(f"{sev_icon.get(sev, '')} ")
                     icon_run.font.size = Pt(11)
                     icon_run.font.color.rgb = WHITE
-                    sev_title_run = bp.add_run(
-                        f"{sev.upper()} SEVERITY"
-                    )
+                    sev_title_run = bp.add_run(f"{sev.upper()} SEVERITY")
                     sev_title_run.bold = True
                     sev_title_run.font.size = Pt(12)
                     sev_title_run.font.color.rgb = WHITE
                     sev_title_run.font.name = "Inter"
-                    count_run = bp.add_run(
-                        f"  --  {len(sev_findings)} "
-                        f"finding{'s' if len(sev_findings) != 1 else ''}"
-                    )
+                    count_run = bp.add_run(f"  --  {len(sev_findings)} finding{'s' if len(sev_findings) != 1 else ''}")
                     count_run.font.size = Pt(10)
                     count_run.font.color.rgb = RGBColor(0xCB, 0xD5, 0xE1)
                     count_run.font.name = "Inter"
@@ -1825,9 +1881,7 @@ class ReportGenerator:
                     )
 
                     for fidx, f in enumerate(sev_findings):
-                        cvss_text = (
-                            f"{f['cvss_score']:.1f}" if f.get("cvss_score") else "--"
-                        )
+                        cvss_text = f"{f['cvss_score']:.1f}" if f.get("cvss_score") else "--"
                         occ = f.get("occurrence_count", 1) or 1
                         occ_text = f"{occ}x" if occ > 1 else "1x"
                         remediation_text = f.get("remediation") or "--"
@@ -1888,7 +1942,10 @@ class ReportGenerator:
                 _add_spaced_para(
                     doc,
                     text="No findings match the current filters.",
-                    before=4, after=8, size=Pt(10), color=MUTED_TEXT,
+                    before=4,
+                    after=8,
+                    size=Pt(10),
+                    color=MUTED_TEXT,
                 )
 
         # ==================================================================
@@ -1943,17 +2000,9 @@ class ReportGenerator:
         """Generate PNG chart images for DOCX embedding."""
         result: Dict[str, Optional[bytes]] = {}
 
-        result["Risk Score Gauge"] = generate_risk_gauge(
-            data["risk_score"], data["risk_grade"], fmt="png"
-        )
-        result["Findings by Severity"] = generate_severity_chart(
-            data["severity_counts"], fmt="png"
-        )
-        result["Asset Distribution"] = generate_asset_chart(
-            data["asset_counts"], fmt="png"
-        )
-        result["Risk Score Trend (30 days)"] = generate_trend_chart(
-            data["score_trend"], fmt="png"
-        )
+        result["Risk Score Gauge"] = generate_risk_gauge(data["risk_score"], data["risk_grade"], fmt="png")
+        result["Findings by Severity"] = generate_severity_chart(data["severity_counts"], fmt="png")
+        result["Asset Distribution"] = generate_asset_chart(data["asset_counts"], fmt="png")
+        result["Risk Score Trend (30 days)"] = generate_trend_chart(data["score_trend"], fmt="png")
 
         return result

@@ -31,15 +31,19 @@ def _get_seed_domains(tenant_id: int, project_id: int, db) -> set:
     project = db.query(Project).filter(Project.id == project_id).first()
     if project and project.seeds:
         for seed in project.seeds:
-            if seed.get('type') in ('domain', 'subdomain'):
-                domains.add(seed['value'].lower().strip())
+            if seed.get("type") in ("domain", "subdomain"):
+                domains.add(seed["value"].lower().strip())
 
     # From tenant seeds
-    tenant_seeds = db.query(Seed).filter(
-        Seed.tenant_id == tenant_id,
-        Seed.enabled == True,
-        Seed.type.in_(['domain', 'subdomain']),
-    ).all()
+    tenant_seeds = (
+        db.query(Seed)
+        .filter(
+            Seed.tenant_id == tenant_id,
+            Seed.enabled == True,
+            Seed.type.in_(["domain", "subdomain"]),
+        )
+        .all()
+    )
     for s in tenant_seeds:
         domains.add(s.value.lower().strip())
 
@@ -52,16 +56,16 @@ def _is_hostname_in_scope(hostname: str, seed_domains: set) -> bool:
     E.g., 'api.example.com' is in scope if 'example.com' is a seed.
     'cdn.b-cdn.net' is NOT in scope if only 'example.com' is a seed.
     """
-    hostname = hostname.lower().strip().rstrip('.')
+    hostname = hostname.lower().strip().rstrip(".")
     for domain in seed_domains:
-        if hostname == domain or hostname.endswith('.' + domain):
+        if hostname == domain or hostname.endswith("." + domain):
             return True
     return False
 
 
-def _upsert_relationship(db, tenant_id: int, source_asset_id: int,
-                         target_asset_id: int, rel_type: str,
-                         metadata: dict = None) -> bool:
+def _upsert_relationship(
+    db, tenant_id: int, source_asset_id: int, target_asset_id: int, rel_type: str, metadata: dict = None
+) -> bool:
     """Upsert a Relationship edge between two assets.
 
     Returns True if a new relationship was created, False if an existing
@@ -69,12 +73,16 @@ def _upsert_relationship(db, tenant_id: int, source_asset_id: int,
     """
     from sqlalchemy.exc import IntegrityError
 
-    existing = db.query(Relationship).filter(
-        Relationship.tenant_id == tenant_id,
-        Relationship.source_asset_id == source_asset_id,
-        Relationship.target_asset_id == target_asset_id,
-        Relationship.rel_type == rel_type,
-    ).first()
+    existing = (
+        db.query(Relationship)
+        .filter(
+            Relationship.tenant_id == tenant_id,
+            Relationship.source_asset_id == source_asset_id,
+            Relationship.target_asset_id == target_asset_id,
+            Relationship.rel_type == rel_type,
+        )
+        .first()
+    )
 
     if existing:
         existing.last_seen_at = datetime.now(timezone.utc)
@@ -109,26 +117,45 @@ def _extract_parent_domain(identifier: str) -> Optional[str]:
     Uses a simple heuristic: strip the leftmost label. For known
     two-part TLDs (co.uk, com.au, etc.) an extra label is kept.
     """
-    parts = identifier.lower().strip('.').split('.')
+    parts = identifier.lower().strip(".").split(".")
     if len(parts) <= 2:
         return None  # Already a root-level domain (e.g. example.com)
 
     # Common two-part TLDs where the "real" root is three labels
     two_part_tlds = {
-        'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'com.au', 'org.au',
-        'co.nz', 'co.za', 'co.in', 'co.jp', 'or.jp', 'ne.jp',
-        'com.br', 'org.br', 'co.kr', 'or.kr', 'com.cn', 'org.cn',
-        'com.mx', 'com.ar', 'com.tw', 'co.il', 'co.th',
+        "co.uk",
+        "org.uk",
+        "ac.uk",
+        "gov.uk",
+        "com.au",
+        "org.au",
+        "co.nz",
+        "co.za",
+        "co.in",
+        "co.jp",
+        "or.jp",
+        "ne.jp",
+        "com.br",
+        "org.br",
+        "co.kr",
+        "or.kr",
+        "com.cn",
+        "org.cn",
+        "com.mx",
+        "com.ar",
+        "com.tw",
+        "co.il",
+        "co.th",
     }
 
-    tld_candidate = '.'.join(parts[-2:])
+    tld_candidate = ".".join(parts[-2:])
     if tld_candidate in two_part_tlds:
         # Root domain needs at least 3 labels (e.g. example.co.uk)
         if len(parts) <= 3:
             return None
-        return '.'.join(parts[-3:])
+        return ".".join(parts[-3:])
     else:
-        return '.'.join(parts[-2:])
+        return ".".join(parts[-2:])
 
 
 def _is_in_scope(value: str, scopes: list) -> bool:
@@ -141,13 +168,13 @@ def _is_in_scope(value: str, scopes: list) -> bool:
 
     # Check exclude rules first
     for scope in scopes:
-        if scope.rule_type != 'exclude':
+        if scope.rule_type != "exclude":
             continue
         if _scope_matches(value, scope):
             return False
 
     # Check include rules
-    include_rules = [s for s in scopes if s.rule_type == 'include']
+    include_rules = [s for s in scopes if s.rule_type == "include"]
     if not include_rules:
         return True  # No include rules = everything included
 
@@ -163,18 +190,18 @@ def _scope_matches(value: str, scope) -> bool:
     import re
     import ipaddress
 
-    if scope.match_type == 'domain':
+    if scope.match_type == "domain":
         pattern = scope.pattern.lower()
         v = value.lower()
-        return v == pattern or v.endswith('.' + pattern)
+        return v == pattern or v.endswith("." + pattern)
 
-    elif scope.match_type == 'regex':
+    elif scope.match_type == "regex":
         return bool(re.match(scope.pattern, value, re.IGNORECASE))
 
-    elif scope.match_type == 'ip':
+    elif scope.match_type == "ip":
         return value == scope.pattern
 
-    elif scope.match_type == 'cidr':
+    elif scope.match_type == "cidr":
         try:
             network = ipaddress.ip_network(scope.pattern, strict=False)
             ip = ipaddress.ip_address(value)
@@ -196,7 +223,7 @@ def _query_crtsh(domain: str, tenant_id: int, db, tenant_logger) -> tuple[int, i
 
     url = f"https://crt.sh/?q=%.{domain}&output=json"
     try:
-        resp = req_lib.get(url, timeout=30, headers={'User-Agent': 'EASM-Scanner/1.0'})
+        resp = req_lib.get(url, timeout=30, headers={"User-Agent": "EASM-Scanner/1.0"})
         if resp.status_code != 200:
             return 0, 0
 
@@ -208,19 +235,16 @@ def _query_crtsh(domain: str, tenant_id: int, db, tenant_logger) -> tuple[int, i
     # Extract unique subdomain names from CN and SAN fields
     seen = set()
     for entry in entries:
-        name_value = entry.get('name_value', '')
-        for name in name_value.split('\n'):
+        name_value = entry.get("name_value", "")
+        for name in name_value.split("\n"):
             name = name.strip().lower()
-            if name and '*' not in name and name.endswith('.' + domain):
+            if name and "*" not in name and name.endswith("." + domain):
                 seen.add(name)
 
     # Upsert discovered subdomains
     created = 0
     for subdomain in seen:
-        existing = db.query(Asset.id).filter(
-            Asset.tenant_id == tenant_id,
-            Asset.identifier == subdomain
-        ).first()
+        existing = db.query(Asset.id).filter(Asset.tenant_id == tenant_id, Asset.identifier == subdomain).first()
         if not existing:
             asset = Asset(
                 tenant_id=tenant_id,
@@ -241,6 +265,7 @@ def _query_crtsh(domain: str, tenant_id: int, db, tenant_logger) -> tuple[int, i
 def _is_ip(value: str) -> bool:
     """Check if a string is an IP address."""
     import ipaddress
+
     try:
         ipaddress.ip_address(value)
         return True

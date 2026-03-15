@@ -41,11 +41,8 @@ def _phase_0_seed_ingestion(tenant_id, project_id, scan_run_id, db, tenant_logge
 
     if not seeds:
         # Fall back to tenant seeds
-        tenant_seeds = db.query(Seed).filter(
-            Seed.tenant_id == tenant_id,
-            Seed.enabled == True
-        ).all()
-        seeds = [{'type': s.type, 'value': s.value} for s in tenant_seeds]
+        tenant_seeds = db.query(Seed).filter(Seed.tenant_id == tenant_id, Seed.enabled == True).all()
+        seeds = [{"type": s.type, "value": s.value} for s in tenant_seeds]
 
     if not seeds:
         raise ValueError("No seeds configured for project or tenant")
@@ -56,25 +53,25 @@ def _phase_0_seed_ingestion(tenant_id, project_id, scan_run_id, db, tenant_logge
     assets_created = 0
     assets_updated = 0
     for seed in seeds:
-        seed_type = seed.get('type', 'domain')
-        seed_value = seed.get('value', '').strip()
+        seed_type = seed.get("type", "domain")
+        seed_value = seed.get("value", "").strip()
 
         if not seed_value:
             continue
 
         # Determine asset type
-        if seed_type in ('domain', 'subdomain'):
+        if seed_type in ("domain", "subdomain"):
             asset_type = AssetType.DOMAIN
-        elif seed_type == 'ip':
+        elif seed_type == "ip":
             asset_type = AssetType.IP
         else:
             # For ASN, IP range - store as observation for later expansion
             obs = Observation(
                 tenant_id=tenant_id,
                 scan_run_id=scan_run_id,
-                source='seed',
-                observation_type=f'seed_{seed_type}',
-                raw_data=seed
+                source="seed",
+                observation_type=f"seed_{seed_type}",
+                raw_data=seed,
             )
             db.add(obs)
             continue
@@ -85,11 +82,11 @@ def _phase_0_seed_ingestion(tenant_id, project_id, scan_run_id, db, tenant_logge
             continue
 
         # Upsert asset
-        existing = db.query(Asset).filter(
-            Asset.tenant_id == tenant_id,
-            Asset.identifier == seed_value,
-            Asset.type == asset_type
-        ).first()
+        existing = (
+            db.query(Asset)
+            .filter(Asset.tenant_id == tenant_id, Asset.identifier == seed_value, Asset.type == asset_type)
+            .first()
+        )
 
         if not existing:
             asset = Asset(
@@ -109,11 +106,15 @@ def _phase_0_seed_ingestion(tenant_id, project_id, scan_run_id, db, tenant_logge
 
     # --- Create parent_domain relationships for seeded subdomains ---
     relationships_created = 0
-    seed_assets = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
-        Asset.is_active == True,
-    ).all()
+    seed_assets = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
+            Asset.is_active == True,
+        )
+        .all()
+    )
 
     # Build a lookup by identifier so we can find parent assets
     asset_by_identifier = {a.identifier.lower(): a for a in seed_assets}
@@ -123,11 +124,12 @@ def _phase_0_seed_ingestion(tenant_id, project_id, scan_run_id, db, tenant_logge
         if parent_domain and parent_domain in asset_by_identifier:
             parent_asset = asset_by_identifier[parent_domain]
             if _upsert_relationship(
-                db, tenant_id,
+                db,
+                tenant_id,
                 source_asset_id=asset.id,
                 target_asset_id=parent_asset.id,
-                rel_type='parent_domain',
-                metadata={'source': 'seed_ingestion'},
+                rel_type="parent_domain",
+                metadata={"source": "seed_ingestion"},
             ):
                 relationships_created += 1
 
@@ -135,17 +137,14 @@ def _phase_0_seed_ingestion(tenant_id, project_id, scan_run_id, db, tenant_logge
         db.commit()
 
     # Count total active assets available for subsequent phases
-    total_active = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.is_active == True
-    ).count()
+    total_active = db.query(Asset).filter(Asset.tenant_id == tenant_id, Asset.is_active == True).count()
 
     return {
-        'seeds_processed': len(seeds),
-        'assets_discovered': assets_created,
-        'assets_updated': assets_updated,
-        'relationships_created': relationships_created,
-        'total_active_assets': total_active,
+        "seeds_processed": len(seeds),
+        "assets_discovered": assets_created,
+        "assets_updated": assets_updated,
+        "relationships_created": relationships_created,
+        "total_active_assets": total_active,
     }
 
 
@@ -155,22 +154,22 @@ def _phase_1_passive_discovery(tenant_id, project_id, scan_run_id, db, tenant_lo
     from app.models.database import Asset, AssetType
 
     # Get root domains from assets
-    domains = db.query(Asset.identifier).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.type == AssetType.DOMAIN,
-        Asset.is_active == True
-    ).all()
+    domains = (
+        db.query(Asset.identifier)
+        .filter(Asset.tenant_id == tenant_id, Asset.type == AssetType.DOMAIN, Asset.is_active == True)
+        .all()
+    )
     domain_list = [d[0] for d in domains]
 
     if not domain_list:
-        return {'assets_discovered': 0, 'domains_checked': 0}
+        return {"assets_discovered": 0, "domains_checked": 0}
 
     # run_subfinder expects (seed_data: dict, tenant_id: int)
-    seed_data = {'domains': domain_list}
+    seed_data = {"domains": domain_list}
     result = run_subfinder(seed_data, tenant_id)
 
     # Count subdomains found, filter to in-scope only
-    subdomains = result.get('subdomains', []) if isinstance(result, dict) else []
+    subdomains = result.get("subdomains", []) if isinstance(result, dict) else []
     seed_domains = _get_seed_domains(tenant_id, project_id, db)
     subdomains = [s for s in subdomains if _is_hostname_in_scope(s.strip().lower(), seed_domains)]
     assets_discovered = len(subdomains)
@@ -180,17 +179,16 @@ def _phase_1_passive_discovery(tenant_id, project_id, scan_run_id, db, tenant_lo
         sub = sub.strip().lower()
         if not sub:
             continue
-        existing = db.query(Asset.id).filter(
-            Asset.tenant_id == tenant_id,
-            Asset.identifier == sub
-        ).first()
+        existing = db.query(Asset.id).filter(Asset.tenant_id == tenant_id, Asset.identifier == sub).first()
         if not existing:
-            db.add(Asset(
-                tenant_id=tenant_id,
-                type=AssetType.SUBDOMAIN,
-                identifier=sub,
-                is_active=True,
-            ))
+            db.add(
+                Asset(
+                    tenant_id=tenant_id,
+                    type=AssetType.SUBDOMAIN,
+                    identifier=sub,
+                    is_active=True,
+                )
+            )
     if subdomains:
         db.commit()
 
@@ -208,17 +206,17 @@ def _phase_1_passive_discovery(tenant_id, project_id, scan_run_id, db, tenant_lo
     assets_discovered += crtsh_new
 
     return {
-        'assets_discovered': assets_discovered,
-        'crtsh_found': crtsh_total,
-        'crtsh_new': crtsh_new,
-        'domains_checked': len(domain_list),
+        "assets_discovered": assets_discovered,
+        "crtsh_found": crtsh_total,
+        "crtsh_new": crtsh_new,
+        "domains_checked": len(domain_list),
     }
 
 
 def _phase_1b_github_dorking(tenant_id, project_id, scan_run_id, db, tenant_logger):
     """Phase 1b: GitHub code search for leaked secrets."""
     # Will be implemented in Phase 3 of the plan
-    return {'findings_created': 0, 'status': 'stub'}
+    return {"findings_created": 0, "status": "stub"}
 
 
 def _phase_1c_whois_discovery(tenant_id, project_id, scan_run_id, db, tenant_logger):
@@ -242,14 +240,18 @@ def _phase_1c_whois_discovery(tenant_id, project_id, scan_run_id, db, tenant_log
     # Subdomains share the same WHOIS as their parent domain, so running
     # WHOIS on each one is redundant and slow (~0.5-2s per lookup x hundreds).
     # CDN/WAF detection for subdomains is handled in Phase 5b (cdncheck).
-    assets = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.type.in_([AssetType.DOMAIN, AssetType.IP]),
-        Asset.is_active == True  # noqa: E712
-    ).all()
+    assets = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type.in_([AssetType.DOMAIN, AssetType.IP]),
+            Asset.is_active == True,  # noqa: E712
+        )
+        .all()
+    )
 
     if not assets:
-        return {'assets_discovered': 0, 'assets_enriched': 0}
+        return {"assets_discovered": 0, "assets_enriched": 0}
 
     asset_ids = [a.id for a in assets]
     tenant_logger.info(
@@ -275,29 +277,31 @@ def _phase_1d_cloud_buckets(tenant_id, project_id, scan_run_id, db, tenant_logge
 
     # Only use ROOT domains for bucket name generation (not subdomains).
     # Subdomains like mail.example.com generate too many useless permutations.
-    assets = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.type == AssetType.DOMAIN,
-        Asset.is_active == True  # noqa: E712
-    ).all()
+    assets = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type == AssetType.DOMAIN,
+            Asset.is_active == True,  # noqa: E712
+        )
+        .all()
+    )
 
     if not assets:
-        return {'findings_created': 0, 'domains_processed': 0}
+        return {"findings_created": 0, "domains_processed": 0}
 
     asset_ids = [a.id for a in assets]
     tenant_logger.info(f"Cloud bucket scan: {len(asset_ids)} domain assets")
 
-    result = run_cloud_bucket_scan(
-        tenant_id, asset_ids, db=db, scan_run_id=scan_run_id
-    )
+    result = run_cloud_bucket_scan(tenant_id, asset_ids, db=db, scan_run_id=scan_run_id)
 
     return {
-        'findings_created': result.get('findings_created', 0) if isinstance(result, dict) else 0,
-        'findings_updated': result.get('findings_updated', 0) if isinstance(result, dict) else 0,
-        'domains_processed': result.get('domains_processed', 0) if isinstance(result, dict) else 0,
-        'bucket_names_generated': result.get('bucket_names_generated', 0) if isinstance(result, dict) else 0,
-        'targets_probed': result.get('targets_probed', 0) if isinstance(result, dict) else 0,
-        'buckets_found': result.get('buckets_found', 0) if isinstance(result, dict) else 0,
+        "findings_created": result.get("findings_created", 0) if isinstance(result, dict) else 0,
+        "findings_updated": result.get("findings_updated", 0) if isinstance(result, dict) else 0,
+        "domains_processed": result.get("domains_processed", 0) if isinstance(result, dict) else 0,
+        "bucket_names_generated": result.get("bucket_names_generated", 0) if isinstance(result, dict) else 0,
+        "targets_probed": result.get("targets_probed", 0) if isinstance(result, dict) else 0,
+        "buckets_found": result.get("buckets_found", 0) if isinstance(result, dict) else 0,
     }
 
 
@@ -312,26 +316,30 @@ def _phase_1e_cloud_enum(tenant_id, project_id, scan_run_id, db, tenant_logger):
     from app.models.scanning import Project
 
     project = db.query(Project).filter(Project.id == project_id).first()
-    provider_config = (project.settings or {}).get('cloud_providers', [])
+    provider_config = (project.settings or {}).get("cloud_providers", [])
 
     if not provider_config:
-        return {'assets_discovered': 0, 'providers_scanned': 0}
+        return {"assets_discovered": 0, "providers_scanned": 0}
 
     cloud_assets = run_cloudlist(tenant_id, provider_config)
 
     assets_created = 0
     for ca in cloud_assets:
-        identifier = ca.get('hostname') or ca.get('ip', '')
+        identifier = ca.get("hostname") or ca.get("ip", "")
         if not identifier:
             continue
 
         asset_type = AssetType.IP if _is_ip(identifier) else AssetType.SUBDOMAIN
 
-        existing = db.query(Asset).filter(
-            Asset.tenant_id == tenant_id,
-            Asset.identifier == identifier,
-            Asset.type == asset_type,
-        ).first()
+        existing = (
+            db.query(Asset)
+            .filter(
+                Asset.tenant_id == tenant_id,
+                Asset.identifier == identifier,
+                Asset.type == asset_type,
+            )
+            .first()
+        )
 
         if not existing:
             asset = Asset(
@@ -339,20 +347,20 @@ def _phase_1e_cloud_enum(tenant_id, project_id, scan_run_id, db, tenant_logger):
                 type=asset_type,
                 identifier=identifier,
                 is_active=True,
-                cloud_provider=ca.get('provider', ''),
+                cloud_provider=ca.get("provider", ""),
             )
             db.add(asset)
             assets_created += 1
         else:
             existing.last_seen = datetime.now(timezone.utc)
             existing.is_active = True
-            if ca.get('provider'):
-                existing.cloud_provider = ca['provider']
+            if ca.get("provider"):
+                existing.cloud_provider = ca["provider"]
 
     db.commit()
 
     return {
-        'assets_discovered': assets_created,
-        'providers_scanned': len(provider_config),
-        'total_cloud_assets': len(cloud_assets),
+        "assets_discovered": assets_created,
+        "providers_scanned": len(provider_config),
+        "total_cloud_assets": len(cloud_assets),
     }

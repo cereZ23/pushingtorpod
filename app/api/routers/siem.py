@@ -57,6 +57,7 @@ def _validate_siem_endpoint_url(url: str) -> None:
 # POST /export — export findings in SIEM format (read permission)
 # ------------------------------------------------------------------
 
+
 @router.post("/export", response_model=SIEMExportResponse)
 def export_findings(
     tenant_id: int,
@@ -100,6 +101,7 @@ def export_findings(
 # ------------------------------------------------------------------
 # POST /push — push findings to a remote SIEM endpoint (admin only)
 # ------------------------------------------------------------------
+
 
 @router.post("/push", response_model=SIEMPushResponse)
 def push_findings(

@@ -16,7 +16,7 @@ from app.core.security import pwd_context
 class User(Base):
     """User model for authentication"""
 
-    __tablename__ = 'users'
+    __tablename__ = "users"
 
     id = Column(Integer, primary_key=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
@@ -32,7 +32,9 @@ class User(Base):
     password_reset_token = Column(String(255), nullable=True, index=True)
     password_reset_expires = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
     last_login = Column(DateTime)
 
     # Relationships
@@ -76,23 +78,25 @@ class TenantMembership(Base):
     with different roles.
     """
 
-    __tablename__ = 'tenant_memberships'
+    __tablename__ = "tenant_memberships"
 
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
-    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
     role = Column(String(50), nullable=False)  # admin, member, viewer
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
 
     # Relationships
     user = relationship("User", back_populates="tenant_memberships")
     tenant = relationship("Tenant", back_populates="memberships")
 
     __table_args__ = (
-        Index('idx_user_tenant', 'user_id', 'tenant_id', unique=True),
-        Index('idx_tenant_role', 'tenant_id', 'role'),
+        Index("idx_user_tenant", "user_id", "tenant_id", unique=True),
+        Index("idx_tenant_role", "tenant_id", "role"),
     )
 
     def __repr__(self):
@@ -109,11 +113,11 @@ class TenantMembership(Base):
             True if user has permission
         """
         role_permissions = {
-            'viewer': ['read'],
-            'member': ['read', 'write'],  # backward compat
-            'analyst': ['read', 'write'],
-            'admin': ['read', 'write', 'admin'],
-            'owner': ['read', 'write', 'admin']  # Owner has all permissions
+            "viewer": ["read"],
+            "member": ["read", "write"],  # backward compat
+            "analyst": ["read", "write"],
+            "admin": ["read", "write", "admin"],
+            "owner": ["read", "write", "admin"],  # Owner has all permissions
         }
         return permission in role_permissions.get(self.role, [])
 
@@ -125,28 +129,28 @@ class APIKey(Base):
     Supports tenant-scoped API keys for automation and integrations.
     """
 
-    __tablename__ = 'api_keys'
+    __tablename__ = "api_keys"
 
     id = Column(Integer, primary_key=True)
     key = Column(String(255), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
     description = Column(Text)
-    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
-    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
     scopes = Column(Text)  # JSON array of scopes
     is_active = Column(Boolean, default=True, nullable=False)
     expires_at = Column(DateTime)
     last_used_at = Column(DateTime)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
 
     # Relationships
     user = relationship("User", back_populates="api_keys")
     tenant = relationship("Tenant", back_populates="api_key_objects")
 
-    __table_args__ = (
-        Index('idx_tenant_active', 'tenant_id', 'is_active'),
-    )
+    __table_args__ = (Index("idx_tenant_active", "tenant_id", "is_active"),)
 
     def __repr__(self):
         return f"<APIKey(id={self.id}, name='{self.name}', tenant_id={self.tenant_id})>"
@@ -165,15 +169,15 @@ class APIKey(Base):
 class UserInvitation(Base):
     """Invitation to join a tenant"""
 
-    __tablename__ = 'user_invitations'
+    __tablename__ = "user_invitations"
 
     id = Column(Integer, primary_key=True)
     email = Column(String(255), nullable=False)
-    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
-    role = Column(String(50), nullable=False, default='analyst')
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    role = Column(String(50), nullable=False, default="analyst")
     token = Column(String(255), nullable=True)  # Deprecated: kept for backward compat, no longer queried
     token_hash = Column(String(64), nullable=False, unique=True, index=True)
-    invited_by = Column(Integer, ForeignKey('users.id'), nullable=False)
+    invited_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     accepted_at = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
@@ -182,9 +186,7 @@ class UserInvitation(Base):
     tenant = relationship("Tenant")
     inviter = relationship("User", foreign_keys=[invited_by])
 
-    __table_args__ = (
-        Index('idx_invitation_tenant_email', 'tenant_id', 'email'),
-    )
+    __table_args__ = (Index("idx_invitation_tenant_email", "tenant_id", "email"),)
 
     def __repr__(self):
         return f"<UserInvitation(email='{self.email}', tenant_id={self.tenant_id})>"

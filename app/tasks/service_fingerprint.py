@@ -36,18 +36,19 @@ def run_cdncheck(hosts: list[str], tenant_id: int) -> dict[str, dict]:
 
     try:
         with SecureToolExecutor(tenant_id) as executor:
-            input_content = '\n'.join(hosts)
-            input_file = executor.create_input_file('hosts.txt', input_content)
-            output_file = 'cdncheck_output.json'
+            input_content = "\n".join(hosts)
+            input_file = executor.create_input_file("hosts.txt", input_content)
+            output_file = "cdncheck_output.json"
 
             logger.info(
                 "Running cdncheck for %d hosts (tenant %d)",
-                len(hosts), tenant_id,
+                len(hosts),
+                tenant_id,
             )
 
             returncode, stdout, stderr = executor.execute(
-                'cdncheck',
-                ['-i', input_file, '-jsonl', '-resp', '-o', output_file],
+                "cdncheck",
+                ["-i", input_file, "-jsonl", "-resp", "-o", output_file],
                 timeout=settings.cdncheck_timeout,
             )
 
@@ -57,40 +58,45 @@ def run_cdncheck(hosts: list[str], tenant_id: int) -> dict[str, dict]:
             output_content = executor.read_output_file(output_file)
             results: dict[str, dict] = {}
 
-            for line in output_content.split('\n'):
+            for line in output_content.split("\n"):
                 line = line.strip()
                 if not line:
                     continue
                 try:
                     entry = json.loads(line)
-                    host = entry.get('input', entry.get('host', ''))
+                    host = entry.get("input", entry.get("host", ""))
                     if not host:
                         continue
 
                     results[host] = {
-                        'cdn': entry.get('cdn', False),
-                        'cdn_name': entry.get('cdn_name', ''),
-                        'waf': entry.get('waf', False),
-                        'waf_name': entry.get('waf_name', ''),
-                        'cloud': entry.get('cloud', ''),
+                        "cdn": entry.get("cdn", False),
+                        "cdn_name": entry.get("cdn_name", ""),
+                        "waf": entry.get("waf", False),
+                        "waf_name": entry.get("waf_name", ""),
+                        "cloud": entry.get("cloud", ""),
                     }
                 except json.JSONDecodeError:
                     continue
 
             logger.info(
                 "cdncheck: %d/%d hosts checked, %d CDN, %d WAF detected (tenant %d)",
-                len(results), len(hosts),
-                sum(1 for r in results.values() if r['cdn']),
-                sum(1 for r in results.values() if r['waf']),
+                len(results),
+                len(hosts),
+                sum(1 for r in results.values() if r["cdn"]),
+                sum(1 for r in results.values() if r["waf"]),
                 tenant_id,
             )
 
             try:
-                store_raw_output(tenant_id, 'cdncheck', {
-                    'hosts_checked': len(results),
-                    'cdn_detected': sum(1 for r in results.values() if r['cdn']),
-                    'waf_detected': sum(1 for r in results.values() if r['waf']),
-                })
+                store_raw_output(
+                    tenant_id,
+                    "cdncheck",
+                    {
+                        "hosts_checked": len(results),
+                        "cdn_detected": sum(1 for r in results.values() if r["cdn"]),
+                        "waf_detected": sum(1 for r in results.values() if r["waf"]),
+                    },
+                )
             except Exception as exc:
                 logger.warning("Failed to store cdncheck raw output (tenant %d): %s", tenant_id, exc)
 
@@ -125,28 +131,33 @@ def run_fingerprintx(targets: list[str], tenant_id: int) -> list[dict]:
 
     logger.info(
         "Running fingerprintx for %d targets in batches of %d (tenant %d)",
-        len(targets), BATCH_SIZE, tenant_id,
+        len(targets),
+        BATCH_SIZE,
+        tenant_id,
     )
 
     for batch_idx in range(0, len(targets), BATCH_SIZE):
-        batch = targets[batch_idx:batch_idx + BATCH_SIZE]
+        batch = targets[batch_idx : batch_idx + BATCH_SIZE]
         batch_num = batch_idx // BATCH_SIZE + 1
         total_batches = (len(targets) + BATCH_SIZE - 1) // BATCH_SIZE
 
         try:
             with SecureToolExecutor(tenant_id) as executor:
-                input_content = '\n'.join(batch)
-                input_file = executor.create_input_file('targets.txt', input_content)
-                output_file = 'fingerprintx_output.json'
+                input_content = "\n".join(batch)
+                input_file = executor.create_input_file("targets.txt", input_content)
+                output_file = "fingerprintx_output.json"
 
                 logger.info(
                     "fingerprintx batch %d/%d: %d targets (tenant %d)",
-                    batch_num, total_batches, len(batch), tenant_id,
+                    batch_num,
+                    total_batches,
+                    len(batch),
+                    tenant_id,
                 )
 
                 returncode, stdout, stderr = executor.execute(
-                    'fingerprintx',
-                    ['-l', input_file, '--json', '--fast', '-w', '750', '-o', output_file],
+                    "fingerprintx",
+                    ["-l", input_file, "--json", "--fast", "-w", "750", "-o", output_file],
                     timeout=settings.fingerprintx_timeout,
                 )
 
@@ -155,21 +166,23 @@ def run_fingerprintx(targets: list[str], tenant_id: int) -> list[dict]:
 
                 output_content = executor.read_output_file(output_file)
 
-                for line in output_content.split('\n'):
+                for line in output_content.split("\n"):
                     line = line.strip()
                     if not line:
                         continue
                     try:
                         entry = json.loads(line)
-                        all_results.append({
-                            'host': entry.get('host', entry.get('ip', '')),
-                            'port': entry.get('port', 0),
-                            'protocol': entry.get('protocol', ''),
-                            'service': entry.get('service', ''),
-                            'version': entry.get('version', ''),
-                            'tls': entry.get('tls', False),
-                            'metadata': entry.get('metadata', {}),
-                        })
+                        all_results.append(
+                            {
+                                "host": entry.get("host", entry.get("ip", "")),
+                                "port": entry.get("port", 0),
+                                "protocol": entry.get("protocol", ""),
+                                "service": entry.get("service", ""),
+                                "version": entry.get("version", ""),
+                                "tls": entry.get("tls", False),
+                                "metadata": entry.get("metadata", {}),
+                            }
+                        )
                     except json.JSONDecodeError:
                         continue
 
@@ -179,14 +192,20 @@ def run_fingerprintx(targets: list[str], tenant_id: int) -> list[dict]:
 
     logger.info(
         "fingerprintx identified %d services from %d targets (tenant %d)",
-        len(all_results), len(targets), tenant_id,
+        len(all_results),
+        len(targets),
+        tenant_id,
     )
 
     try:
-        store_raw_output(tenant_id, 'fingerprintx', {
-            'targets_scanned': len(targets),
-            'services_identified': len(all_results),
-        })
+        store_raw_output(
+            tenant_id,
+            "fingerprintx",
+            {
+                "targets_scanned": len(targets),
+                "services_identified": len(all_results),
+            },
+        )
     except Exception as exc:
         logger.warning("Failed to store fingerprintx raw output (tenant %d): %s", tenant_id, exc)
 

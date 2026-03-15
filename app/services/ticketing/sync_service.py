@@ -85,9 +85,7 @@ class TicketSyncService:
 
         plain_config = decrypt_config(config_record.config_encrypted, self.secret_key)
         if not plain_config:
-            logger.error(
-                "Failed to decrypt ticketing config for tenant %d", tenant_id
-            )
+            logger.error("Failed to decrypt ticketing config for tenant %d", tenant_id)
             return None
 
         try:
@@ -102,9 +100,7 @@ class TicketSyncService:
     # Ticket creation
     # ------------------------------------------------------------------
 
-    def create_ticket_for_finding(
-        self, tenant_id: int, finding_id: int
-    ) -> Optional[Ticket]:
+    def create_ticket_for_finding(self, tenant_id: int, finding_id: int) -> Optional[Ticket]:
         """
         Create a new external ticket for a finding and store the mapping.
 
@@ -181,9 +177,7 @@ class TicketSyncService:
         try:
             ticket_result = provider.create_ticket(ticket_data)
         except Exception as exc:
-            logger.error(
-                "Failed to create ticket for finding %d: %s", finding_id, exc
-            )
+            logger.error("Failed to create ticket for finding %d: %s", finding_id, exc)
             return None
 
         # Persist the ticket record
@@ -239,9 +233,7 @@ class TicketSyncService:
 
         try:
             if finding.status == FindingStatus.FIXED:
-                success = provider.close_ticket(
-                    ticket.external_id, resolution="Fixed"
-                )
+                success = provider.close_ticket(ticket.external_id, resolution="Fixed")
                 if success:
                     ticket.external_status = "Closed"
                     ticket.sync_status = "synced"
@@ -313,18 +305,16 @@ class TicketSyncService:
             # Get normalized status from external system
             if config_record.provider == "jira":
                 from app.services.ticketing.jira_provider import JiraProvider
+
                 if isinstance(provider, JiraProvider):
-                    normalized_status = provider.get_ticket_status_category(
-                        ticket.external_id
-                    )
+                    normalized_status = provider.get_ticket_status_category(ticket.external_id)
                 else:
                     normalized_status = "open"
             elif config_record.provider == "servicenow":
                 from app.services.ticketing.servicenow_provider import ServiceNowProvider
+
                 if isinstance(provider, ServiceNowProvider):
-                    normalized_status = provider.get_normalized_status(
-                        ticket.external_id
-                    )
+                    normalized_status = provider.get_normalized_status(ticket.external_id)
                 else:
                     normalized_status = "open"
             else:
@@ -342,8 +332,7 @@ class TicketSyncService:
                 old_status = finding.status.value
                 finding.status = new_finding_status
                 logger.info(
-                    "Inbound sync: finding %d status changed %s -> %s "
-                    "(from ticket %s status '%s')",
+                    "Inbound sync: finding %d status changed %s -> %s (from ticket %s status '%s')",
                     finding.id,
                     old_status,
                     new_finding_status.value,

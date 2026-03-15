@@ -74,14 +74,16 @@ def global_search(
         .all()
     )
     for a in assets:
-        results.append(SearchResultItem(
-            type="asset",
-            id=a.id,
-            title=a.identifier,
-            subtitle=a.type.value if a.type else None,
-            status=a.enrichment_status,
-            url=f"/assets/{a.id}",
-        ))
+        results.append(
+            SearchResultItem(
+                type="asset",
+                id=a.id,
+                title=a.identifier,
+                subtitle=a.type.value if a.type else None,
+                status=a.enrichment_status,
+                url=f"/assets/{a.id}",
+            )
+        )
 
     # Search findings (name, template_id, cve_id)
     remaining = limit - len(results)
@@ -102,15 +104,17 @@ def global_search(
             .all()
         )
         for f in findings:
-            results.append(SearchResultItem(
-                type="finding",
-                id=f.id,
-                title=f.name,
-                subtitle=f.template_id,
-                severity=f.severity.value if f.severity else None,
-                status=f.status.value if f.status else None,
-                url=f"/findings/{f.id}",
-            ))
+            results.append(
+                SearchResultItem(
+                    type="finding",
+                    id=f.id,
+                    title=f.name,
+                    subtitle=f.template_id,
+                    severity=f.severity.value if f.severity else None,
+                    status=f.status.value if f.status else None,
+                    url=f"/findings/{f.id}",
+                )
+            )
 
     # Search issues (title, root_cause, description)
     remaining = limit - len(results)
@@ -130,15 +134,17 @@ def global_search(
             .all()
         )
         for i in issues:
-            results.append(SearchResultItem(
-                type="issue",
-                id=i.id,
-                title=i.title,
-                subtitle=i.root_cause,
-                severity=i.severity,
-                status=i.status.value if i.status else None,
-                url=f"/issues/{i.id}",
-            ))
+            results.append(
+                SearchResultItem(
+                    type="issue",
+                    id=i.id,
+                    title=i.title,
+                    subtitle=i.root_cause,
+                    severity=i.severity,
+                    status=i.status.value if i.status else None,
+                    url=f"/issues/{i.id}",
+                )
+            )
 
     return SearchResponse(
         query=q,

@@ -45,6 +45,7 @@ def _get_fernet():
             )
         else:
             from cryptography.fernet import Fernet
+
             _fernet_instance = Fernet(key.encode())
     return _fernet_instance
 
@@ -90,9 +91,6 @@ def decrypt_mfa_secret(stored: str) -> str:
         return stored
     f = _get_fernet()
     if f is None:
-        raise ValueError(
-            "MFA_ENCRYPTION_KEY is required to decrypt MFA secrets "
-            "but is not configured"
-        )
+        raise ValueError("MFA_ENCRYPTION_KEY is required to decrypt MFA secrets but is not configured")
     encrypted_token = stored[4:]  # strip "enc:" prefix
     return f.decrypt(encrypted_token.encode()).decode()

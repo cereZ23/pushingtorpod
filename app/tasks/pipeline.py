@@ -36,11 +36,9 @@ from datetime import datetime, timezone
 from celery.exceptions import SoftTimeLimitExceeded
 
 from app.celery_app import celery
-from app.config import settings
+from app.config import settings  # noqa: F401 - kept for backward-compat test patches
 from app.database import SessionLocal
-from app.models.scanning import (
-    ScanRun, ScanRunStatus, PhaseResult, PhaseStatus, Project, ScanProfile
-)
+from app.models.scanning import ScanRun, ScanRunStatus, PhaseResult, PhaseStatus, Project, ScanProfile
 from app.utils.logger import TenantLoggerAdapter
 
 # Phase implementations (extracted to pipeline_phases/ subpackage)
@@ -79,65 +77,59 @@ logger = logging.getLogger(__name__)
 
 # Phase definitions (metadata lookup)
 PHASE_DEFS = {
-    '0':  {'name': 'Seed Ingestion', 'required': True},
-    '1':  {'name': 'Passive Discovery', 'required': True},
-    '1b': {'name': 'GitHub Dorking', 'required': False},
-    '1c': {'name': 'WHOIS/RDAP Discovery', 'required': False},
-    '1d': {'name': 'Cloud Bucket Discovery', 'required': False},
-    '1e': {'name': 'Cloud Asset Enumeration', 'required': False},
-    '2':  {'name': 'DNS Permutation & Bruteforce', 'required': False},
-    '3':  {'name': 'DNS Resolution', 'required': True},
-    '4':  {'name': 'HTTP Probing', 'required': True},
-    '4b': {'name': 'TLS Certificate Collection', 'required': False},
-    '5':  {'name': 'Port Scanning', 'required': True},
-    '5b': {'name': 'CDN/WAF Detection', 'required': False},
-    '5c': {'name': 'Service Fingerprinting', 'required': False},
-    '6':  {'name': 'Technology Fingerprinting', 'required': True},
-    '6b': {'name': 'Web Crawling', 'required': True},
-    '6c': {'name': 'Sensitive Path Discovery', 'required': False},
-    '7':  {'name': 'Visual Recon', 'required': False},
-    '8':  {'name': 'Misconfiguration Detection', 'required': True},
-    '9':  {'name': 'Vulnerability Scanning', 'required': True},
-    '10': {'name': 'Correlation & Dedup', 'required': True},
-    '11': {'name': 'Risk Scoring', 'required': True},
-    '12': {'name': 'Diff & Alerting', 'required': True},
+    "0": {"name": "Seed Ingestion", "required": True},
+    "1": {"name": "Passive Discovery", "required": True},
+    "1b": {"name": "GitHub Dorking", "required": False},
+    "1c": {"name": "WHOIS/RDAP Discovery", "required": False},
+    "1d": {"name": "Cloud Bucket Discovery", "required": False},
+    "1e": {"name": "Cloud Asset Enumeration", "required": False},
+    "2": {"name": "DNS Permutation & Bruteforce", "required": False},
+    "3": {"name": "DNS Resolution", "required": True},
+    "4": {"name": "HTTP Probing", "required": True},
+    "4b": {"name": "TLS Certificate Collection", "required": False},
+    "5": {"name": "Port Scanning", "required": True},
+    "5b": {"name": "CDN/WAF Detection", "required": False},
+    "5c": {"name": "Service Fingerprinting", "required": False},
+    "6": {"name": "Technology Fingerprinting", "required": True},
+    "6b": {"name": "Web Crawling", "required": True},
+    "6c": {"name": "Sensitive Path Discovery", "required": False},
+    "7": {"name": "Visual Recon", "required": False},
+    "8": {"name": "Misconfiguration Detection", "required": True},
+    "9": {"name": "Vulnerability Scanning", "required": True},
+    "10": {"name": "Correlation & Dedup", "required": True},
+    "11": {"name": "Risk Scoring", "required": True},
+    "12": {"name": "Diff & Alerting", "required": True},
 }
 
 # Flat list of all phase IDs (for init and backwards compat)
-PHASES = [{'id': pid, **pdef} for pid, pdef in PHASE_DEFS.items()]
+PHASES = [{"id": pid, **pdef} for pid, pdef in PHASE_DEFS.items()]
 
 # Execution plan: each step is either a single phase ID (sequential) or a
 # list of phase IDs (run in parallel with ThreadPoolExecutor).
 # Independent phases are grouped to cut total wall-clock time.
 EXECUTION_PLAN = [
-    '0',                            # Seed ingestion (must be first)
-    ['1', '1b', '1c', '1d', '1e'], # Discovery: subfinder, GitHub, WHOIS, cloud in parallel
-    '2',                            # DNS bruteforce (needs Phase 1 results)
-    '3',                            # DNS resolution (needs Phase 2 results)
-    '5b',                           # CDN/WAF detection (before probing — skip CDN IPs)
-    ['4', '4b', '5'],              # Probing: httpx, tlsx, naabu in parallel (all need DNS)
-    ['5c', '6'],                    # Fingerprint, tech detect in parallel
-    ['6b', '6c', '7'],             # Crawl, sensitive paths, screenshots in parallel
-    ['8', '9'],                     # Misconfig + Nuclei in parallel (misconfig is read-only)
-    ['10', '11'],                   # Correlation + Risk scoring in parallel
-    '12',                           # Diff & alerting
+    "0",  # Seed ingestion (must be first)
+    ["1", "1b", "1c", "1d", "1e"],  # Discovery: subfinder, GitHub, WHOIS, cloud in parallel
+    "2",  # DNS bruteforce (needs Phase 1 results)
+    "3",  # DNS resolution (needs Phase 2 results)
+    "5b",  # CDN/WAF detection (before probing — skip CDN IPs)
+    ["4", "4b", "5"],  # Probing: httpx, tlsx, naabu in parallel (all need DNS)
+    ["5c", "6"],  # Fingerprint, tech detect in parallel
+    ["6b", "6c", "7"],  # Crawl, sensitive paths, screenshots in parallel
+    ["8", "9"],  # Misconfig + Nuclei in parallel (misconfig is read-only)
+    ["10", "11"],  # Correlation + Risk scoring in parallel
+    "12",  # Diff & alerting
 ]
 
 
-def _update_phase(db, scan_run_id: int, phase_id: str, status: PhaseStatus,
-                   stats: dict = None, error: str = None):
+def _update_phase(db, scan_run_id: int, phase_id: str, status: PhaseStatus, stats: dict = None, error: str = None):
     """Update or create a phase result record."""
-    phase_result = db.query(PhaseResult).filter(
-        PhaseResult.scan_run_id == scan_run_id,
-        PhaseResult.phase == phase_id
-    ).first()
+    phase_result = (
+        db.query(PhaseResult).filter(PhaseResult.scan_run_id == scan_run_id, PhaseResult.phase == phase_id).first()
+    )
 
     if not phase_result:
-        phase_result = PhaseResult(
-            scan_run_id=scan_run_id,
-            phase=phase_id,
-            status=status
-        )
+        phase_result = PhaseResult(scan_run_id=scan_run_id, phase=phase_id, status=status)
         db.add(phase_result)
     else:
         phase_result.status = status
@@ -156,8 +148,7 @@ def _update_phase(db, scan_run_id: int, phase_id: str, status: PhaseStatus,
     return phase_result
 
 
-def _update_scan_run(db, scan_run_id: int, status: ScanRunStatus,
-                      error: str = None, stats: dict = None):
+def _update_scan_run(db, scan_run_id: int, status: ScanRunStatus, error: str = None, stats: dict = None):
     """Update scan run status."""
     scan_run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
     if not scan_run:
@@ -176,30 +167,28 @@ def _update_scan_run(db, scan_run_id: int, status: ScanRunStatus,
     db.commit()
 
 
-def _run_single_phase(phase_id, tenant_id, project_id, scan_run_id,
-                       db, tenant_logger, scan_tier, throttle, pipeline_stats):
+def _run_single_phase(
+    phase_id, tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier, throttle, pipeline_stats
+):
     """Execute a single phase sequentially with the main DB session."""
     phase_def = PHASE_DEFS[phase_id]
-    phase_name = phase_def['name']
+    phase_name = phase_def["name"]
 
     tenant_logger.info(f"Starting phase {phase_id}: {phase_name}")
     _update_phase(db, scan_run_id, phase_id, PhaseStatus.RUNNING)
 
     try:
-        result = _execute_phase(
-            phase_id, tenant_id, project_id, scan_run_id, db, tenant_logger,
-            scan_tier=scan_tier
-        )
+        result = _execute_phase(phase_id, tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier=scan_tier)
 
         _update_phase(db, scan_run_id, phase_id, PhaseStatus.COMPLETED, stats=result)
-        pipeline_stats['phases_completed'] += 1
+        pipeline_stats["phases_completed"] += 1
 
         if isinstance(result, dict):
-            pipeline_stats['assets_discovered'] += result.get('assets_discovered', 0)
-            pipeline_stats['findings_created'] += result.get('findings_created', 0)
-            pipeline_stats['relationships_created'] += result.get('relationships_created', 0)
+            pipeline_stats["assets_discovered"] += result.get("assets_discovered", 0)
+            pipeline_stats["findings_created"] += result.get("findings_created", 0)
+            pipeline_stats["relationships_created"] += result.get("relationships_created", 0)
 
-            phase_429s = result.get('http_429_count', 0)
+            phase_429s = result.get("http_429_count", 0)
             if phase_429s > 0:
                 for _ in range(phase_429s):
                     throttle.report_429(f"phase_{phase_id}")
@@ -211,23 +200,24 @@ def _run_single_phase(phase_id, tenant_id, project_id, scan_run_id,
     except Exception as e:
         error_msg = str(e)
         tenant_logger.error(
-            f"Phase {phase_id} ({phase_name}) failed: {error_msg}", exc_info=True,
+            f"Phase {phase_id} ({phase_name}) failed: {error_msg}",
+            exc_info=True,
         )
         _update_phase(db, scan_run_id, phase_id, PhaseStatus.FAILED, error=error_msg)
-        pipeline_stats['phases_failed'] += 1
+        pipeline_stats["phases_failed"] += 1
 
-        if phase_def['required']:
-            if phase_id == '0':
-                _update_scan_run(db, scan_run_id, ScanRunStatus.FAILED,
-                                error=f"Phase 0 failed: {error_msg}",
-                                stats=pipeline_stats)
-                pipeline_stats['_fatal'] = True
+        if phase_def["required"]:
+            if phase_id == "0":
+                _update_scan_run(
+                    db, scan_run_id, ScanRunStatus.FAILED, error=f"Phase 0 failed: {error_msg}", stats=pipeline_stats
+                )
+                pipeline_stats["_fatal"] = True
                 return
             tenant_logger.warning(f"Required phase {phase_id} failed, continuing pipeline")
 
 
 @celery.task(
-    name='app.tasks.pipeline.run_scan_pipeline',
+    name="app.tasks.pipeline.run_scan_pipeline",
     bind=True,
     max_retries=2,
     default_retry_delay=120,
@@ -260,7 +250,7 @@ def run_scan_pipeline(self, scan_run_id: int):
         scan_run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
         if not scan_run:
             logger.error(f"ScanRun {scan_run_id} not found")
-            return {'error': 'ScanRun not found'}
+            return {"error": "ScanRun not found"}
 
         # Guard against duplicate/stale execution:
         # 1. Already completed/failed/cancelled — don't re-run
@@ -270,26 +260,28 @@ def run_scan_pipeline(self, scan_run_id: int):
                 f"ScanRun {scan_run_id} already {scan_run.status.value}, "
                 f"skipping stale execution from task {self.request.id}"
             )
-            return {'error': f'Already {scan_run.status.value}', 'skipped': True}
+            return {"error": f"Already {scan_run.status.value}", "skipped": True}
 
-        if (scan_run.status == ScanRunStatus.RUNNING
-                and scan_run.celery_task_id
-                and scan_run.celery_task_id != self.request.id):
+        if (
+            scan_run.status == ScanRunStatus.RUNNING
+            and scan_run.celery_task_id
+            and scan_run.celery_task_id != self.request.id
+        ):
             logger.warning(
                 f"ScanRun {scan_run_id} already running (task {scan_run.celery_task_id}), "
                 f"skipping duplicate execution from task {self.request.id}"
             )
-            return {'error': 'Already running', 'skipped': True}
+            return {"error": "Already running", "skipped": True}
 
         tenant_id = scan_run.tenant_id
         project_id = scan_run.project_id
-        tenant_logger = TenantLoggerAdapter(logger, {'tenant_id': tenant_id})
+        tenant_logger = TenantLoggerAdapter(logger, {"tenant_id": tenant_id})
 
         # Get project for seeds/settings
         project = db.query(Project).filter(Project.id == project_id).first()
         if not project:
-            _update_scan_run(db, scan_run_id, ScanRunStatus.FAILED, error='Project not found')
-            return {'error': 'Project not found'}
+            _update_scan_run(db, scan_run_id, ScanRunStatus.FAILED, error="Project not found")
+            return {"error": "Project not found"}
 
         # Determine scan tier from profile or stats config (default: 1=Safe)
         scan_tier = 1
@@ -299,7 +291,7 @@ def run_scan_pipeline(self, scan_run_id: int):
                 scan_tier = profile.scan_tier or 1
         # Allow override via stats.config.tier (for manual/API-triggered scans)
         if scan_run.stats and isinstance(scan_run.stats, dict):
-            config_tier = scan_run.stats.get('config', {}).get('tier')
+            config_tier = scan_run.stats.get("config", {}).get("tier")
             if config_tier in (1, 2, 3):
                 scan_tier = config_tier
 
@@ -309,26 +301,29 @@ def run_scan_pipeline(self, scan_run_id: int):
 
         # Mark as running
         _update_scan_run(db, scan_run_id, ScanRunStatus.RUNNING)
-        tenant_logger.info(f"Scan tier: {scan_tier} ({'Safe' if scan_tier == 1 else 'Moderate' if scan_tier == 2 else 'Aggressive'})")
+        tenant_logger.info(
+            f"Scan tier: {scan_tier} ({'Safe' if scan_tier == 1 else 'Moderate' if scan_tier == 2 else 'Aggressive'})"
+        )
 
         # Initialize all phase results as pending
         for phase_def in PHASES:
-            _update_phase(db, scan_run_id, phase_def['id'], PhaseStatus.PENDING)
+            _update_phase(db, scan_run_id, phase_def["id"], PhaseStatus.PENDING)
 
         tenant_logger.info(f"Starting scan pipeline for project {project.name} (run {scan_run_id})")
 
         # Initialize adaptive throttle for this scan
         from app.services.adaptive_throttle import get_throttle, cleanup_throttle
+
         throttle = get_throttle(tenant_id, scan_run_id)
 
         # Collect aggregate stats
         pipeline_stats = {
-            'phases_completed': 0,
-            'phases_failed': 0,
-            'phases_skipped': 0,
-            'assets_discovered': 0,
-            'findings_created': 0,
-            'relationships_created': 0,
+            "phases_completed": 0,
+            "phases_failed": 0,
+            "phases_skipped": 0,
+            "assets_discovered": 0,
+            "findings_created": 0,
+            "relationships_created": 0,
         }
 
         # Execute phases following the execution plan (sequential + parallel groups)
@@ -346,13 +341,12 @@ def run_scan_pipeline(self, scan_run_id: int):
             phases_to_run = []
             for phase_id in phase_ids:
                 phase_def = PHASE_DEFS[phase_id]
-                phase_name = phase_def['name']
+                phase_name = phase_def["name"]
                 should_skip, skip_reason = _should_skip_phase(phase_id, project, scan_tier)
                 if should_skip:
                     tenant_logger.info(f"Skipping phase {phase_id} ({phase_name}): {skip_reason}")
-                    _update_phase(db, scan_run_id, phase_id, PhaseStatus.SKIPPED,
-                                 stats={'skip_reason': skip_reason})
-                    pipeline_stats['phases_skipped'] += 1
+                    _update_phase(db, scan_run_id, phase_id, PhaseStatus.SKIPPED, stats={"skip_reason": skip_reason})
+                    pipeline_stats["phases_skipped"] += 1
                 else:
                     phases_to_run.append(phase_id)
 
@@ -363,14 +357,19 @@ def run_scan_pipeline(self, scan_run_id: int):
             if len(phases_to_run) == 1:
                 # Single phase: run directly (reuse main DB session)
                 _run_single_phase(
-                    phases_to_run[0], tenant_id, project_id, scan_run_id,
-                    db, tenant_logger, scan_tier, throttle, pipeline_stats,
+                    phases_to_run[0],
+                    tenant_id,
+                    project_id,
+                    scan_run_id,
+                    db,
+                    tenant_logger,
+                    scan_tier,
+                    throttle,
+                    pipeline_stats,
                 )
             else:
                 # Parallel group: each phase gets its own DB session
-                tenant_logger.info(
-                    f"Running parallel group: {', '.join(phases_to_run)}"
-                )
+                tenant_logger.info(f"Running parallel group: {', '.join(phases_to_run)}")
                 # Mark all as RUNNING first
                 for pid in phases_to_run:
                     _update_phase(db, scan_run_id, pid, PhaseStatus.RUNNING)
@@ -380,8 +379,13 @@ def run_scan_pipeline(self, scan_run_id: int):
                     thread_db = SessionLocal()
                     try:
                         result = _execute_phase(
-                            pid, tenant_id, project_id, scan_run_id,
-                            thread_db, tenant_logger, scan_tier=scan_tier,
+                            pid,
+                            tenant_id,
+                            project_id,
+                            scan_run_id,
+                            thread_db,
+                            tenant_logger,
+                            scan_tier=scan_tier,
                         )
                         return pid, result, None
                     except Exception as exc:
@@ -394,10 +398,7 @@ def run_scan_pipeline(self, scan_run_id: int):
                 group_timeout = 1800  # 30 min
 
                 with ThreadPoolExecutor(max_workers=len(phases_to_run)) as executor:
-                    futures = {
-                        executor.submit(_run_parallel_phase, pid): pid
-                        for pid in phases_to_run
-                    }
+                    futures = {executor.submit(_run_parallel_phase, pid): pid for pid in phases_to_run}
                     completed_pids = set()
                     try:
                         for future in as_completed(futures, timeout=group_timeout):
@@ -407,20 +408,24 @@ def run_scan_pipeline(self, scan_run_id: int):
                             if error:
                                 tenant_logger.error(f"Phase {pid} ({pdef['name']}) failed: {error}")
                                 _update_phase(db, scan_run_id, pid, PhaseStatus.FAILED, error=error)
-                                pipeline_stats['phases_failed'] += 1
-                                if pdef['required'] and pid == '0':
-                                    _update_scan_run(db, scan_run_id, ScanRunStatus.FAILED,
-                                                    error=f"Phase 0 failed: {error}",
-                                                    stats=pipeline_stats)
-                                    return {'error': error, 'stats': pipeline_stats}
+                                pipeline_stats["phases_failed"] += 1
+                                if pdef["required"] and pid == "0":
+                                    _update_scan_run(
+                                        db,
+                                        scan_run_id,
+                                        ScanRunStatus.FAILED,
+                                        error=f"Phase 0 failed: {error}",
+                                        stats=pipeline_stats,
+                                    )
+                                    return {"error": error, "stats": pipeline_stats}
                             else:
                                 _update_phase(db, scan_run_id, pid, PhaseStatus.COMPLETED, stats=result)
-                                pipeline_stats['phases_completed'] += 1
+                                pipeline_stats["phases_completed"] += 1
                                 if isinstance(result, dict):
-                                    pipeline_stats['assets_discovered'] += result.get('assets_discovered', 0)
-                                    pipeline_stats['findings_created'] += result.get('findings_created', 0)
-                                    pipeline_stats['relationships_created'] += result.get('relationships_created', 0)
-                                    phase_429s = result.get('http_429_count', 0)
+                                    pipeline_stats["assets_discovered"] += result.get("assets_discovered", 0)
+                                    pipeline_stats["findings_created"] += result.get("findings_created", 0)
+                                    pipeline_stats["relationships_created"] += result.get("relationships_created", 0)
+                                    phase_429s = result.get("http_429_count", 0)
                                     if phase_429s > 0:
                                         for _ in range(phase_429s):
                                             throttle.report_429(f"phase_{pid}")
@@ -432,24 +437,25 @@ def run_scan_pipeline(self, scan_run_id: int):
                         timed_out_pids = set(phases_to_run) - completed_pids
                         for pid in timed_out_pids:
                             pdef = PHASE_DEFS[pid]
-                            tenant_logger.error(
-                                f"Phase {pid} ({pdef['name']}) timed out after {group_timeout}s"
-                            )
+                            tenant_logger.error(f"Phase {pid} ({pdef['name']}) timed out after {group_timeout}s")
                             _update_phase(
-                                db, scan_run_id, pid, PhaseStatus.FAILED,
+                                db,
+                                scan_run_id,
+                                pid,
+                                PhaseStatus.FAILED,
                                 error=f"Timed out after {group_timeout}s",
                             )
-                            pipeline_stats['phases_failed'] += 1
+                            pipeline_stats["phases_failed"] += 1
 
             # Fatal check: Phase 0 failure means we can't continue
-            if pipeline_stats.get('_fatal'):
-                return {'error': 'Phase 0 failed', 'stats': pipeline_stats}
+            if pipeline_stats.get("_fatal"):
+                return {"error": "Phase 0 failed", "stats": pipeline_stats}
 
         # Log adaptive throttle summary
         throttle_summary = cleanup_throttle(tenant_id, scan_run_id)
-        if throttle_summary and throttle_summary.get('total_429s', 0) > 0:
+        if throttle_summary and throttle_summary.get("total_429s", 0) > 0:
             tenant_logger.warning(f"Adaptive throttle summary: {throttle_summary}")
-            pipeline_stats['throttle'] = throttle_summary
+            pipeline_stats["throttle"] = throttle_summary
 
         # Mark scan as completed
         _update_scan_run(db, scan_run_id, ScanRunStatus.COMPLETED, stats=pipeline_stats)
@@ -461,13 +467,15 @@ def run_scan_pipeline(self, scan_run_id: int):
         logger.warning("Pipeline soft time limit reached for scan run %d", scan_run_id)
         try:
             _update_scan_run(
-                db, scan_run_id, ScanRunStatus.FAILED,
+                db,
+                scan_run_id,
+                ScanRunStatus.FAILED,
                 error="Pipeline exceeded 2h time limit",
                 stats=pipeline_stats,
             )
         except Exception:
             logger.exception("Failed to update scan_run status after timeout")
-        return {'error': 'time_limit_exceeded', 'stats': pipeline_stats}
+        return {"error": "time_limit_exceeded", "stats": pipeline_stats}
     except Exception as exc:
         logger.exception("Pipeline error for scan run %d: %s", scan_run_id, exc)
         # Mark scan as failed before deciding whether to retry
@@ -489,104 +497,105 @@ def _should_skip_phase(phase_id: str, project: Project, scan_tier: int = 1) -> t
 
     project_settings = project.settings or {}
 
-    if phase_id == '1b':
+    if phase_id == "1b":
         # GitHub dorking requires GITHUB_TOKEN
-        if not getattr(app_settings, 'github_token', None):
-            return True, 'GITHUB_TOKEN not configured'
+        if not getattr(app_settings, "github_token", None):
+            return True, "GITHUB_TOKEN not configured"
 
-    if phase_id == '1c':
+    if phase_id == "1c":
         # WHOIS is optional - skip if explicitly disabled
-        if not project_settings.get('whois_enabled', True):
-            return True, 'WHOIS discovery disabled in project settings'
+        if not project_settings.get("whois_enabled", True):
+            return True, "WHOIS discovery disabled in project settings"
 
-    if phase_id == '1d':
+    if phase_id == "1d":
         # Cloud bucket discovery is optional - skip if explicitly disabled
-        if not project_settings.get('cloud_bucket_scan_enabled', True):
-            return True, 'Cloud bucket scanning disabled in project settings'
+        if not project_settings.get("cloud_bucket_scan_enabled", True):
+            return True, "Cloud bucket scanning disabled in project settings"
 
-    if phase_id == '1e':
+    if phase_id == "1e":
         # Cloud enumeration requires provider config + tier 2+
         if scan_tier < 2:
-            return True, 'Cloud enumeration requires tier 2+'
-        providers = project_settings.get('cloud_providers')
+            return True, "Cloud enumeration requires tier 2+"
+        providers = project_settings.get("cloud_providers")
         if not providers:
-            return True, 'No cloud providers configured'
+            return True, "No cloud providers configured"
 
-    if phase_id == '2':
+    if phase_id == "2":
         # DNS permutation/bruteforce requires tier 2+
         if scan_tier < 2:
-            return True, 'DNS permutation requires tier 2+'
+            return True, "DNS permutation requires tier 2+"
 
-    if phase_id == '5b':
+    if phase_id == "5b":
         # cdncheck is read-only DNS lookup, safe for all tiers
         pass
 
-    if phase_id == '5c':
+    if phase_id == "5c":
         # fingerprintx requires tier 2+
         if scan_tier < 2:
-            return True, 'Service fingerprinting requires tier 2+'
+            return True, "Service fingerprinting requires tier 2+"
 
-    if phase_id == '7':
-        if not getattr(app_settings, 'feature_visual_recon_enabled', True):
-            return True, 'Visual recon disabled in feature flags'
+    if phase_id == "7":
+        if not getattr(app_settings, "feature_visual_recon_enabled", True):
+            return True, "Visual recon disabled in feature flags"
 
-    return False, ''
+    return False, ""
 
 
-def _execute_phase(phase_id: str, tenant_id: int, project_id: int,
-                   scan_run_id: int, db, tenant_logger, scan_tier: int = 1) -> dict:
+def _execute_phase(
+    phase_id: str, tenant_id: int, project_id: int, scan_run_id: int, db, tenant_logger, scan_tier: int = 1
+) -> dict:
     """Execute a specific pipeline phase and return results."""
 
-    if phase_id == '0':
+    if phase_id == "0":
         return _phase_0_seed_ingestion(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == '1':
+    elif phase_id == "1":
         return _phase_1_passive_discovery(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == '1b':
+    elif phase_id == "1b":
         return _phase_1b_github_dorking(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == '1c':
+    elif phase_id == "1c":
         return _phase_1c_whois_discovery(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == '1d':
+    elif phase_id == "1d":
         return _phase_1d_cloud_buckets(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == '1e':
+    elif phase_id == "1e":
         return _phase_1e_cloud_enum(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == '2':
+    elif phase_id == "2":
         return _phase_2_dns_bruteforce(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier)
-    elif phase_id == '3':
+    elif phase_id == "3":
         return _phase_3_dns_resolution(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == '4':
+    elif phase_id == "4":
         return _phase_4_http_probing(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == '4b':
+    elif phase_id == "4b":
         return _phase_4b_tls_collection(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == '5':
+    elif phase_id == "5":
         return _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier)
-    elif phase_id == '5b':
+    elif phase_id == "5b":
         return _phase_5b_cdn_detection(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == '5c':
+    elif phase_id == "5c":
         return _phase_5c_service_fingerprint(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == '6':
+    elif phase_id == "6":
         return _phase_6_fingerprinting(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == '6b':
+    elif phase_id == "6b":
         return _phase_6b_web_crawling(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == '6c':
+    elif phase_id == "6c":
         return _phase_6c_sensitive_paths(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == '7':
+    elif phase_id == "7":
         return _phase_7_visual_recon(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == '8':
+    elif phase_id == "8":
         return _phase_8_misconfig_detection(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == '9':
+    elif phase_id == "9":
         return _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier)
-    elif phase_id == '10':
+    elif phase_id == "10":
         return _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == '11':
+    elif phase_id == "11":
         return _phase_11_risk_scoring(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == '12':
+    elif phase_id == "12":
         return _phase_12_diff_alerting(tenant_id, project_id, scan_run_id, db, tenant_logger)
 
-    return {'error': f'Unknown phase: {phase_id}'}
+    return {"error": f"Unknown phase: {phase_id}"}
 
 
 @celery.task(
-    name='app.tasks.pipeline.cancel_scan',
+    name="app.tasks.pipeline.cancel_scan",
     bind=True,
     max_retries=3,
     default_retry_delay=10,
@@ -600,21 +609,21 @@ def cancel_scan(self, scan_run_id: int):
     try:
         scan_run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
         if not scan_run:
-            return {'error': 'ScanRun not found'}
+            return {"error": "ScanRun not found"}
 
         if scan_run.status != ScanRunStatus.RUNNING:
-            return {'error': f'Cannot cancel scan in status {scan_run.status.value}'}
+            return {"error": f"Cannot cancel scan in status {scan_run.status.value}"}
 
         scan_run.status = ScanRunStatus.CANCELLED
         scan_run.completed_at = datetime.now(timezone.utc)
-        scan_run.error_message = 'Cancelled by user'
+        scan_run.error_message = "Cancelled by user"
 
         # Cancel celery task if running
         if scan_run.celery_task_id:
             celery.control.revoke(scan_run.celery_task_id, terminate=True)
 
         db.commit()
-        return {'status': 'cancelled', 'scan_run_id': scan_run_id}
+        return {"status": "cancelled", "scan_run_id": scan_run_id}
     except Exception as exc:
         logger.exception("Failed to cancel scan run %d: %s", scan_run_id, exc)
         raise self.retry(exc=exc)

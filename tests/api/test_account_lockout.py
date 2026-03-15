@@ -4,6 +4,7 @@ Account Lockout Tests
 Tests for Redis-backed account lockout after failed login attempts,
 and per-user MFA verification rate limiting.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -124,9 +125,7 @@ class TestRecordLoginFailure:
         _record_login_failure("user@example.com")
 
         mock_r.incr.assert_called_once_with("login:failures:user@example.com")
-        mock_r.expire.assert_called_once_with(
-            "login:failures:user@example.com", LOGIN_LOCKOUT_DURATION_SECONDS
-        )
+        mock_r.expire.assert_called_once_with("login:failures:user@example.com", LOGIN_LOCKOUT_DURATION_SECONDS)
         mock_r.close.assert_called_once()
 
     @patch("app.api.routers.auth._get_redis")
@@ -137,9 +136,7 @@ class TestRecordLoginFailure:
 
         _record_login_failure("user@example.com")
 
-        mock_r.expire.assert_called_once_with(
-            "login:failures:user@example.com", LOGIN_LOCKOUT_DURATION_SECONDS
-        )
+        mock_r.expire.assert_called_once_with("login:failures:user@example.com", LOGIN_LOCKOUT_DURATION_SECONDS)
 
     @patch("app.api.routers.auth._get_redis")
     def test_mid_range_failure_no_expire(self, mock_get_redis):

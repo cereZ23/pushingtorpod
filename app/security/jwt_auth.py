@@ -54,7 +54,7 @@ class JWTManager:
         self,
         secret_key: Optional[str] = None,
         algorithm: Optional[str] = None,
-        redis_client: Optional[redis.Redis] = None
+        redis_client: Optional[redis.Redis] = None,
     ):
         """
         Initialize JWT manager with RS256/HS256 support
@@ -122,7 +122,7 @@ class JWTManager:
         tenant_id: int,
         roles: list = None,
         expires_delta: Optional[timedelta] = None,
-        additional_claims: Optional[Dict[str, Any]] = None
+        additional_claims: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Create JWT access token
@@ -162,11 +162,7 @@ class JWTManager:
 
         # Store in Redis for revocation capability
         try:
-            self.redis_client.setex(
-                f"jwt:access:{jti}",
-                int(expires_delta.total_seconds()),
-                subject
-            )
+            self.redis_client.setex(f"jwt:access:{jti}", int(expires_delta.total_seconds()), subject)
         except Exception as e:
             logger.error(f"Failed to store token in Redis: {e}")
             # Continue anyway - token will still work, just can't be revoked
@@ -174,12 +170,7 @@ class JWTManager:
         logger.info(f"Created access token for user {subject} (tenant {tenant_id})")
         return token
 
-    def create_refresh_token(
-        self,
-        subject: str,
-        tenant_id: int,
-        expires_delta: Optional[timedelta] = None
-    ) -> str:
+    def create_refresh_token(self, subject: str, tenant_id: int, expires_delta: Optional[timedelta] = None) -> str:
         """
         Create JWT refresh token
 
@@ -212,11 +203,7 @@ class JWTManager:
 
         # Store refresh token in Redis
         try:
-            self.redis_client.setex(
-                f"jwt:refresh:{jti}",
-                int(expires_delta.total_seconds()),
-                subject
-            )
+            self.redis_client.setex(f"jwt:refresh:{jti}", int(expires_delta.total_seconds()), subject)
         except Exception as e:
             logger.error(f"Failed to store refresh token in Redis: {e}")
 
@@ -241,46 +228,30 @@ class JWTManager:
         try:
             # Decode token with appropriate verification key
             verification_key = self.security_keys.get_verification_key()
-            payload = jwt.decode(
-                token,
-                verification_key,
-                algorithms=[self.algorithm]
-            )
+            payload = jwt.decode(token, verification_key, algorithms=[self.algorithm])
 
             # Check if token is revoked
-            jti = payload.get('jti')
+            jti = payload.get("jti")
             if jti:
-                token_type = payload.get('type', 'access')
+                token_type = payload.get("type", "access")
                 key = f"jwt:{token_type}:{jti}"
 
                 if not self.redis_client.exists(key):
                     logger.warning(f"Attempt to use revoked token: {jti}")
-                    raise HTTPException(
-                        status_code=401,
-                        detail="Token has been revoked"
-                    )
+                    raise HTTPException(status_code=401, detail="Token has been revoked")
 
             logger.debug(f"Token verified for user {payload.get('sub')}")
             return payload
 
         except jwt.ExpiredSignatureError:
             logger.warning("Expired token attempt")
-            raise HTTPException(
-                status_code=401,
-                detail="Token has expired"
-            )
+            raise HTTPException(status_code=401, detail="Token has expired")
         except InvalidTokenError as e:
             logger.warning(f"Invalid token: {e}")
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid token"
-            )
+            raise HTTPException(status_code=401, detail="Invalid token")
         except Exception as e:
             logger.error(f"Token verification error: {e}")
-            raise HTTPException(
-                status_code=401,
-                detail="Authentication failed"
-            )
+            raise HTTPException(status_code=401, detail="Authentication failed")
 
     def _get_fresh_roles(self, user_id: int, tenant_id: int) -> list[str]:
         """Look up current roles from database (not from stale JWT).
@@ -289,27 +260,32 @@ class JWTManager:
         """
         try:
             from app.models.auth import User, TenantMembership
+
             db = SessionLocal()
             try:
                 user = db.query(User).filter(User.id == user_id).first()
                 if not user or not user.is_active:
-                    return ['user']
+                    return ["user"]
 
-                membership = db.query(TenantMembership).filter(
-                    TenantMembership.user_id == user_id,
-                    TenantMembership.tenant_id == tenant_id,
-                    TenantMembership.is_active == True,
-                ).first()
+                membership = (
+                    db.query(TenantMembership)
+                    .filter(
+                        TenantMembership.user_id == user_id,
+                        TenantMembership.tenant_id == tenant_id,
+                        TenantMembership.is_active == True,
+                    )
+                    .first()
+                )
 
-                roles = [membership.role] if membership else ['user']
+                roles = [membership.role] if membership else ["user"]
                 if user.is_superuser:
-                    roles.append('admin')
+                    roles.append("admin")
                 return roles
             finally:
                 db.close()
         except Exception as e:
             logger.error(f"Failed to refresh roles from DB for user {user_id}: {e}")
-            return ['user']
+            return ["user"]
 
     def revoke_all_user_tokens(self, user_id: int) -> int:
         """Revoke all access and refresh tokens for a user.
@@ -322,7 +298,7 @@ class JWTManager:
         """
         count = 0
         try:
-            for prefix in ('jwt:access:', 'jwt:refresh:'):
+            for prefix in ("jwt:access:", "jwt:refresh:"):
                 cursor = 0
                 while True:
                     cursor, keys = self.redis_client.scan(cursor, match=f"{prefix}*", count=100)
@@ -355,10 +331,7 @@ class JWTManager:
             logger.error(f"Failed to revoke token {jti}: {e}")
             raise
 
-    def refresh_access_token(
-        self,
-        refresh_token: str
-    ) -> Dict[str, str]:
+    def refresh_access_token(self, refresh_token: str) -> Dict[str, str]:
         """
         Create new access token from refresh token
 
@@ -371,30 +344,20 @@ class JWTManager:
         try:
             # Decode refresh token with appropriate verification key
             verification_key = self.security_keys.get_verification_key()
-            payload = jwt.decode(
-                refresh_token,
-                verification_key,
-                algorithms=[self.algorithm]
-            )
+            payload = jwt.decode(refresh_token, verification_key, algorithms=[self.algorithm])
 
             # Verify it's a refresh token
-            if payload.get('type') != 'refresh':
-                raise HTTPException(
-                    status_code=400,
-                    detail="Invalid refresh token"
-                )
+            if payload.get("type") != "refresh":
+                raise HTTPException(status_code=400, detail="Invalid refresh token")
 
             # Check if refresh token is still valid in Redis
-            jti = payload.get('jti')
+            jti = payload.get("jti")
             if jti and not self.redis_client.exists(f"jwt:refresh:{jti}"):
-                raise HTTPException(
-                    status_code=401,
-                    detail="Refresh token has been revoked"
-                )
+                raise HTTPException(status_code=401, detail="Refresh token has been revoked")
 
             # Look up fresh roles from DB instead of copying stale JWT roles
-            user_id = payload['sub']
-            tenant_id = payload['tenant_id']
+            user_id = payload["sub"]
+            tenant_id = payload["tenant_id"]
             fresh_roles = self._get_fresh_roles(int(user_id), tenant_id)
 
             # Create new access token with current roles
@@ -412,24 +375,14 @@ class JWTManager:
 
             # Revoke old refresh token
             if jti:
-                self.revoke_token(jti, 'refresh')
+                self.revoke_token(jti, "refresh")
 
-            return {
-                'access_token': access_token,
-                'refresh_token': new_refresh_token,
-                'token_type': 'bearer'
-            }
+            return {"access_token": access_token, "refresh_token": new_refresh_token, "token_type": "bearer"}
 
         except jwt.ExpiredSignatureError:
-            raise HTTPException(
-                status_code=401,
-                detail="Refresh token has expired"
-            )
+            raise HTTPException(status_code=401, detail="Refresh token has expired")
         except InvalidTokenError:
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid refresh token"
-            )
+            raise HTTPException(status_code=401, detail="Invalid refresh token")
 
 
 # Global JWT manager instance
@@ -437,9 +390,7 @@ jwt_manager = JWTManager()
 
 
 # FastAPI dependencies
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Security(HTTPBearer())
-) -> Dict[str, Any]:
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Security(HTTPBearer())) -> Dict[str, Any]:
     """
     FastAPI dependency to get current authenticated user
 
@@ -462,21 +413,14 @@ def require_permission(required_permission: str):
     Returns:
         FastAPI dependency
     """
-    async def permission_checker(
-        current_user: Dict = Depends(get_current_user)
-    ) -> Dict[str, Any]:
+
+    async def permission_checker(current_user: Dict = Depends(get_current_user)) -> Dict[str, Any]:
         """Check if user has required permission"""
-        user_permissions = current_user.get('permissions', [])
+        user_permissions = current_user.get("permissions", [])
 
         if required_permission not in user_permissions:
-            logger.warning(
-                f"Permission denied: user {current_user.get('sub')} "
-                f"lacks permission {required_permission}"
-            )
-            raise HTTPException(
-                status_code=403,
-                detail=f"Permission denied: {required_permission} required"
-            )
+            logger.warning(f"Permission denied: user {current_user.get('sub')} lacks permission {required_permission}")
+            raise HTTPException(status_code=403, detail=f"Permission denied: {required_permission} required")
 
         return current_user
 
@@ -493,21 +437,14 @@ def require_role(required_role: str):
     Returns:
         FastAPI dependency
     """
-    async def role_checker(
-        current_user: Dict = Depends(get_current_user)
-    ) -> Dict[str, Any]:
-        """Check if user has required role"""
-        user_roles = current_user.get('roles', [])
 
-        if required_role not in user_roles and 'admin' not in user_roles:
-            logger.warning(
-                f"Access denied: user {current_user.get('sub')} "
-                f"lacks role {required_role}"
-            )
-            raise HTTPException(
-                status_code=403,
-                detail=f"Access denied: {required_role} role required"
-            )
+    async def role_checker(current_user: Dict = Depends(get_current_user)) -> Dict[str, Any]:
+        """Check if user has required role"""
+        user_roles = current_user.get("roles", [])
+
+        if required_role not in user_roles and "admin" not in user_roles:
+            logger.warning(f"Access denied: user {current_user.get('sub')} lacks role {required_role}")
+            raise HTTPException(status_code=403, detail=f"Access denied: {required_role} role required")
 
         return current_user
 

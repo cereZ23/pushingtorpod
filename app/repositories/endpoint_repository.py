@@ -42,7 +42,7 @@ class EndpointRepository:
         endpoint_type: Optional[str] = None,
         is_api: Optional[bool] = None,
         limit: int = 1000,
-        offset: int = 0
+        offset: int = 0,
     ) -> List[Endpoint]:
         """
         Get all endpoints for an asset
@@ -65,17 +65,9 @@ class EndpointRepository:
         if is_api is not None:
             query = query.filter_by(is_api=is_api)
 
-        return query.order_by(
-            Endpoint.depth,
-            Endpoint.url
-        ).limit(limit).offset(offset).all()
+        return query.order_by(Endpoint.depth, Endpoint.url).limit(limit).offset(offset).all()
 
-    def get_by_url(
-        self,
-        asset_id: int,
-        url: str,
-        method: str = 'GET'
-    ) -> Optional[Endpoint]:
+    def get_by_url(self, asset_id: int, url: str, method: str = "GET") -> Optional[Endpoint]:
         """
         Get endpoint by asset, URL, and method
 
@@ -87,17 +79,9 @@ class EndpointRepository:
         Returns:
             Endpoint if found, None otherwise
         """
-        return self.db.query(Endpoint).filter_by(
-            asset_id=asset_id,
-            url=url,
-            method=method
-        ).first()
+        return self.db.query(Endpoint).filter_by(asset_id=asset_id, url=url, method=method).first()
 
-    def get_api_endpoints(
-        self,
-        tenant_id: int,
-        limit: int = 1000
-    ) -> List[Endpoint]:
+    def get_api_endpoints(self, tenant_id: int, limit: int = 1000) -> List[Endpoint]:
         """
         Get all API endpoints for a tenant
 
@@ -110,18 +94,16 @@ class EndpointRepository:
         Returns:
             List of API endpoints
         """
-        return self.db.query(Endpoint).join(Endpoint.asset).filter(
-            and_(
-                Endpoint.asset.has(tenant_id=tenant_id),
-                Endpoint.is_api == True
-            )
-        ).order_by(Endpoint.url).limit(limit).all()
+        return (
+            self.db.query(Endpoint)
+            .join(Endpoint.asset)
+            .filter(and_(Endpoint.asset.has(tenant_id=tenant_id), Endpoint.is_api == True))
+            .order_by(Endpoint.url)
+            .limit(limit)
+            .all()
+        )
 
-    def get_sensitive_endpoints(
-        self,
-        tenant_id: int,
-        limit: int = 100
-    ) -> List[Endpoint]:
+    def get_sensitive_endpoints(self, tenant_id: int, limit: int = 100) -> List[Endpoint]:
         """
         Get potentially sensitive endpoints
 
@@ -136,26 +118,21 @@ class EndpointRepository:
             List of sensitive endpoints
         """
         # Keywords that indicate sensitive endpoints
-        sensitive_keywords = [
-            'admin', 'login', 'auth', 'password',
-            'reset', 'token', 'key', 'secret', 'config'
-        ]
+        sensitive_keywords = ["admin", "login", "auth", "password", "reset", "token", "key", "secret", "config"]
 
         # Build OR conditions for URL matching
-        conditions = [Endpoint.url.ilike(f'%{keyword}%', escape="\\") for keyword in sensitive_keywords]
+        conditions = [Endpoint.url.ilike(f"%{keyword}%", escape="\\") for keyword in sensitive_keywords]
 
-        return self.db.query(Endpoint).join(Endpoint.asset).filter(
-            and_(
-                Endpoint.asset.has(tenant_id=tenant_id),
-                or_(*conditions)
-            )
-        ).order_by(Endpoint.first_seen.desc()).limit(limit).all()
+        return (
+            self.db.query(Endpoint)
+            .join(Endpoint.asset)
+            .filter(and_(Endpoint.asset.has(tenant_id=tenant_id), or_(*conditions)))
+            .order_by(Endpoint.first_seen.desc())
+            .limit(limit)
+            .all()
+        )
 
-    def get_forms(
-        self,
-        tenant_id: int,
-        limit: int = 100
-    ) -> List[Endpoint]:
+    def get_forms(self, tenant_id: int, limit: int = 100) -> List[Endpoint]:
         """
         Get form endpoints
 
@@ -168,18 +145,16 @@ class EndpointRepository:
         Returns:
             List of form endpoints
         """
-        return self.db.query(Endpoint).join(Endpoint.asset).filter(
-            and_(
-                Endpoint.asset.has(tenant_id=tenant_id),
-                Endpoint.endpoint_type == 'form'
-            )
-        ).order_by(Endpoint.first_seen.desc()).limit(limit).all()
+        return (
+            self.db.query(Endpoint)
+            .join(Endpoint.asset)
+            .filter(and_(Endpoint.asset.has(tenant_id=tenant_id), Endpoint.endpoint_type == "form"))
+            .order_by(Endpoint.first_seen.desc())
+            .limit(limit)
+            .all()
+        )
 
-    def get_external_links(
-        self,
-        tenant_id: int,
-        limit: int = 100
-    ) -> List[Endpoint]:
+    def get_external_links(self, tenant_id: int, limit: int = 100) -> List[Endpoint]:
         """
         Get external links discovered during crawling
 
@@ -192,19 +167,16 @@ class EndpointRepository:
         Returns:
             List of external endpoints
         """
-        return self.db.query(Endpoint).join(Endpoint.asset).filter(
-            and_(
-                Endpoint.asset.has(tenant_id=tenant_id),
-                Endpoint.is_external == True
-            )
-        ).order_by(Endpoint.first_seen.desc()).limit(limit).all()
+        return (
+            self.db.query(Endpoint)
+            .join(Endpoint.asset)
+            .filter(and_(Endpoint.asset.has(tenant_id=tenant_id), Endpoint.is_external == True))
+            .order_by(Endpoint.first_seen.desc())
+            .limit(limit)
+            .all()
+        )
 
-    def get_by_depth(
-        self,
-        asset_id: int,
-        min_depth: int = 0,
-        max_depth: int = 10
-    ) -> List[Endpoint]:
+    def get_by_depth(self, asset_id: int, min_depth: int = 0, max_depth: int = 10) -> List[Endpoint]:
         """
         Get endpoints by crawl depth
 
@@ -218,13 +190,12 @@ class EndpointRepository:
         Returns:
             List of endpoints within depth range
         """
-        return self.db.query(Endpoint).filter(
-            and_(
-                Endpoint.asset_id == asset_id,
-                Endpoint.depth >= min_depth,
-                Endpoint.depth <= max_depth
-            )
-        ).order_by(Endpoint.depth, Endpoint.url).all()
+        return (
+            self.db.query(Endpoint)
+            .filter(and_(Endpoint.asset_id == asset_id, Endpoint.depth >= min_depth, Endpoint.depth <= max_depth))
+            .order_by(Endpoint.depth, Endpoint.url)
+            .all()
+        )
 
     def bulk_upsert(self, asset_id: int, endpoints_data: List[Dict]) -> Dict[str, int]:
         """
@@ -265,7 +236,7 @@ class EndpointRepository:
             - Auto-detection of API endpoints and external links
         """
         if not endpoints_data:
-            return {'created': 0, 'updated': 0, 'total_processed': 0}
+            return {"created": 0, "updated": 0, "total_processed": 0}
 
         # Prepare records for upsert
         records = []
@@ -273,61 +244,60 @@ class EndpointRepository:
 
         for data in endpoints_data:
             # URL is required
-            if 'url' not in data:
+            if "url" not in data:
                 continue
 
             record = {
-                'asset_id': asset_id,
-                'url': data['url'],
-                'method': data.get('method', 'GET'),
-                'path': data.get('path'),
-                'query_params': data.get('query_params'),
-                'body_params': data.get('body_params'),
-                'headers': data.get('headers'),
-                'status_code': data.get('status_code'),
-                'content_type': data.get('content_type'),
-                'content_length': data.get('content_length'),
-                'endpoint_type': data.get('endpoint_type'),
-                'is_external': data.get('is_external', False),
-                'is_api': data.get('is_api', False),
-                'source_url': data.get('source_url'),
-                'depth': data.get('depth', 0),
-                'raw_data': data.get('raw_data'),
-                'first_seen': current_time,
-                'last_seen': current_time
+                "asset_id": asset_id,
+                "url": data["url"],
+                "method": data.get("method", "GET"),
+                "path": data.get("path"),
+                "query_params": data.get("query_params"),
+                "body_params": data.get("body_params"),
+                "headers": data.get("headers"),
+                "status_code": data.get("status_code"),
+                "content_type": data.get("content_type"),
+                "content_length": data.get("content_length"),
+                "endpoint_type": data.get("endpoint_type"),
+                "is_external": data.get("is_external", False),
+                "is_api": data.get("is_api", False),
+                "source_url": data.get("source_url"),
+                "depth": data.get("depth", 0),
+                "raw_data": data.get("raw_data"),
+                "first_seen": current_time,
+                "last_seen": current_time,
             }
 
             records.append(record)
 
         if not records:
-            return {'created': 0, 'updated': 0, 'total_processed': 0}
+            return {"created": 0, "updated": 0, "total_processed": 0}
 
         # Build UPSERT statement
         stmt = insert(Endpoint).values(records)
 
         # On conflict (asset_id, url, method), update all fields except first_seen
         update_dict = {
-            'path': stmt.excluded.path,
-            'query_params': stmt.excluded.query_params,
-            'body_params': stmt.excluded.body_params,
-            'headers': stmt.excluded.headers,
-            'status_code': stmt.excluded.status_code,
-            'content_type': stmt.excluded.content_type,
-            'content_length': stmt.excluded.content_length,
-            'endpoint_type': stmt.excluded.endpoint_type,
-            'is_external': stmt.excluded.is_external,
-            'is_api': stmt.excluded.is_api,
-            'source_url': stmt.excluded.source_url,
-            'depth': stmt.excluded.depth,
-            'raw_data': stmt.excluded.raw_data,
-            'last_seen': stmt.excluded.last_seen
+            "path": stmt.excluded.path,
+            "query_params": stmt.excluded.query_params,
+            "body_params": stmt.excluded.body_params,
+            "headers": stmt.excluded.headers,
+            "status_code": stmt.excluded.status_code,
+            "content_type": stmt.excluded.content_type,
+            "content_length": stmt.excluded.content_length,
+            "endpoint_type": stmt.excluded.endpoint_type,
+            "is_external": stmt.excluded.is_external,
+            "is_api": stmt.excluded.is_api,
+            "source_url": stmt.excluded.source_url,
+            "depth": stmt.excluded.depth,
+            "raw_data": stmt.excluded.raw_data,
+            "last_seen": stmt.excluded.last_seen,
             # Note: first_seen is NOT updated, preserving original discovery time
         }
 
-        stmt = stmt.on_conflict_do_update(
-            index_elements=['asset_id', 'url', 'method'],
-            set_=update_dict
-        ).returning(Endpoint.id, Endpoint.first_seen)
+        stmt = stmt.on_conflict_do_update(index_elements=["asset_id", "url", "method"], set_=update_dict).returning(
+            Endpoint.id, Endpoint.first_seen
+        )
 
         # Execute and get affected rows
         result = self.db.execute(stmt)
@@ -345,11 +315,7 @@ class EndpointRepository:
             if first_seen and (current_time - first_seen).total_seconds() < 2:
                 created += 1
 
-        return {
-            'created': created,
-            'updated': len(returned_rows) - created,
-            'total_processed': len(records)
-        }
+        return {"created": created, "updated": len(returned_rows) - created, "total_processed": len(records)}
 
     def get_endpoint_stats(self, tenant_id: int) -> Dict[str, int]:
         """
@@ -363,34 +329,33 @@ class EndpointRepository:
         Returns:
             Dict with endpoint counts by category
         """
-        base_query = self.db.query(Endpoint).join(Endpoint.asset).filter(
-            Endpoint.asset.has(tenant_id=tenant_id)
-        )
+        base_query = self.db.query(Endpoint).join(Endpoint.asset).filter(Endpoint.asset.has(tenant_id=tenant_id))
 
         total = base_query.count()
         api_endpoints = base_query.filter(Endpoint.is_api == True).count()
         external_links = base_query.filter(Endpoint.is_external == True).count()
-        forms = base_query.filter(Endpoint.endpoint_type == 'form').count()
+        forms = base_query.filter(Endpoint.endpoint_type == "form").count()
 
         # Count by endpoint type
         type_counts = {}
-        type_results = self.db.query(
-            Endpoint.endpoint_type,
-            func.count(Endpoint.id)
-        ).join(Endpoint.asset).filter(
-            Endpoint.asset.has(tenant_id=tenant_id)
-        ).group_by(Endpoint.endpoint_type).all()
+        type_results = (
+            self.db.query(Endpoint.endpoint_type, func.count(Endpoint.id))
+            .join(Endpoint.asset)
+            .filter(Endpoint.asset.has(tenant_id=tenant_id))
+            .group_by(Endpoint.endpoint_type)
+            .all()
+        )
 
         for endpoint_type, count in type_results:
             if endpoint_type:
                 type_counts[endpoint_type] = count
 
         return {
-            'total': total,
-            'api_endpoints': api_endpoints,
-            'external_links': external_links,
-            'forms': forms,
-            'by_type': type_counts
+            "total": total,
+            "api_endpoints": api_endpoints,
+            "external_links": external_links,
+            "forms": forms,
+            "by_type": type_counts,
         }
 
     def count_by_asset(self, asset_id: int) -> int:
@@ -411,12 +376,7 @@ class EndpointRepository:
         self.db.commit()
         return count
 
-    def get_recent_discoveries(
-        self,
-        tenant_id: int,
-        hours: int = 24,
-        limit: int = 100
-    ) -> List[Endpoint]:
+    def get_recent_discoveries(self, tenant_id: int, hours: int = 24, limit: int = 100) -> List[Endpoint]:
         """
         Get recently discovered endpoints
 
@@ -430,9 +390,11 @@ class EndpointRepository:
         """
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-        return self.db.query(Endpoint).join(Endpoint.asset).filter(
-            and_(
-                Endpoint.asset.has(tenant_id=tenant_id),
-                Endpoint.first_seen >= cutoff
-            )
-        ).order_by(Endpoint.first_seen.desc()).limit(limit).all()
+        return (
+            self.db.query(Endpoint)
+            .join(Endpoint.asset)
+            .filter(and_(Endpoint.asset.has(tenant_id=tenant_id), Endpoint.first_seen >= cutoff))
+            .order_by(Endpoint.first_seen.desc())
+            .limit(limit)
+            .all()
+        )

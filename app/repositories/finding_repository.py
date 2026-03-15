@@ -23,6 +23,7 @@ import json
 from app.models.database import Finding, FindingSeverity, FindingStatus, Asset
 from app.services.dedup import compute_finding_fingerprint
 
+
 class FindingRepository:
     """Repository for Finding entity operations"""
 
@@ -48,7 +49,7 @@ class FindingRepository:
         cve_id: Optional[str] = None,
         template_id: Optional[str] = None,
         limit: int = 100,
-        offset: int = 0
+        offset: int = 0,
     ) -> List[Finding]:
         """
         Get findings with filters
@@ -67,9 +68,7 @@ class FindingRepository:
             List of findings
         """
         # Join with assets to filter by tenant
-        query = self.db.query(Finding).join(Asset).filter(
-            Asset.tenant_id == tenant_id
-        )
+        query = self.db.query(Finding).join(Asset).filter(Asset.tenant_id == tenant_id)
 
         # Apply filters
         if severity:
@@ -97,21 +96,14 @@ class FindingRepository:
             FindingSeverity.HIGH: 1,
             FindingSeverity.MEDIUM: 2,
             FindingSeverity.LOW: 3,
-            FindingSeverity.INFO: 4
+            FindingSeverity.INFO: 4,
         }
 
-        findings = query.order_by(
-            Finding.severity,
-            Finding.first_seen.desc()
-        ).limit(limit).offset(offset).all()
+        findings = query.order_by(Finding.severity, Finding.first_seen.desc()).limit(limit).offset(offset).all()
 
         return findings
 
-    def bulk_upsert_findings(
-        self,
-        findings: List[Dict],
-        tenant_id: int
-    ) -> Dict[str, int]:
+    def bulk_upsert_findings(self, findings: List[Dict], tenant_id: int) -> Dict[str, int]:
         """
         Bulk insert or update findings with deduplication
 
@@ -148,7 +140,7 @@ class FindingRepository:
             }
         """
         if not findings:
-            return {'created': 0, 'updated': 0, 'total_processed': 0, 'errors': []}
+            return {"created": 0, "updated": 0, "total_processed": 0, "errors": []}
 
         # Prepare records
         records = []
@@ -158,42 +150,39 @@ class FindingRepository:
         for idx, finding in enumerate(findings):
             try:
                 # Validate required fields
-                if 'asset_id' not in finding:
+                if "asset_id" not in finding:
                     errors.append(f"Finding {idx}: Missing asset_id")
                     continue
 
-                if 'template_id' not in finding:
+                if "template_id" not in finding:
                     errors.append(f"Finding {idx}: Missing template_id")
                     continue
 
-                if 'name' not in finding:
+                if "name" not in finding:
                     errors.append(f"Finding {idx}: Missing name")
                     continue
 
-                if 'severity' not in finding:
+                if "severity" not in finding:
                     errors.append(f"Finding {idx}: Missing severity")
                     continue
 
                 # Verify asset belongs to tenant
-                asset = self.db.query(Asset).filter_by(
-                    id=finding['asset_id'],
-                    tenant_id=tenant_id
-                ).first()
+                asset = self.db.query(Asset).filter_by(id=finding["asset_id"], tenant_id=tenant_id).first()
 
                 if not asset:
                     errors.append(f"Finding {idx}: Asset {finding['asset_id']} not found for tenant {tenant_id}")
                     continue
 
                 # Normalize severity
-                severity_str = finding['severity'].lower()
-                if severity_str not in ['critical', 'high', 'medium', 'low', 'info']:
+                severity_str = finding["severity"].lower()
+                if severity_str not in ["critical", "high", "medium", "low", "info"]:
                     errors.append(f"Finding {idx}: Invalid severity '{severity_str}'")
                     continue
 
                 severity_enum = FindingSeverity[severity_str.upper()]
 
                 # Process evidence
-                evidence = finding.get('evidence')
+                evidence = finding.get("evidence")
                 if evidence and isinstance(evidence, dict):
                     evidence = json.dumps(evidence)
                 elif evidence and not isinstance(evidence, str):
@@ -203,29 +192,29 @@ class FindingRepository:
                 fp = compute_finding_fingerprint(
                     tenant_id=tenant_id,
                     asset_identifier=asset.identifier,
-                    template_id=finding['template_id'],
-                    matcher_name=finding.get('matcher_name'),
-                    source=finding.get('source', 'nuclei'),
+                    template_id=finding["template_id"],
+                    matcher_name=finding.get("matcher_name"),
+                    source=finding.get("source", "nuclei"),
                 )
 
                 # Build record
                 record = {
-                    'asset_id': finding['asset_id'],
-                    'source': finding.get('source', 'nuclei'),
-                    'template_id': finding['template_id'],
-                    'name': finding['name'][:500],  # Truncate to field limit
-                    'severity': severity_enum,
-                    'cvss_score': finding.get('cvss_score'),
-                    'cve_id': finding.get('cve_id'),
-                    'evidence': evidence,
-                    'matched_at': finding.get('matched_at'),
-                    'host': finding.get('host'),
-                    'matcher_name': finding.get('matcher_name'),
-                    'fingerprint': fp,
-                    'occurrence_count': 1,
-                    'first_seen': current_time,
-                    'last_seen': current_time,
-                    'status': FindingStatus.OPEN
+                    "asset_id": finding["asset_id"],
+                    "source": finding.get("source", "nuclei"),
+                    "template_id": finding["template_id"],
+                    "name": finding["name"][:500],  # Truncate to field limit
+                    "severity": severity_enum,
+                    "cvss_score": finding.get("cvss_score"),
+                    "cve_id": finding.get("cve_id"),
+                    "evidence": evidence,
+                    "matched_at": finding.get("matched_at"),
+                    "host": finding.get("host"),
+                    "matcher_name": finding.get("matcher_name"),
+                    "fingerprint": fp,
+                    "occurrence_count": 1,
+                    "first_seen": current_time,
+                    "last_seen": current_time,
+                    "status": FindingStatus.OPEN,
                 }
 
                 records.append(record)
@@ -235,19 +224,14 @@ class FindingRepository:
                 continue
 
         if not records:
-            return {
-                'created': 0,
-                'updated': 0,
-                'total_processed': 0,
-                'errors': errors
-            }
+            return {"created": 0, "updated": 0, "total_processed": 0, "errors": errors}
 
         # Deduplicate within the batch: PostgreSQL ON CONFLICT cannot
         # update the same row twice in a single INSERT statement.
         # Keep the last occurrence (most recent evidence) per fingerprint.
         seen_fps = {}
         for record in records:
-            seen_fps[record['fingerprint']] = record
+            seen_fps[record["fingerprint"]] = record
         records = list(seen_fps.values())
 
         # Build UPSERT statement using fingerprint as the unique key
@@ -255,19 +239,18 @@ class FindingRepository:
 
         # On conflict (fingerprint), update last_seen, evidence, and bump count
         update_dict = {
-            'last_seen': stmt.excluded.last_seen,
-            'evidence': stmt.excluded.evidence,
-            'matched_at': stmt.excluded.matched_at,
-            'cvss_score': stmt.excluded.cvss_score,
-            'cve_id': stmt.excluded.cve_id,
-            'occurrence_count': Finding.occurrence_count + 1,
+            "last_seen": stmt.excluded.last_seen,
+            "evidence": stmt.excluded.evidence,
+            "matched_at": stmt.excluded.matched_at,
+            "cvss_score": stmt.excluded.cvss_score,
+            "cve_id": stmt.excluded.cve_id,
+            "occurrence_count": Finding.occurrence_count + 1,
             # Do NOT update: first_seen, severity, name, template_id, fingerprint
         }
 
-        stmt = stmt.on_conflict_do_update(
-            index_elements=['fingerprint'],
-            set_=update_dict
-        ).returning(Finding.id, Finding.first_seen)
+        stmt = stmt.on_conflict_do_update(index_elements=["fingerprint"], set_=update_dict).returning(
+            Finding.id, Finding.first_seen
+        )
 
         # Execute and get affected rows
         result = self.db.execute(stmt)
@@ -287,18 +270,13 @@ class FindingRepository:
                 created += 1
 
         return {
-            'created': created,
-            'updated': len(returned_rows) - created,
-            'total_processed': len(records),
-            'errors': errors
+            "created": created,
+            "updated": len(returned_rows) - created,
+            "total_processed": len(records),
+            "errors": errors,
         }
 
-    def update_finding_status(
-        self,
-        finding_id: int,
-        status: str,
-        notes: Optional[str] = None
-    ) -> Optional[Finding]:
+    def update_finding_status(self, finding_id: int, status: str, notes: Optional[str] = None) -> Optional[Finding]:
         """
         Update finding status
 
@@ -326,13 +304,11 @@ class FindingRepository:
         if notes:
             try:
                 evidence = json.loads(finding.evidence) if finding.evidence else {}
-                if 'status_notes' not in evidence:
-                    evidence['status_notes'] = []
-                evidence['status_notes'].append({
-                    'timestamp': datetime.now(timezone.utc).isoformat(),
-                    'status': status,
-                    'notes': notes
-                })
+                if "status_notes" not in evidence:
+                    evidence["status_notes"] = []
+                evidence["status_notes"].append(
+                    {"timestamp": datetime.now(timezone.utc).isoformat(), "status": status, "notes": notes}
+                )
                 finding.evidence = json.dumps(evidence)
             except (json.JSONDecodeError, TypeError, KeyError):
                 logger.debug("Failed to update evidence notes for finding %s", finding.id)
@@ -342,11 +318,7 @@ class FindingRepository:
 
         return finding
 
-    def get_finding_stats(
-        self,
-        tenant_id: int,
-        days: int = 30
-    ) -> Dict:
+    def get_finding_stats(self, tenant_id: int, days: int = 30) -> Dict:
         """
         Get finding statistics for tenant
 
@@ -358,9 +330,7 @@ class FindingRepository:
             Statistics dict
         """
         # Base query
-        query = self.db.query(Finding).join(Asset).filter(
-            Asset.tenant_id == tenant_id
-        )
+        query = self.db.query(Finding).join(Asset).filter(Asset.tenant_id == tenant_id)
 
         # Apply time filter
         if days > 0:
@@ -383,39 +353,36 @@ class FindingRepository:
         total = query.count()
 
         # Get top CVEs
-        top_cves = self.db.query(
-            Finding.cve_id,
-            func.count(Finding.id).label('count')
-        ).join(Asset).filter(
-            Asset.tenant_id == tenant_id,
-            Finding.cve_id.isnot(None)
-        ).group_by(Finding.cve_id).order_by(
-            func.count(Finding.id).desc()
-        ).limit(10).all()
+        top_cves = (
+            self.db.query(Finding.cve_id, func.count(Finding.id).label("count"))
+            .join(Asset)
+            .filter(Asset.tenant_id == tenant_id, Finding.cve_id.isnot(None))
+            .group_by(Finding.cve_id)
+            .order_by(func.count(Finding.id).desc())
+            .limit(10)
+            .all()
+        )
 
         # Get top templates
-        top_templates = self.db.query(
-            Finding.template_id,
-            func.count(Finding.id).label('count')
-        ).join(Asset).filter(
-            Asset.tenant_id == tenant_id
-        ).group_by(Finding.template_id).order_by(
-            func.count(Finding.id).desc()
-        ).limit(10).all()
+        top_templates = (
+            self.db.query(Finding.template_id, func.count(Finding.id).label("count"))
+            .join(Asset)
+            .filter(Asset.tenant_id == tenant_id)
+            .group_by(Finding.template_id)
+            .order_by(func.count(Finding.id).desc())
+            .limit(10)
+            .all()
+        )
 
         return {
-            'total': total,
-            'by_severity': by_severity,
-            'by_status': by_status,
-            'top_cves': [{'cve': cve, 'count': count} for cve, count in top_cves],
-            'top_templates': [{'template': tpl, 'count': count} for tpl, count in top_templates]
+            "total": total,
+            "by_severity": by_severity,
+            "by_status": by_status,
+            "top_cves": [{"cve": cve, "count": count} for cve, count in top_cves],
+            "top_templates": [{"template": tpl, "count": count} for tpl, count in top_templates],
         }
 
-    def get_new_findings(
-        self,
-        tenant_id: int,
-        since_hours: int = 24
-    ) -> List[Finding]:
+    def get_new_findings(self, tenant_id: int, since_hours: int = 24) -> List[Finding]:
         """
         Get findings discovered in last N hours
 
@@ -428,13 +395,15 @@ class FindingRepository:
         """
         cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
 
-        findings = self.db.query(Finding).join(Asset).filter(
-            and_(
-                Asset.tenant_id == tenant_id,
-                Finding.first_seen >= cutoff,
-                Finding.status == FindingStatus.OPEN
+        findings = (
+            self.db.query(Finding)
+            .join(Asset)
+            .filter(
+                and_(Asset.tenant_id == tenant_id, Finding.first_seen >= cutoff, Finding.status == FindingStatus.OPEN)
             )
-        ).order_by(Finding.severity, Finding.first_seen.desc()).all()
+            .order_by(Finding.severity, Finding.first_seen.desc())
+            .all()
+        )
 
         return findings
 

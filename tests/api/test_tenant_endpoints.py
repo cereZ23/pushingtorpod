@@ -4,6 +4,7 @@ Tenant Endpoint Tests
 Tests for tenant dashboard, stats, and multi-tenant isolation.
 Total: 8 tests
 """
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -49,9 +50,7 @@ class TestTenantEndpoints:
         data = response.json()
         assert "detail" in data
 
-    def test_get_tenant_dashboard_enforces_tenant_isolation(
-        self, authenticated_client, test_tenant, other_tenant
-    ):
+    def test_get_tenant_dashboard_enforces_tenant_isolation(self, authenticated_client, test_tenant, other_tenant):
         """Test users cannot access other tenants' dashboards"""
         # Try to access another tenant's dashboard
         response = authenticated_client.get(f"/api/v1/tenants/{other_tenant.id}/dashboard")
@@ -59,9 +58,7 @@ class TestTenantEndpoints:
         # Should return 403 Forbidden or 404 Not Found
         assert response.status_code in [403, 404]
 
-    def test_get_tenant_stats_returns_detailed_metrics(
-        self, authenticated_client, test_tenant, tenant_with_data
-    ):
+    def test_get_tenant_stats_returns_detailed_metrics(self, authenticated_client, test_tenant, tenant_with_data):
         """Test tenant stats endpoint returns detailed metrics"""
         response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/stats")
 
@@ -107,13 +104,10 @@ class TestTenantEndpoints:
 
         assert response.status_code in [403, 404]
 
-    def test_tenant_dashboard_pagination(
-        self, authenticated_client, test_tenant, many_tenant_assets
-    ):
+    def test_tenant_dashboard_pagination(self, authenticated_client, test_tenant, many_tenant_assets):
         """Test tenant dashboard handles large datasets with pagination"""
         response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/dashboard",
-            params={"limit": 10, "offset": 0}
+            f"/api/v1/tenants/{test_tenant.id}/dashboard", params={"limit": 10, "offset": 0}
         )
 
         assert response.status_code == 200
@@ -138,7 +132,7 @@ def tenant_with_data(db_session, test_tenant):
             identifier=f"test{i}.example.com",
             type=AssetType.SUBDOMAIN,
             risk_score=float(i * 10),
-            is_active=True
+            is_active=True,
         )
         for i in range(5)
     ]
@@ -157,7 +151,7 @@ def tenant_with_data(db_session, test_tenant):
             severity=FindingSeverity.HIGH,
             cvss_score=7.5,
             status=FindingStatus.OPEN,
-            evidence='{"test": "data"}'
+            evidence='{"test": "data"}',
         )
         db_session.add(finding)
 
@@ -168,11 +162,7 @@ def tenant_with_data(db_session, test_tenant):
 @pytest.fixture
 def other_tenant(db_session):
     """Create another tenant for isolation testing"""
-    tenant = Tenant(
-        name="Other Tenant",
-        slug="other-tenant",
-        contact_policy="other@test.com"
-    )
+    tenant = Tenant(name="Other Tenant", slug="other-tenant", contact_policy="other@test.com")
     db_session.add(tenant)
     db_session.commit()
     db_session.refresh(tenant)
@@ -188,7 +178,7 @@ def other_tenant_assets(db_session, other_tenant):
             identifier=f"other{i}.example.com",
             type=AssetType.SUBDOMAIN,
             risk_score=50.0,
-            is_active=True
+            is_active=True,
         )
         for i in range(3)
     ]
@@ -206,7 +196,7 @@ def many_tenant_assets(db_session, test_tenant):
             identifier=f"asset{i}.example.com",
             type=AssetType.SUBDOMAIN,
             risk_score=25.0,
-            is_active=True
+            is_active=True,
         )
         for i in range(50)
     ]

@@ -72,12 +72,8 @@ def sync_all_tenant_tickets(self) -> dict:
                 )
                 results[tenant_id] = {"error": str(exc)[:500]}
 
-        total_synced = sum(
-            r.get("synced", 0) for r in results.values() if isinstance(r, dict)
-        )
-        total_errors = sum(
-            r.get("errors", 0) for r in results.values() if isinstance(r, dict)
-        )
+        total_synced = sum(r.get("synced", 0) for r in results.values() if isinstance(r, dict))
+        total_errors = sum(r.get("errors", 0) for r in results.values() if isinstance(r, dict))
 
         logger.info(
             "Ticket sync complete: %d tenants, %d synced, %d errors",

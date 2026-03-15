@@ -23,10 +23,10 @@ def _phase_6_fingerprinting(tenant_id, project_id, scan_run_id, db, tenant_logge
 
     if isinstance(result, dict):
         return {
-            'technologies_detected': result.get('technologies_detected', 0),
-            'services_fingerprinted': result.get('services_analyzed', 0),
+            "technologies_detected": result.get("technologies_detected", 0),
+            "services_fingerprinted": result.get("services_analyzed", 0),
         }
-    return {'technologies_detected': 0}
+    return {"technologies_detected": 0}
 
 
 def _phase_6b_web_crawling(tenant_id, project_id, scan_run_id, db, tenant_logger):
@@ -38,38 +38,49 @@ def _phase_6b_web_crawling(tenant_id, project_id, scan_run_id, db, tenant_logger
     from app.tasks.enrichment import run_katana
     from app.models.database import Asset, AssetType
 
-    hostname_assets = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
-        Asset.is_active == True,
-    ).all()
+    hostname_assets = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
+            Asset.is_active == True,
+        )
+        .all()
+    )
 
     covered_ip_ids = {
-        r.target_asset_id for r in db.query(Relationship.target_asset_id).filter(
+        r.target_asset_id
+        for r in db.query(Relationship.target_asset_id)
+        .filter(
             Relationship.tenant_id == tenant_id,
-            Relationship.rel_type == 'resolves_to',
-        ).all()
+            Relationship.rel_type == "resolves_to",
+        )
+        .all()
     }
-    standalone_ips = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.type == AssetType.IP,
-        Asset.is_active == True,
-        ~Asset.id.in_(covered_ip_ids) if covered_ip_ids else True,
-    ).all()
+    standalone_ips = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type == AssetType.IP,
+            Asset.is_active == True,
+            ~Asset.id.in_(covered_ip_ids) if covered_ip_ids else True,
+        )
+        .all()
+    )
 
     assets = hostname_assets + standalone_ips
 
     if not assets:
-        return {'endpoints_discovered': 0}
+        return {"endpoints_discovered": 0}
 
     asset_ids = [a.id for a in assets]
     tenant_logger.info(f"Katana: crawling {len(asset_ids)} assets (deduped IPs)")
     result = run_katana(tenant_id, asset_ids)
 
     return {
-        'endpoints_discovered': result.get('endpoints_discovered', 0) if isinstance(result, dict) else 0,
-        'endpoints_created': result.get('endpoints_created', 0) if isinstance(result, dict) else 0,
-        'urls_crawled': result.get('urls_crawled', 0) if isinstance(result, dict) else 0,
+        "endpoints_discovered": result.get("endpoints_discovered", 0) if isinstance(result, dict) else 0,
+        "endpoints_created": result.get("endpoints_created", 0) if isinstance(result, dict) else 0,
+        "urls_crawled": result.get("urls_crawled", 0) if isinstance(result, dict) else 0,
     }
 
 
@@ -83,41 +94,50 @@ def _phase_6c_sensitive_paths(tenant_id, project_id, scan_run_id, db, tenant_log
     from app.tasks.sensitive_paths import run_sensitive_path_scan
     from app.models.database import Asset, AssetType
 
-    hostname_assets = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
-        Asset.is_active == True,
-    ).all()
+    hostname_assets = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
+            Asset.is_active == True,
+        )
+        .all()
+    )
 
     covered_ip_ids = {
-        r.target_asset_id for r in db.query(Relationship.target_asset_id).filter(
+        r.target_asset_id
+        for r in db.query(Relationship.target_asset_id)
+        .filter(
             Relationship.tenant_id == tenant_id,
-            Relationship.rel_type == 'resolves_to',
-        ).all()
+            Relationship.rel_type == "resolves_to",
+        )
+        .all()
     }
-    standalone_ips = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.type == AssetType.IP,
-        Asset.is_active == True,
-        ~Asset.id.in_(covered_ip_ids) if covered_ip_ids else True,
-    ).all()
+    standalone_ips = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type == AssetType.IP,
+            Asset.is_active == True,
+            ~Asset.id.in_(covered_ip_ids) if covered_ip_ids else True,
+        )
+        .all()
+    )
 
     assets = hostname_assets + standalone_ips
 
     if not assets:
-        return {'findings_created': 0, 'assets_scanned': 0}
+        return {"findings_created": 0, "assets_scanned": 0}
 
     asset_ids = [a.id for a in assets]
     tenant_logger.info(f"Sensitive path scan: {len(asset_ids)} assets (deduped IPs)")
-    result = run_sensitive_path_scan(
-        tenant_id, asset_ids, db=db, scan_run_id=scan_run_id
-    )
+    result = run_sensitive_path_scan(tenant_id, asset_ids, db=db, scan_run_id=scan_run_id)
 
     return {
-        'findings_created': result.get('findings_created', 0) if isinstance(result, dict) else 0,
-        'findings_updated': result.get('findings_updated', 0) if isinstance(result, dict) else 0,
-        'assets_scanned': result.get('assets_scanned', 0) if isinstance(result, dict) else 0,
-        'paths_checked': result.get('paths_checked', 0) if isinstance(result, dict) else 0,
+        "findings_created": result.get("findings_created", 0) if isinstance(result, dict) else 0,
+        "findings_updated": result.get("findings_updated", 0) if isinstance(result, dict) else 0,
+        "assets_scanned": result.get("assets_scanned", 0) if isinstance(result, dict) else 0,
+        "paths_checked": result.get("paths_checked", 0) if isinstance(result, dict) else 0,
     }
 
 
@@ -129,21 +149,25 @@ def _phase_7_visual_recon(tenant_id, project_id, scan_run_id, db, tenant_logger)
     """
     from app.config import settings
 
-    if not getattr(settings, 'feature_visual_recon_enabled', True):
+    if not getattr(settings, "feature_visual_recon_enabled", True):
         tenant_logger.info("Visual recon disabled in feature flags, skipping Phase 7")
-        return {'screenshots_taken': 0, 'status': 'disabled'}
+        return {"screenshots_taken": 0, "status": "disabled"}
 
     from app.tasks.visual_recon import run_visual_recon
     from app.models.database import Asset, AssetType
 
-    assets = db.query(Asset).filter(
-        Asset.tenant_id == tenant_id,
-        Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN, AssetType.IP]),
-        Asset.is_active == True,  # noqa: E712
-    ).all()
+    assets = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN, AssetType.IP]),
+            Asset.is_active == True,  # noqa: E712
+        )
+        .all()
+    )
 
     if not assets:
-        return {'screenshots_taken': 0, 'status': 'no_assets'}
+        return {"screenshots_taken": 0, "status": "no_assets"}
 
     asset_ids = [a.id for a in assets]
     tenant_logger.info(f"Visual recon: {len(asset_ids)} candidate assets")
@@ -154,6 +178,6 @@ def _phase_7_visual_recon(tenant_id, project_id, scan_run_id, db, tenant_logger)
     )
 
     return {
-        'screenshots_taken': result.get('screenshots_taken', 0) if isinstance(result, dict) else 0,
-        'status': result.get('status', 'completed') if isinstance(result, dict) else 'completed',
+        "screenshots_taken": result.get("screenshots_taken", 0) if isinstance(result, dict) else 0,
+        "status": result.get("status", "completed") if isinstance(result, dict) else "completed",
     }
