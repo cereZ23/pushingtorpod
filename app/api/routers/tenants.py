@@ -33,6 +33,7 @@ from app.api.schemas.tenant import (
     RecentActivity,
 )
 from app.core.audit import log_data_modification
+from app.core.cache import cache_get_async, cache_set_async
 from app.models.database import (
     Tenant, Asset, Service, Finding, Event,
     AssetType, FindingSeverity, FindingStatus,
@@ -93,6 +94,12 @@ async def get_tenant_dashboard(
     membership=Depends(verify_tenant_access_async),
 ):
     """Tenant dashboard with statistics, recent activity, and risk distribution."""
+    # Check cache first (60-second TTL shared with /stats)
+    cache_key = f"cache:tenant:{tenant_id}:dashboard"
+    cached = await cache_get_async(cache_key)
+    if cached is not None:
+        return TenantDashboard(**cached)
+
     result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
     tenant = result.scalar_one_or_none()
 
@@ -147,13 +154,15 @@ async def get_tenant_dashboard(
         else:
             risk_buckets["low"] += 1
 
-    return TenantDashboard(
+    dashboard = TenantDashboard(
         tenant=TenantResponse.model_validate(tenant),
         stats=stats,
         recent_activity=recent_activity,
         trending_assets=[],
         risk_distribution=risk_buckets,
     )
+    await cache_set_async(cache_key, dashboard.model_dump(mode="json"), ttl=60)
+    return dashboard
 
 
 @router.get("/{tenant_id}/stats", response_model=TenantStats)
@@ -163,7 +172,14 @@ async def get_tenant_stats(
     membership=Depends(verify_tenant_access_async),
 ):
     """Detailed tenant statistics for analytics."""
-    return await _calculate_tenant_stats_async(db, tenant_id)
+    cache_key = f"cache:tenant:{tenant_id}:stats"
+    cached = await cache_get_async(cache_key)
+    if cached is not None:
+        return TenantStats(**cached)
+
+    stats = await _calculate_tenant_stats_async(db, tenant_id)
+    await cache_set_async(cache_key, stats.model_dump(), ttl=60)
+    return stats
 
 
 # ─── Sync mutation endpoints ─────────────────────────────────────

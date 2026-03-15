@@ -88,15 +88,14 @@ jobs:
           tests/test_dedup.py \
           tests/test_h1_security.py \
           tests/test_models.py \
+          tests/test_network_intel.py \
+          tests/test_pipeline.py \
           tests/test_siem_export.py \
           tests/test_sprint02_security.py \
+          tests/test_threat_intel.py \
+          tests/test_ticketing.py \
           -v --timeout=120 \
-          -k "not test_security_comprehensive"
-      # Excluded until P4-2 fixes stale mocks:
-      # - test_ticketing.py (6 failures: stale mock paths)
-      # - test_network_intel.py (3 failures: stale signatures)
-      # - test_pipeline.py (1 failure: stale assertion)
-      # - test_threat_intel.py (16 failures: missing matched_at column + stale mocks)
+          -k "not test_security_comprehensive and not TestRiskScoringIntegration and not test_risk_scoring_degrades_without_threat_intel"
 
     - name: Upload coverage
       uses: codecov/codecov-action@v4

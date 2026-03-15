@@ -104,7 +104,8 @@ class TestJiraProvider:
             "project_key": "TEST",
             "issue_type": "Bug",
         }
-        return JiraProvider(config)
+        with patch("app.services.ticketing.jira_provider.validate_endpoint_url_ssrf"):
+            return JiraProvider(config)
 
     def test_create_ticket_success(self):
         from app.services.ticketing import TicketData
@@ -389,7 +390,8 @@ class TestServiceNowProvider:
             "password": "secret",
             "table": "incident",
         }
-        return ServiceNowProvider(config)
+        with patch("app.services.ticketing.servicenow_provider.validate_endpoint_url_ssrf"):
+            return ServiceNowProvider(config)
 
     def test_create_ticket_success(self):
         from app.services.ticketing import TicketData
@@ -653,7 +655,8 @@ class TestProviderFactory:
             "username": "admin",
             "password": "pass",
         }
-        provider = get_provider("servicenow", config)
+        with patch("app.services.ticketing.servicenow_provider.validate_endpoint_url_ssrf"):
+            provider = get_provider("servicenow", config)
         assert isinstance(provider, ServiceNowProvider)
 
     def test_get_unknown_provider_raises(self):
@@ -958,7 +961,7 @@ class TestCeleryTasks:
         mock_db = MagicMock()
         mock_session_local.return_value = mock_db
 
-        with patch("app.tasks.ticket_sync.TicketSyncService") as MockSyncService:
+        with patch("app.services.ticketing.sync_service.TicketSyncService") as MockSyncService:
             mock_service = MagicMock()
             mock_ticket = MagicMock()
             mock_ticket.id = 1
@@ -982,7 +985,7 @@ class TestCeleryTasks:
         mock_db = MagicMock()
         mock_session_local.return_value = mock_db
 
-        with patch("app.tasks.ticket_sync.TicketSyncService") as MockSyncService:
+        with patch("app.services.ticketing.sync_service.TicketSyncService") as MockSyncService:
             mock_service = MagicMock()
             mock_service.create_ticket_for_finding.return_value = None
             MockSyncService.return_value = mock_service
@@ -1007,7 +1010,7 @@ class TestCeleryTasks:
         mock_ticket.sync_status = "synced"
         mock_db.query.return_value.filter.return_value.first.return_value = mock_ticket
 
-        with patch("app.tasks.ticket_sync.TicketSyncService") as MockSyncService:
+        with patch("app.services.ticketing.sync_service.TicketSyncService") as MockSyncService:
             mock_service = MagicMock()
             mock_service.sync_ticket_to_finding.return_value = True
             mock_service.sync_finding_to_ticket.return_value = True

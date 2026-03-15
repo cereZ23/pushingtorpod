@@ -13,6 +13,7 @@ import json
 from datetime import datetime
 from unittest.mock import MagicMock, patch, PropertyMock
 
+import httpx
 import pytest
 
 
@@ -192,7 +193,7 @@ class TestEPSSService:
         """EPSS returns 0.0 when API is unreachable."""
         with patch("app.services.threat_intel.httpx.Client") as mock_client_cls:
             mock_client = MagicMock()
-            mock_client.get.side_effect = Exception("Connection refused")
+            mock_client.get.side_effect = httpx.ConnectError("Connection refused")
             mock_client.__enter__ = MagicMock(return_value=mock_client)
             mock_client.__exit__ = MagicMock(return_value=False)
             mock_client_cls.return_value = mock_client
@@ -759,8 +760,8 @@ class TestRiskScoringIntegration:
 class TestCeleryTasks:
     """Tests for threat intel Celery tasks."""
 
-    @patch("app.tasks.threat_intel_sync.SessionLocal")
-    @patch("app.tasks.threat_intel_sync.ThreatIntelService")
+    @patch("app.database.SessionLocal")
+    @patch("app.services.threat_intel.ThreatIntelService")
     def test_refresh_threat_intel_success(self, mock_service_cls, mock_session_cls):
         """Full refresh task completes successfully."""
         from app.tasks.threat_intel_sync import refresh_threat_intel
@@ -787,8 +788,8 @@ class TestCeleryTasks:
         assert result["kev_count"] == 1200
         assert result["unique_cves"] == 2
 
-    @patch("app.tasks.threat_intel_sync.SessionLocal")
-    @patch("app.tasks.threat_intel_sync.ThreatIntelService")
+    @patch("app.database.SessionLocal")
+    @patch("app.services.threat_intel.ThreatIntelService")
     def test_enrich_findings_threat_intel_success(
         self, mock_service_cls, mock_session_cls
     ):
@@ -822,7 +823,7 @@ class TestCeleryTasks:
 
         # Patch the risk recalculation trigger
         with patch(
-            "app.tasks.threat_intel_sync.calculate_comprehensive_risk_scores"
+            "app.tasks.scanning.calculate_comprehensive_risk_scores"
         ):
             result = enrich_findings_threat_intel.apply(args=[1]).get()
 
@@ -922,12 +923,8 @@ class TestCeleryBeatIntegration:
         """Threat intel task module is in Celery include list."""
         from app.celery_app import celery
 
-        includes = celery.conf.get("include", [])
-        # Celery stores includes in the app config
-        # Check both the include kwarg and the registered tasks
-        assert "app.tasks.threat_intel_sync" in celery.loader._includes or \
-            "app.tasks.threat_intel_sync.refresh_threat_intel" in celery.tasks or \
-            True  # Task registration happens at import time
+        # Verify the task is registered (either via include or by import)
+        assert "app.tasks.threat_intel_sync.refresh_threat_intel" in celery.tasks
 
 
 # ---------------------------------------------------------------------------
@@ -949,7 +946,7 @@ class TestResilience:
 
         with patch("app.services.threat_intel.httpx.Client") as mock_client_cls:
             mock_client = MagicMock()
-            mock_client.get.side_effect = Exception("API also down")
+            mock_client.get.side_effect = httpx.ConnectError("API also down")
             mock_client.__enter__ = MagicMock(return_value=mock_client)
             mock_client.__exit__ = MagicMock(return_value=False)
             mock_client_cls.return_value = mock_client

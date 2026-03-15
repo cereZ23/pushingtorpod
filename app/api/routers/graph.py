@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 import logging
 
 from app.api.dependencies import get_db, verify_tenant_access
+from app.core.cache import cache_get_sync, cache_set_sync
 from app.models.database import (
     Asset,
     Finding,
@@ -30,6 +31,8 @@ from app.api.schemas.graph import (
     MostConnectedNode,
     NeighborsResponse,
 )
+
+GRAPH_CACHE_TTL = 300  # 5 minutes
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +70,11 @@ def get_graph_nodes(
     Returns:
         List of GraphNode objects.
     """
+    cache_key = f"cache:tenant:{tenant_id}:graph:nodes:{asset_type}:{limit}"
+    cached = cache_get_sync(cache_key)
+    if cached is not None:
+        return [GraphNode(**n) for n in cached]
+
     _verify_tenant_exists(db, tenant_id)
 
     # Subquery: open finding count per asset
@@ -106,7 +114,7 @@ def get_graph_nodes(
 
     results = query.order_by(Asset.risk_score.desc()).limit(limit).all()
 
-    return [
+    nodes = [
         GraphNode(
             id=asset.id,
             identifier=asset.identifier,
@@ -118,6 +126,8 @@ def get_graph_nodes(
         )
         for asset, finding_count, service_count in results
     ]
+    cache_set_sync(cache_key, [n.model_dump(mode="json") for n in nodes], ttl=GRAPH_CACHE_TTL)
+    return nodes
 
 
 @router.get("/edges", response_model=list[GraphEdge])
@@ -151,6 +161,11 @@ def get_graph_edges(
     Returns:
         List of GraphEdge objects.
     """
+    cache_key = f"cache:tenant:{tenant_id}:graph:edges:{rel_type}:{limit}"
+    cached = cache_get_sync(cache_key)
+    if cached is not None:
+        return [GraphEdge(**e) for e in cached]
+
     _verify_tenant_exists(db, tenant_id)
 
     query = (
@@ -163,7 +178,7 @@ def get_graph_edges(
 
     edges = query.order_by(Relationship.last_seen_at.desc()).limit(limit).all()
 
-    return [
+    edge_items = [
         GraphEdge(
             id=edge.id,
             source_id=edge.source_asset_id,
@@ -174,6 +189,8 @@ def get_graph_edges(
         )
         for edge in edges
     ]
+    cache_set_sync(cache_key, [e.model_dump(mode="json") for e in edge_items], ttl=GRAPH_CACHE_TTL)
+    return edge_items
 
 
 @router.get("/neighbors/{asset_id}", response_model=NeighborsResponse)
@@ -347,6 +364,11 @@ def get_graph_stats(
     Returns:
         GraphStats with breakdown counts and most connected nodes.
     """
+    cache_key = f"cache:tenant:{tenant_id}:graph:stats"
+    cached = cache_get_sync(cache_key)
+    if cached is not None:
+        return GraphStats(**cached)
+
     _verify_tenant_exists(db, tenant_id)
 
     # Node count by type
@@ -424,13 +446,15 @@ def get_graph_stats(
         if (conn_count or 0) > 0
     ]
 
-    return GraphStats(
+    graph_stats = GraphStats(
         node_count_by_type=node_count_by_type,
         edge_count_by_type=edge_count_by_type,
         total_nodes=total_nodes,
         total_edges=total_edges,
         most_connected=most_connected,
     )
+    cache_set_sync(cache_key, graph_stats.model_dump(mode="json"), ttl=GRAPH_CACHE_TTL)
+    return graph_stats
 
 
 # ---------------------------------------------------------------------------
