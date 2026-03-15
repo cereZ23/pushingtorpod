@@ -604,28 +604,17 @@ def delete_project(
     # Clean up FK dependencies on scan runs before cascade deletes them
     from app.models.risk import RiskScore
 
-    scan_run_ids = [
-        r[0]
-        for r in db.query(ScanRun.id).filter(ScanRun.project_id == project_id).all()
-    ]
+    scan_run_ids = [r[0] for r in db.query(ScanRun.id).filter(ScanRun.project_id == project_id).all()]
     if scan_run_ids:
-        db.query(RiskScore).filter(RiskScore.scan_run_id.in_(scan_run_ids)).delete(
-            synchronize_session=False
-        )
-        db.query(PhaseResult).filter(
-            PhaseResult.scan_run_id.in_(scan_run_ids)
-        ).delete(synchronize_session=False)
-        db.query(Observation).filter(
-            Observation.scan_run_id.in_(scan_run_ids)
-        ).delete(synchronize_session=False)
+        db.query(RiskScore).filter(RiskScore.scan_run_id.in_(scan_run_ids)).delete(synchronize_session=False)
+        db.query(PhaseResult).filter(PhaseResult.scan_run_id.in_(scan_run_ids)).delete(synchronize_session=False)
+        db.query(Observation).filter(Observation.scan_run_id.in_(scan_run_ids)).delete(synchronize_session=False)
         db.flush()
 
     # Unlink issues (set project_id to NULL rather than deleting)
     from app.models.issues import Issue
 
-    db.query(Issue).filter(Issue.project_id == project_id).update(
-        {"project_id": None}, synchronize_session=False
-    )
+    db.query(Issue).filter(Issue.project_id == project_id).update({"project_id": None}, synchronize_session=False)
 
     # Delete project (cascades to scopes, scan_profiles, scan_runs)
     project_name = project.name
@@ -1546,15 +1535,9 @@ def delete_scan_run_by_id(
     # and flush to ensure SQL executes before the scan_run delete.
     from app.models.risk import RiskScore
 
-    db.query(RiskScore).filter(RiskScore.scan_run_id == run_id).delete(
-        synchronize_session=False
-    )
-    db.query(PhaseResult).filter(PhaseResult.scan_run_id == run_id).delete(
-        synchronize_session=False
-    )
-    db.query(Observation).filter(Observation.scan_run_id == run_id).delete(
-        synchronize_session=False
-    )
+    db.query(RiskScore).filter(RiskScore.scan_run_id == run_id).delete(synchronize_session=False)
+    db.query(PhaseResult).filter(PhaseResult.scan_run_id == run_id).delete(synchronize_session=False)
+    db.query(Observation).filter(Observation.scan_run_id == run_id).delete(synchronize_session=False)
     db.flush()
     db.delete(scan_run)
     db.commit()
