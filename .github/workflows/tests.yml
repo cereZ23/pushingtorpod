@@ -228,7 +228,7 @@ jobs:
         SERVER_HOST: ${{ secrets.SERVER_HOST }}
       run: |
         ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@${SERVER_HOST} \
-          "cd /opt/easm && docker compose -f docker-compose.prod.yml build api ui && docker compose -f docker-compose.prod.yml up -d api ui"
+          "cd /opt/easm && docker compose -f docker-compose.prod.yml build api ui worker && docker compose -f docker-compose.prod.yml up -d api ui worker beat"
 
     - name: Smoke test
       env:
