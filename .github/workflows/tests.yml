@@ -236,13 +236,22 @@ jobs:
       env:
         SERVER_HOST: ${{ secrets.SERVER_HOST }}
       run: |
+        # Wait for services to come up after rebuild (retry up to 90s)
         echo "Waiting for services to start..."
-        sleep 15
+        for i in 1 2 3 4 5 6; do
+          HTTP_CODE=$(curl -skL -o /dev/null -w "%{http_code}" --connect-timeout 5 "https://${SERVER_HOST}/health" 2>/dev/null || echo "000")
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "Health endpoint up after ~$((i * 15))s"
+            break
+          fi
+          echo "Attempt $i: HTTP $HTTP_CODE — retrying in 15s..."
+          sleep 15
+        done
 
         FAILED=0
 
-        # Health check (follow redirects — Caddy redirects HTTP→HTTPS)
-        HTTP_CODE=$(curl -skL -o /dev/null -w "%{http_code}" "https://${SERVER_HOST}/health" || echo "000")
+        # Health check
+        HTTP_CODE=$(curl -skL -o /dev/null -w "%{http_code}" --connect-timeout 10 "https://${SERVER_HOST}/health" 2>/dev/null || echo "000")
         echo "Health check: HTTP $HTTP_CODE"
         if [ "$HTTP_CODE" != "200" ]; then
           echo "::error::Health check failed with HTTP $HTTP_CODE"
@@ -250,7 +259,7 @@ jobs:
         fi
 
         # Frontend check
-        HTTP_CODE=$(curl -skL -o /dev/null -w "%{http_code}" "https://${SERVER_HOST}/" || echo "000")
+        HTTP_CODE=$(curl -skL -o /dev/null -w "%{http_code}" --connect-timeout 10 "https://${SERVER_HOST}/" 2>/dev/null || echo "000")
         echo "Frontend check: HTTP $HTTP_CODE"
         if [ "$HTTP_CODE" != "200" ]; then
           echo "::error::Frontend check failed with HTTP $HTTP_CODE"
