@@ -139,6 +139,7 @@ services:
       - easm-network
 
   api:
+    image: ghcr.io/cerez23/pushingtorpod/api:latest
     build:
       context: .
       dockerfile: Dockerfile.api
@@ -201,6 +202,7 @@ services:
       - easm-network
 
   ui:
+    image: ghcr.io/cerez23/pushingtorpod/ui:latest
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -229,6 +231,7 @@ services:
       - easm-network
 
   worker:
+    image: ghcr.io/cerez23/pushingtorpod/worker:latest
     build:
       context: .
       dockerfile: Dockerfile.worker
@@ -287,6 +290,7 @@ services:
       - easm-network
 
   beat:
+    image: ghcr.io/cerez23/pushingtorpod/worker:latest
     build:
       context: .
       dockerfile: Dockerfile.worker
