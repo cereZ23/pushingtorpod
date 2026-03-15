@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, watch } from "vue";
 import { MagnifyingGlassIcon } from "@heroicons/vue/24/outline";
 import { useTenantStore } from "@/stores/tenant";
-import axios from "axios";
+import apiClient from "@/api/client";
 
 interface TechnologyItem {
   name: string;
@@ -73,7 +73,7 @@ async function fetchTechnologies() {
   loading.value = true;
   error.value = "";
   try {
-    const response = await axios.get<TechnologyItem[]>(
+    const response = await apiClient.get<TechnologyItem[]>(
       `/api/v1/tenants/${tenantId.value}/services/technologies`,
     );
     technologies.value = response.data;
