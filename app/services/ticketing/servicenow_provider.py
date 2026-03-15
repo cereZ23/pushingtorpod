@@ -19,6 +19,7 @@ import httpx
 from typing import Optional
 
 from app.services.ticketing import TicketingProvider, TicketData, TicketResult
+from app.utils.validators import validate_endpoint_url_ssrf
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,10 @@ class ServiceNowProvider(TicketingProvider):
 
     def __init__(self, config: dict):
         instance = config["instance"]
-        self.base_url = f"https://{instance}.service-now.com"
+        base_url = f"https://{instance}.service-now.com"
+        # SSRF protection: validate the constructed ServiceNow URL
+        validate_endpoint_url_ssrf(base_url, require_https=True)
+        self.base_url = base_url
         self.table = config.get("table", "incident")
         self._username = config["username"]
         self._password = config["password"]

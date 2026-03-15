@@ -9,11 +9,8 @@ Prefix: /api/v1/tenants/{tenant_id}/siem
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import logging
-import socket
-from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -28,7 +25,7 @@ from app.api.schemas.siem import (
 )
 from app.core.audit import log_audit_event, AuditEventType
 from app.services.siem_export import export_findings_for_tenant
-from app.utils.validators import DomainValidator
+from app.utils.validators import validate_endpoint_url_ssrf
 
 logger = logging.getLogger(__name__)
 
@@ -41,64 +38,19 @@ router = APIRouter(
 def _validate_siem_endpoint_url(url: str) -> None:
     """Validate SIEM endpoint URL to prevent SSRF attacks.
 
-    Checks:
-    - Only https:// scheme allowed (http:// blocked to prevent sniffing tokens)
-    - Hostname must not resolve to private/reserved IPs
-    - Cloud metadata endpoints blocked
-    - DNS rebinding protection via pre-resolution
+    Delegates to the shared ``validate_endpoint_url_ssrf`` utility and
+    converts any ``ValueError`` into an HTTP 422 response.
 
     Raises:
         HTTPException 422 if URL is invalid or targets internal resources.
     """
     try:
-        parsed = urlparse(url)
-    except Exception:
+        validate_endpoint_url_ssrf(url, require_https=True)
+    except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Invalid SIEM endpoint URL",
-        )
-
-    if parsed.scheme != "https":
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="SIEM endpoint must use HTTPS",
-        )
-
-    hostname = parsed.hostname
-    if not hostname:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="SIEM endpoint URL missing hostname",
-        )
-
-    # Block cloud metadata hostnames
-    if hostname in DomainValidator.METADATA_ENDPOINTS:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="SIEM endpoint targets a blocked metadata service",
-        )
-
-    # Resolve hostname and check all resulting IPs
-    try:
-        addrinfos = socket.getaddrinfo(hostname, parsed.port or 443, proto=socket.IPPROTO_TCP)
-    except socket.gaierror:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Cannot resolve SIEM endpoint hostname: {hostname}",
-        )
-
-    for family, _type, _proto, _canonname, sockaddr in addrinfos:
-        ip = ipaddress.ip_address(sockaddr[0])
-        for network in DomainValidator.RESERVED_NETWORKS:
-            if ip in network:
-                logger.warning(
-                    "SSRF blocked: SIEM push to %s resolved to private IP %s (%s)",
-                    hostname, ip, network,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="SIEM endpoint resolves to a private/reserved IP address",
-                )
+            detail=str(exc),
+        ) from exc
 
 
 # ------------------------------------------------------------------

@@ -7,6 +7,7 @@ data integrity throughout the application.
 
 import re
 import ipaddress
+import socket
 from typing import Optional, List, Tuple
 from urllib.parse import urlparse
 import tldextract
@@ -347,6 +348,68 @@ class URLValidator:
                 return False, "URL contains null bytes"
 
         return True, None
+
+
+def validate_endpoint_url_ssrf(url: str, *, require_https: bool = True) -> None:
+    """Validate an outbound endpoint URL to prevent SSRF attacks.
+
+    Performs the following checks:
+    - Scheme must be https (or http/https when ``require_https=False``)
+    - Hostname must not be a known cloud metadata endpoint
+    - Hostname must resolve via DNS, and **all** resolved IPs must be
+      public (not RFC 1918, loopback, link-local, or other reserved ranges)
+
+    This is the single, canonical SSRF-gate for any user-supplied URL that
+    the platform will issue outbound HTTP requests to (SIEM push, ticketing
+    provider base URLs, webhook callbacks, etc.).
+
+    Args:
+        url: The URL to validate.
+        require_https: When True (default) only ``https`` is accepted.
+            Set to False to also allow plain ``http``.
+
+    Raises:
+        ValueError: If the URL fails any SSRF check.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        raise ValueError("Invalid endpoint URL")
+
+    allowed_schemes = {"https"} if require_https else {"http", "https"}
+    if parsed.scheme not in allowed_schemes:
+        raise ValueError(
+            f"Endpoint URL must use {'HTTPS' if require_https else 'HTTP(S)'}"
+        )
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("Endpoint URL is missing a hostname")
+
+    # Block cloud metadata hostnames
+    if hostname in DomainValidator.METADATA_ENDPOINTS:
+        raise ValueError("Endpoint URL targets a blocked metadata service")
+
+    # Resolve hostname and verify all resulting IPs are public
+    try:
+        addrinfos = socket.getaddrinfo(
+            hostname, parsed.port or (443 if parsed.scheme == "https" else 80),
+            proto=socket.IPPROTO_TCP,
+        )
+    except socket.gaierror:
+        raise ValueError(f"Cannot resolve endpoint hostname: {hostname}")
+
+    for _family, _type, _proto, _canonname, sockaddr in addrinfos:
+        ip = ipaddress.ip_address(sockaddr[0])
+        for network in DomainValidator.RESERVED_NETWORKS:
+            if ip in network:
+                logger.warning(
+                    "SSRF blocked: endpoint %s resolved to private IP %s (%s)",
+                    hostname, ip, network,
+                )
+                raise ValueError(
+                    "Endpoint URL resolves to a private/reserved IP address"
+                )
 
 
 class InputSanitizer:

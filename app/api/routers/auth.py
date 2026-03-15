@@ -47,6 +47,118 @@ router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 
 from app.rate_limiter import limiter
 
+# Account lockout constants
+LOGIN_LOCKOUT_MAX_FAILURES = 5
+LOGIN_LOCKOUT_DURATION_SECONDS = 15 * 60  # 15 minutes
+MFA_LOCKOUT_MAX_FAILURES = 5
+MFA_LOCKOUT_DURATION_SECONDS = 15 * 60  # 15 minutes
+
+
+def _get_redis():
+    """Get a Redis connection using the application settings."""
+    import redis
+    return redis.from_url(settings.redis_url, socket_connect_timeout=2)
+
+
+def _check_account_lockout(email: str) -> None:
+    """Check if account is locked due to too many failed login attempts.
+
+    Raises HTTPException 429 if the account is currently locked.
+    """
+    try:
+        r = _get_redis()
+        key = f"login:failures:{email}"
+        failures = r.get(key)
+        if failures and int(failures) >= LOGIN_LOCKOUT_MAX_FAILURES:
+            ttl = r.ttl(key)
+            remaining_minutes = max(1, (ttl + 59) // 60) if ttl > 0 else LOGIN_LOCKOUT_DURATION_SECONDS // 60
+            r.close()
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Account temporarily locked. Try again in {remaining_minutes} minutes.",
+            )
+        r.close()
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning("Failed to check account lockout for %s", email)
+
+
+def _record_login_failure(email: str) -> None:
+    """Increment the failure counter for an email. Set TTL on lockout threshold."""
+    try:
+        r = _get_redis()
+        key = f"login:failures:{email}"
+        current = r.incr(key)
+        if current >= LOGIN_LOCKOUT_MAX_FAILURES:
+            # Set TTL when reaching the threshold (or reset it on subsequent failures)
+            r.expire(key, LOGIN_LOCKOUT_DURATION_SECONDS)
+        elif current == 1:
+            # First failure: set a generous TTL so stale keys don't linger forever
+            r.expire(key, LOGIN_LOCKOUT_DURATION_SECONDS)
+        r.close()
+    except Exception:
+        logger.warning("Failed to record login failure for %s", email)
+
+
+def _clear_login_failures(email: str) -> None:
+    """Delete the failure counter on successful login."""
+    try:
+        r = _get_redis()
+        r.delete(f"login:failures:{email}")
+        r.close()
+    except Exception:
+        logger.warning("Failed to clear login failures for %s", email)
+
+
+def _check_mfa_lockout(user_id: int) -> None:
+    """Check if MFA verification is locked for a user_id.
+
+    Raises HTTPException 429 if too many failed MFA attempts.
+    """
+    try:
+        r = _get_redis()
+        key = f"mfa:failures:{user_id}"
+        failures = r.get(key)
+        if failures and int(failures) >= MFA_LOCKOUT_MAX_FAILURES:
+            ttl = r.ttl(key)
+            remaining_minutes = max(1, (ttl + 59) // 60) if ttl > 0 else MFA_LOCKOUT_DURATION_SECONDS // 60
+            r.close()
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Too many failed MFA attempts. Try again in {remaining_minutes} minutes.",
+            )
+        r.close()
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning("Failed to check MFA lockout for user %s", user_id)
+
+
+def _record_mfa_failure(user_id: int) -> None:
+    """Increment MFA failure counter for a user_id."""
+    try:
+        r = _get_redis()
+        key = f"mfa:failures:{user_id}"
+        current = r.incr(key)
+        if current >= MFA_LOCKOUT_MAX_FAILURES:
+            r.expire(key, MFA_LOCKOUT_DURATION_SECONDS)
+        elif current == 1:
+            r.expire(key, MFA_LOCKOUT_DURATION_SECONDS)
+        r.close()
+    except Exception:
+        logger.warning("Failed to record MFA failure for user %s", user_id)
+
+
+def _clear_mfa_failures(user_id: int) -> None:
+    """Delete MFA failure counter on successful verification."""
+    try:
+        r = _get_redis()
+        r.delete(f"mfa:failures:{user_id}")
+        r.close()
+    except Exception:
+        logger.warning("Failed to clear MFA failures for user %s", user_id)
+
 
 def _get_client_ip(request: Request) -> str:
     """Extract client IP from request, using the rightmost X-Forwarded-For entry.
@@ -131,10 +243,14 @@ def login(
     client_ip = _get_client_ip(request)
     user_agent = request.headers.get("user-agent")
 
+    # Check if account is locked before doing any work
+    _check_account_lockout(credentials.email)
+
     # Find user by email
     user = db.query(User).filter(User.email == credentials.email).first()
 
     if not user:
+        _record_login_failure(credentials.email)
         log_authentication_attempt(
             success=False, username=credentials.email,
             ip_address=client_ip, user_agent=user_agent,
@@ -147,6 +263,7 @@ def login(
 
     # SSO-only users cannot use password login
     if not user.hashed_password and user.sso_provider:
+        _record_login_failure(credentials.email)
         log_authentication_attempt(
             success=False, username=credentials.email,
             ip_address=client_ip, user_agent=user_agent,
@@ -160,6 +277,7 @@ def login(
 
     # Verify password
     if not user.hashed_password or not user.verify_password(credentials.password):
+        _record_login_failure(credentials.email)
         log_authentication_attempt(
             success=False, username=credentials.email,
             ip_address=client_ip, user_agent=user_agent,
@@ -183,6 +301,9 @@ def login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is inactive"
         )
+
+    # Password verified successfully — clear any prior failure counter
+    _clear_login_failures(credentials.email)
 
     # Check if MFA is enabled - return challenge instead of tokens
     if user.mfa_enabled and user.mfa_secret:
@@ -781,6 +902,10 @@ def mfa_verify(
         )
 
     user_id = int(user_id_bytes.decode())
+
+    # Check per-user MFA lockout before doing any verification
+    _check_mfa_lockout(user_id)
+
     user = db.query(User).filter(User.id == user_id).first()
 
     if not user or not user.mfa_secret:
@@ -792,6 +917,7 @@ def mfa_verify(
     # Verify TOTP code — decrypt secret from DB
     totp = pyotp.TOTP(decrypt_mfa_secret(user.mfa_secret))
     if not totp.verify(payload.code):
+        _record_mfa_failure(user.id)
         log_authentication_attempt(
             success=False, username=user.email,
             ip_address=_get_client_ip(request),
@@ -802,6 +928,9 @@ def mfa_verify(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid verification code",
         )
+
+    # MFA verified successfully — clear failure counter
+    _clear_mfa_failures(user.id)
 
     # Build tokens — raises 403 if no active tenant membership
     response = _build_tokens_and_response(user, db)

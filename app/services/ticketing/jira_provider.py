@@ -21,6 +21,7 @@ import httpx
 from typing import Optional
 
 from app.services.ticketing import TicketingProvider, TicketData, TicketResult
+from app.utils.validators import validate_endpoint_url_ssrf
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,11 @@ class JiraProvider(TicketingProvider):
     }
 
     def __init__(self, config: dict):
-        self.url = config["url"].rstrip("/")
+        url = config["url"].rstrip("/")
+        # SSRF protection: validate the Jira base URL before accepting it.
+        # Allows both http and https because Jira Server on-prem may use http.
+        validate_endpoint_url_ssrf(url, require_https=False)
+        self.url = url
         self.email = config["email"]
         self.api_token = config["api_token"]
         self.project_key = config.get("project_key", "EASM")
