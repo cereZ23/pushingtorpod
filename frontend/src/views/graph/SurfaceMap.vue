@@ -9,6 +9,7 @@ import {
 } from "vue";
 import { select } from "d3-selection";
 import type { Selection } from "d3-selection";
+import "d3-transition"; // extends Selection prototype with .transition()
 import { zoom, zoomIdentity } from "d3-zoom";
 import type { ZoomBehavior, D3ZoomEvent } from "d3-zoom";
 import { drag } from "d3-drag";
