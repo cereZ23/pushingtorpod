@@ -7,13 +7,10 @@ Provides User and APIKey models for multi-tenant access control.
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
-from passlib.context import CryptContext
 import secrets
 
 from app.models.database import Base
-
-# Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+from app.core.security import pwd_context
 
 
 class User(Base):

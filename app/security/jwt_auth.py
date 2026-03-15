@@ -23,11 +23,10 @@ import jwt
 from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
 from fastapi import HTTPException, Security, Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from passlib.context import CryptContext
 import redis
 
 from app.config import settings
-from app.core.security import SecurityKeys  # Import RSA key support
+from app.core.security import SecurityKeys, pwd_context  # Import RSA key support + password hashing
 from app.database import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -76,8 +75,6 @@ class JWTManager:
         # Legacy secret key support (for HS256 fallback)
         self.secret_key = secret_key or settings.jwt_secret_key
 
-        self.pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
         # Redis for token revocation
         if redis_client:
             self.redis_client = redis_client
@@ -104,7 +101,7 @@ class JWTManager:
         Returns:
             Hashed password
         """
-        return self.pwd_context.hash(password)
+        return pwd_context.hash(password)
 
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
         """
@@ -117,7 +114,7 @@ class JWTManager:
         Returns:
             True if password matches
         """
-        return self.pwd_context.verify(plain_password, hashed_password)
+        return pwd_context.verify(plain_password, hashed_password)
 
     def create_access_token(
         self,
