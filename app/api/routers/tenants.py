@@ -340,7 +340,8 @@ async def _calculate_tenant_stats_async(
     )).scalar() or 0
 
     # Expiring certificates (within 30 days)
-    thirty_days = datetime.now(timezone.utc) + timedelta(days=30)
+    # certificates.not_after is TIMESTAMP WITHOUT TIME ZONE, so strip tzinfo
+    thirty_days = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30)
     expiring_certificates = (await db.execute(
         select(func.count(Certificate.id))
         .join(Asset)
