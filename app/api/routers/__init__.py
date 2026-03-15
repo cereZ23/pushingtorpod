@@ -32,6 +32,10 @@ from .search import router as search_router
 from .audit import router as audit_router
 from .health import router as health_router
 from .exposure import router as exposure_router
+from .geomap import router as geomap_router
+from .retest import router as retest_router
+from .dnstwist import router as dnstwist_router
+from .remediation import router as remediation_router
 
 __all__ = [
     "auth_router",
@@ -62,4 +66,8 @@ __all__ = [
     "audit_router",
     "health_router",
     "exposure_router",
+    "geomap_router",
+    "retest_router",
+    "dnstwist_router",
+    "remediation_router",
 ]

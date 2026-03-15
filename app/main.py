@@ -71,6 +71,10 @@ from app.api.routers import (
     audit_router,
     health_router,
     exposure_router,
+    geomap_router,
+    retest_router,
+    dnstwist_router,
+    remediation_router,
 )
 
 logger = logging.getLogger(__name__)
@@ -392,6 +396,10 @@ app.include_router(invitations_router)
 app.include_router(search_router)
 app.include_router(audit_router)
 app.include_router(exposure_router)
+app.include_router(geomap_router)
+app.include_router(retest_router)
+app.include_router(dnstwist_router)
+app.include_router(remediation_router)
 
 
 # Startup and shutdown events
