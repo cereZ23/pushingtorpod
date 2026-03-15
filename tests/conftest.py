@@ -811,75 +811,56 @@ def admin_user(db_session, test_tenant):
 @pytest.fixture
 def auth_headers(client, test_user):
     """Generate JWT token for authenticated requests"""
-    try:
-        response = client.post("/api/v1/auth/login", json={
-            "email": test_user.email,
-            "password": "password123"
-        })
-        if response.status_code == 200:
-            token = response.json()["access_token"]
-            return {"Authorization": f"Bearer {token}"}
-    except Exception:
-        pass
-
-    # Fallback: generate token directly
-    try:
-        from datetime import timedelta
-        from app.security.auth import create_access_token
-        token_data = {"sub": test_user.email, "user_id": test_user.id}
-        token = create_access_token(token_data, expires_delta=timedelta(hours=1))
+    response = client.post("/api/v1/auth/login", json={
+        "email": test_user.email,
+        "password": "password123"
+    })
+    if response.status_code == 200:
+        token = response.json()["access_token"]
         return {"Authorization": f"Bearer {token}"}
-    except Exception:
-        # Last resort: mock token for testing
-        return {"Authorization": "Bearer test-token"}
+
+    # Login endpoint not available (e.g. minimal test app) — generate token directly
+    from datetime import timedelta
+    from app.security.auth import create_access_token
+    token_data = {"sub": test_user.email, "user_id": test_user.id}
+    token = create_access_token(token_data, expires_delta=timedelta(hours=1))
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture
 def admin_headers(client, admin_user):
     """Generate JWT token for admin user"""
-    try:
-        response = client.post("/api/v1/auth/login", json={
-            "email": admin_user.email,
-            "password": "admin123"
-        })
-        if response.status_code == 200:
-            token = response.json()["access_token"]
-            return {"Authorization": f"Bearer {token}"}
-    except Exception:
-        pass
-
-    # Fallback: generate token directly
-    try:
-        from datetime import timedelta
-        from app.security.auth import create_access_token
-        token_data = {"sub": admin_user.email, "user_id": admin_user.id, "is_superuser": True}
-        token = create_access_token(token_data, expires_delta=timedelta(hours=1))
+    response = client.post("/api/v1/auth/login", json={
+        "email": admin_user.email,
+        "password": "admin123"
+    })
+    if response.status_code == 200:
+        token = response.json()["access_token"]
         return {"Authorization": f"Bearer {token}"}
-    except Exception:
-        return {"Authorization": "Bearer admin-test-token"}
+
+    # Login endpoint not available (e.g. minimal test app) — generate token directly
+    from datetime import timedelta
+    from app.security.auth import create_access_token
+    token_data = {"sub": admin_user.email, "user_id": admin_user.id, "is_superuser": True}
+    token = create_access_token(token_data, expires_delta=timedelta(hours=1))
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture
 def refresh_token(client, test_user):
     """Generate refresh token for token refresh tests"""
-    try:
-        response = client.post("/api/v1/auth/login", json={
-            "email": test_user.email,
-            "password": "password123"
-        })
-        if response.status_code == 200:
-            return response.json().get("refresh_token")
-    except Exception:
-        pass
+    response = client.post("/api/v1/auth/login", json={
+        "email": test_user.email,
+        "password": "password123"
+    })
+    if response.status_code == 200:
+        return response.json().get("refresh_token")
 
-    # Fallback: generate refresh token directly
-    try:
-        from datetime import timedelta
-        from app.security.auth import create_refresh_token
-        token_data = {"sub": test_user.email, "user_id": test_user.id}
-        return create_refresh_token(token_data, expires_delta=timedelta(days=7))
-    except Exception:
-        return "test-refresh-token"
+    # Login endpoint not available (e.g. minimal test app) — generate token directly
+    from datetime import timedelta
+    from app.security.auth import create_refresh_token
+    token_data = {"sub": test_user.email, "user_id": test_user.id}
+    return create_refresh_token(token_data, expires_delta=timedelta(days=7))
 
 
 @pytest.fixture
