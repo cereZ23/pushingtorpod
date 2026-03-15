@@ -699,7 +699,12 @@ def add_scope_rule(
         resource_id=str(scope.id),
         user_id=membership.user_id,
         tenant_id=tenant_id,
-        details={"rule_type": scope.rule_type, "match_type": scope.match_type, "pattern": scope.pattern, "project_id": project.id},
+        details={
+            "rule_type": scope.rule_type,
+            "match_type": scope.match_type,
+            "pattern": scope.pattern,
+            "project_id": project.id,
+        },
     )
 
     return ScopeResponse.model_validate(scope)
@@ -1221,11 +1226,7 @@ def compare_scan_runs(
 
     asset_id_to_identifier: dict[int, str] = {}
     if all_service_asset_ids:
-        rows = (
-            db.query(Asset.id, Asset.identifier)
-            .filter(Asset.id.in_(all_service_asset_ids))
-            .all()
-        )
+        rows = db.query(Asset.id, Asset.identifier).filter(Asset.id.in_(all_service_asset_ids)).all()
         asset_id_to_identifier = {r.id: r.identifier for r in rows}
 
     added_services = []
@@ -1273,11 +1274,7 @@ def compare_scan_runs(
     # Extend the asset lookup
     missing_ids = all_finding_asset_ids - set(asset_id_to_identifier.keys())
     if missing_ids:
-        rows = (
-            db.query(Asset.id, Asset.identifier)
-            .filter(Asset.id.in_(missing_ids))
-            .all()
-        )
+        rows = db.query(Asset.id, Asset.identifier).filter(Asset.id.in_(missing_ids)).all()
         for r in rows:
             asset_id_to_identifier[r.id] = r.identifier
 
@@ -1295,11 +1292,7 @@ def compare_scan_runs(
                     pass
 
         if candidate_asset_ids:
-            findings_rows = (
-                db.query(Finding)
-                .filter(Finding.asset_id.in_(candidate_asset_ids))
-                .all()
-            )
+            findings_rows = db.query(Finding).filter(Finding.asset_id.in_(candidate_asset_ids)).all()
             for f in findings_rows:
                 fkey = f"{f.asset_id}:{f.template_id}:{f.matcher_name}"
                 finding_lookup[fkey] = f

@@ -43,7 +43,6 @@ class DiffFindingItem(BaseModel):
     asset_identifier: str | None = None
 
 
-
 class DiffAssets(BaseModel):
     added: list[DiffAssetItem] = Field(default_factory=list)
     removed: list[DiffAssetItem] = Field(default_factory=list)
