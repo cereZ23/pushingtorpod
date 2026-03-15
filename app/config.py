@@ -186,6 +186,9 @@ class Settings(BaseSettings):
     rate_limit_requests_per_minute: int = 60
     rate_limit_requests_per_hour: int = 1000
 
+    # Data Retention
+    data_retention_days: int = 90  # Delete scan_runs/phase_results older than N days
+
     # Logging
     log_level: str = "INFO"
     log_format: str = "json"  # json or text

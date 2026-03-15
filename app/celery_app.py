@@ -35,6 +35,7 @@ celery = Celery(
         'app.tasks.ticket_sync',
         'app.tasks.report_delivery',
         'app.tasks.alert_evaluation',
+        'app.tasks.cleanup',
     ]
 )
 
@@ -83,6 +84,11 @@ celery.conf.beat_schedule = {
         'task': 'app.tasks.report_delivery.deliver_scheduled_reports',
         'schedule': crontab(hour=6, minute=0),  # 6 AM UTC daily
         'options': {'expires': 3600}
+    },
+    'daily-data-cleanup': {
+        'task': 'app.tasks.cleanup.cleanup_old_scan_data',
+        'schedule': crontab(hour=4, minute=0),  # 4 AM UTC daily
+        'options': {'expires': 7200}
     },
 }
 
