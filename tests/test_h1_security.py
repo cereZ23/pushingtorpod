@@ -40,7 +40,7 @@ class TestSIEMSSRFValidation:
         with pytest.raises(HTTPException):
             self._validate("https://")
 
-    @patch("app.api.routers.siem.socket.getaddrinfo")
+    @patch("app.utils.validators.socket.getaddrinfo")
     def test_rejects_private_ip(self, mock_gai):
         """Block endpoints resolving to private IPs (127.0.0.1, 10.x, 192.168.x)."""
         from fastapi import HTTPException
@@ -53,7 +53,7 @@ class TestSIEMSSRFValidation:
         assert exc_info.value.status_code == 422
         assert "private" in exc_info.value.detail.lower() or "reserved" in exc_info.value.detail.lower()
 
-    @patch("app.api.routers.siem.socket.getaddrinfo")
+    @patch("app.utils.validators.socket.getaddrinfo")
     def test_rejects_metadata_ip(self, mock_gai):
         """Block AWS/GCP metadata endpoint 169.254.169.254."""
         from fastapi import HTTPException
@@ -70,7 +70,7 @@ class TestSIEMSSRFValidation:
         with pytest.raises(HTTPException):
             self._validate("https://169.254.169.254/latest/meta-data/")
 
-    @patch("app.api.routers.siem.socket.getaddrinfo")
+    @patch("app.utils.validators.socket.getaddrinfo")
     def test_allows_valid_public_endpoint(self, mock_gai):
         """Valid public HTTPS endpoints should pass."""
         mock_gai.return_value = [

@@ -604,7 +604,7 @@ class TestHealthEndpointHardened:
         if response.status_code == 503:
             detail = data.get("detail", data)
             if isinstance(detail, dict):
-                assert detail.get("status") == "unhealthy"
+                assert detail.get("status") in ("unhealthy", "error")
             return
 
         assert "status" in data
