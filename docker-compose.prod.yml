@@ -172,8 +172,9 @@ services:
       MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY}
       CORS_ORIGINS: '["https://easm.securekt.com"]'
       API_WORKERS: ${API_WORKERS:-2}
-      LOG_LEVEL: ${LOG_LEVEL:-warning}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: json
+      SENTRY_DSN: ${SENTRY_DSN:-}
       RATE_LIMIT_ENABLED: "true"
       RATE_LIMIT_REQUESTS_PER_MINUTE: 120
       RATE_LIMIT_REQUESTS_PER_HOUR: 3000
@@ -256,7 +257,7 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY}
-      LOG_LEVEL: ${LOG_LEVEL:-warning}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: json
     volumes:
       - ./data:/app/data:ro
@@ -305,7 +306,7 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY}
-      LOG_LEVEL: ${LOG_LEVEL:-warning}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - ./app:/app/app
       - ./alembic:/app/alembic

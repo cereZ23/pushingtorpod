@@ -659,7 +659,7 @@ def accept_invite(
     """
     token_hash = hashlib.sha256(payload.token.encode()).hexdigest()
     invitation = db.query(UserInvitation).filter(
-        UserInvitation.token == token_hash,
+        UserInvitation.token_hash == token_hash,
     ).first()
 
     if not invitation:

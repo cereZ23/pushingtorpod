@@ -24,6 +24,22 @@ import logging
 import time
 
 from app.config import settings
+from app.utils.logger import setup_logging, setup_sentry
+
+# Initialize logging and Sentry before anything else
+setup_logging(
+    log_level=settings.log_level,
+    log_format=settings.log_format,
+    log_file=settings.log_file,
+    rotation_size=settings.log_rotation_size,
+    retention_days=settings.log_retention_days,
+)
+setup_sentry(
+    dsn=settings.sentry_dsn,
+    environment=settings.sentry_environment,
+    traces_sample_rate=settings.sentry_traces_sample_rate,
+)
+
 from app.api.middleware import register_middleware
 from app.metrics import PrometheusMiddleware, metrics_endpoint
 from app.api.routers import (

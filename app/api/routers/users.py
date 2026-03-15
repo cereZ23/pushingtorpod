@@ -347,7 +347,7 @@ def create_invitation(
         email=payload.email,
         tenant_id=tenant_id,
         role=payload.role,
-        token=token_hash,
+        token_hash=token_hash,
         invited_by=membership.user_id,
         expires_at=datetime.now(timezone.utc) + timedelta(days=INVITATION_EXPIRY_DAYS),
     )

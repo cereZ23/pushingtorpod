@@ -174,7 +174,8 @@ class UserInvitation(Base):
     email = Column(String(255), nullable=False)
     tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
     role = Column(String(50), nullable=False, default='analyst')
-    token = Column(String(255), nullable=False, unique=True, index=True)
+    token = Column(String(255), nullable=True)  # Deprecated: kept for backward compat, no longer queried
+    token_hash = Column(String(64), nullable=False, unique=True, index=True)
     invited_by = Column(Integer, ForeignKey('users.id'), nullable=False)
     accepted_at = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=False)
