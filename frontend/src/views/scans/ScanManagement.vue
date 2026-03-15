@@ -130,6 +130,18 @@ function viewScanDetail(run: ScanRun): void {
   router.push({ name: "ScanDetail", params: { runId: run.id } });
 }
 
+const completedRunsCount = computed(
+  () => scanStore.scanRuns.filter((r) => r.status === "completed").length,
+);
+
+function goToCompare(): void {
+  if (!scanStore.selectedProject) return;
+  router.push({
+    name: "ScanDiff",
+    params: { projectId: scanStore.selectedProject.id },
+  });
+}
+
 function canDelete(run: ScanRun): boolean {
   return (
     run.status === "completed" ||
@@ -425,6 +437,13 @@ function formatDuration(run: ScanRun): string {
                   class="px-3 py-2 border border-gray-300 dark:border-dark-border rounded-md text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary transition-colors text-sm"
                 >
                   Edit
+                </button>
+                <button
+                  v-if="completedRunsCount >= 2"
+                  @click="goToCompare"
+                  class="px-3 py-2 border border-gray-300 dark:border-dark-border rounded-md text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary transition-colors text-sm"
+                >
+                  Compare Scans
                 </button>
                 <button
                   @click="openTierDialog"
