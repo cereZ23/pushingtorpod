@@ -94,6 +94,9 @@ jobs:
           tests/test_sprint02_security.py \
           tests/test_threat_intel.py \
           tests/test_ticketing.py \
+          tests/api/test_account_lockout.py \
+          tests/api/test_api_security.py \
+          tests/api/test_graph_router.py \
           -v --timeout=120 \
           -k "not test_security_comprehensive and not TestRiskScoringIntegration and not test_risk_scoring_degrades_without_threat_intel"
 
