@@ -1,62 +1,77 @@
 # =============================================================================
 # EASM Worker - Multi-stage optimized build
 # =============================================================================
-# Stage 1: Compile all Go-based ProjectDiscovery tools
-# Stage 2: Compile massdns from source
+# Stage 1: Download pre-built ProjectDiscovery + third-party tool binaries
+# Stage 2: Compile massdns from source (no binary releases available)
 # Stage 3: Install Python dependencies into a virtual environment
 # Stage 4: Slim final image with only runtime artifacts
 # =============================================================================
-# Target image size: < 1.5 GB (down from ~3 GB single-stage)
-# =============================================================================
 
 # ---------------------------------------------------------------------------
-# Stage 1: Go tool builder
+# Stage 1: Download pre-built tool binaries (fast — no Go compilation)
 # ---------------------------------------------------------------------------
-# Use the official Go image (includes git and proper Go toolchain).
-# Debian bookworm variant gives us apt for libpcap-dev (needed by naabu).
-FROM golang:1.23-bookworm AS go-builder
+FROM debian:bookworm-slim AS tool-downloader
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpcap-dev \
+    curl ca-certificates unzip \
     && rm -rf /var/lib/apt/lists/*
 
-ENV CGO_ENABLED=1
-ENV GOPATH=/go
-ENV GOBIN=/go/bin
+WORKDIR /opt/pd-tools
 
-# Build all ProjectDiscovery tools in a single layer to share Go module cache.
-# Order: most-likely-to-change last (nuclei templates update often).
-# NOTE: httpx pinned to v1.6.8 -- v1.7.x has OOM issues with wappalyzergo.
-RUN go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest && \
-    go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest && \
-    go install -v github.com/projectdiscovery/httpx/cmd/httpx@v1.6.8 && \
-    go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest && \
-    go install -v github.com/projectdiscovery/katana/cmd/katana@latest && \
-    go install -v github.com/projectdiscovery/tlsx/cmd/tlsx@latest && \
-    go install -v github.com/projectdiscovery/uncover/cmd/uncover@latest && \
-    go install -v github.com/projectdiscovery/notify/cmd/notify@latest && \
-    go install -v github.com/projectdiscovery/alterx/cmd/alterx@latest && \
-    go install -v github.com/projectdiscovery/cdncheck/cmd/cdncheck@latest && \
-    go install -v github.com/projectdiscovery/cloudlist/cmd/cloudlist@latest && \
-    go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && \
-    go install -v github.com/owasp-amass/amass/v4/...@master && \
-    go install -v github.com/d3mondev/puredns/v2@latest && \
-    go install -v github.com/praetorian-inc/fingerprintx/cmd/fingerprintx@latest
+SHELL ["/bin/bash", "-c"]
 
-# Strip debug symbols from all Go binaries to reduce size (~30-40% smaller).
-RUN find /go/bin -type f -executable -exec strip --strip-unneeded {} + 2>/dev/null || true
+# Helper: download latest release binary from a GitHub repo.
+# Usage: dl <github_org/repo> <binary_name> [optional_tag]
+# ProjectDiscovery zip pattern: <name>_<version>_linux_amd64.zip
+# Third-party tools may vary — handled with explicit URLs below.
+RUN set -eo pipefail && \
+    dl() { \
+      local repo=$1 name=$2 tag=${3:-}; \
+      if [ -z "$tag" ]; then \
+        tag=$(curl -sI "https://github.com/${repo}/releases/latest" \
+          | grep -i '^location:' | sed 's|.*/||' | tr -d '\r\n'); \
+      fi; \
+      local ver=${tag#v}; \
+      echo "→ ${name} ${ver}"; \
+      curl -sL "https://github.com/${repo}/releases/download/${tag}/${name}_${ver}_linux_amd64.zip" \
+        -o /tmp/${name}.zip && \
+      unzip -o -j /tmp/${name}.zip -d /opt/pd-tools/ && \
+      rm /tmp/${name}.zip; \
+    }; \
+    # ProjectDiscovery tools \
+    dl projectdiscovery/subfinder subfinder && \
+    dl projectdiscovery/dnsx dnsx && \
+    dl projectdiscovery/httpx httpx v1.6.8 && \
+    dl projectdiscovery/naabu naabu && \
+    dl projectdiscovery/katana katana && \
+    dl projectdiscovery/tlsx tlsx && \
+    dl projectdiscovery/uncover uncover && \
+    dl projectdiscovery/notify notify && \
+    dl projectdiscovery/alterx alterx && \
+    dl projectdiscovery/cdncheck cdncheck && \
+    dl projectdiscovery/cloudlist cloudlist && \
+    dl projectdiscovery/nuclei nuclei && \
+    # Third-party tools \
+    dl d3mondev/puredns puredns && \
+    dl praetorian-inc/fingerprintx fingerprintx && \
+    # amass — different zip naming (<name>_v<version>_linux_amd64.zip uses tag with 'v') \
+    AMASS_TAG=$(curl -sI "https://github.com/owasp-amass/amass/releases/latest" \
+      | grep -i '^location:' | sed 's|.*/||' | tr -d '\r\n') && \
+    echo "→ amass ${AMASS_TAG}" && \
+    curl -sL "https://github.com/owasp-amass/amass/releases/download/${AMASS_TAG}/amass_Linux_amd64.zip" \
+      -o /tmp/amass.zip && \
+    unzip -o -j /tmp/amass.zip -d /opt/pd-tools/ && \
+    rm /tmp/amass.zip && \
+    # Make all binaries executable \
+    chmod +x /opt/pd-tools/*
 
 # ---------------------------------------------------------------------------
-# Stage 2: massdns builder (required by puredns at runtime)
+# Stage 2: massdns builder (C source — no binary releases)
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim AS massdns-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    ca-certificates \
-    gcc \
-    make \
-    libc6-dev \
+    git ca-certificates gcc make libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN git clone --depth 1 https://github.com/blechschmidt/massdns.git /tmp/massdns && \
@@ -70,15 +85,10 @@ RUN git clone --depth 1 https://github.com/blechschmidt/massdns.git /tmp/massdns
 FROM python:3.11-slim AS python-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    python3-dev \
-    libffi-dev \
-    libcairo2-dev \
-    libpango1.0-dev \
-    libgdk-pixbuf-2.0-dev \
+    gcc python3-dev libffi-dev \
+    libcairo2-dev libpango1.0-dev libgdk-pixbuf-2.0-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a virtual environment so we can copy it cleanly to the final stage.
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 
@@ -97,14 +107,6 @@ LABEL maintainer="EASM Platform" \
 WORKDIR /app
 
 # Runtime system dependencies (no compilers, no Go, no gcc):
-# - libpcap0.8: runtime lib for naabu (port scanner)
-# - jq: JSON processing in pipeline scripts
-# - curl/wget: healthcheck and misc downloads
-# - postgresql-client: pg_isready for health probes
-# - libcairo2, libpango*, libgdk*: WeasyPrint PDF rendering
-# - fonts-*: PDF report typography
-# - shared-mime-info: MIME type detection for WeasyPrint
-# - tini: proper PID 1 init for signal forwarding
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpcap0.8 \
     jq \
@@ -126,8 +128,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=python-builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 
-# Copy all Go tool binaries from the builder stage.
-COPY --from=go-builder /go/bin/ /usr/local/pd-tools/
+# Copy pre-built tool binaries.
+COPY --from=tool-downloader /opt/pd-tools/ /usr/local/pd-tools/
 
 # Copy massdns binary.
 COPY --from=massdns-builder /tmp/massdns/bin/massdns /usr/local/pd-tools/massdns
@@ -144,19 +146,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 ENV MPLBACKEND=Agg
 
 # Install Playwright Chromium browser for Phase 7 Visual Recon.
-# Shared path so both root (build-time) and appuser (runtime) find the browser.
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
 RUN playwright install chromium --with-deps && \
     chmod -R a+rx /opt/pw-browsers
 
-# Update Nuclei templates at build time (will be refreshed at runtime via volume mount).
+# Update Nuclei templates at build time.
 RUN nuclei -update-templates
 
 # Create non-root user.
 RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
 
-# Copy Nuclei templates from root to appuser home (nuclei -update-templates ran as root).
+# Copy Nuclei templates from root to appuser home.
 RUN cp -r /root/nuclei-templates /home/appuser/nuclei-templates && \
     chown -R appuser:appuser /home/appuser
 
