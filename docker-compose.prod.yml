@@ -232,7 +232,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.worker
-    container_name: easm-worker
+    # No container_name — allows `docker compose up --scale worker=N`
     restart: unless-stopped
     command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
     stop_grace_period: 120s
