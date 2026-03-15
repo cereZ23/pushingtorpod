@@ -234,6 +234,8 @@ services:
       dockerfile: Dockerfile.worker
     container_name: easm-worker
     restart: unless-stopped
+    command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+    stop_grace_period: 120s
     depends_on:
       postgres:
         condition: service_healthy
@@ -263,6 +265,12 @@ services:
       - ./data:/app/data:ro
       - ./app:/app/app
       - ./alembic:/app/alembic
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.celery_app inspect ping --timeout=10 2>/dev/null | grep -q 'ok' || exit 1"]
+      interval: 30s
+      timeout: 15s
+      start_period: 30s
+      retries: 3
     deploy:
       resources:
         limits:
@@ -310,6 +318,12 @@ services:
     volumes:
       - ./app:/app/app
       - ./alembic:/app/alembic
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.celery_app inspect ping --timeout=10 2>/dev/null | grep -q 'ok' || exit 1"]
+      interval: 60s
+      timeout: 15s
+      start_period: 30s
+      retries: 3
     deploy:
       resources:
         limits:

@@ -9,7 +9,7 @@ update) remain sync — lower traffic, simpler code.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, selectinload
 from typing import Dict
@@ -248,111 +248,100 @@ async def update_tenant(
 async def _calculate_tenant_stats_async(
     db: AsyncSession, tenant_id: int
 ) -> TenantStats:
-    """Calculate comprehensive tenant statistics using async queries."""
+    """Calculate comprehensive tenant statistics using async queries.
 
-    # Asset count (active only)
-    total_assets = (await db.execute(
-        select(func.count(Asset.id)).where(
-            Asset.tenant_id == tenant_id, Asset.is_active.is_(True)
+    Consolidates ~20 individual COUNT queries into 6 grouped queries
+    using conditional aggregation (COUNT + CASE WHEN) for a ~3x reduction
+    in database round-trips.
+    """
+
+    # ── Query 1: Assets — total + per-type counts (replaces 6 queries) ──
+    asset_query = select(
+        func.count(Asset.id).label("total"),
+        *[
+            func.count(case((Asset.type == at, literal(1)))).label(at.value)
+            for at in AssetType
+        ],
+    ).where(
+        Asset.tenant_id == tenant_id,
+        Asset.is_active.is_(True),
+    )
+    asset_row = (await db.execute(asset_query)).one()
+
+    total_assets = asset_row.total or 0
+    assets_by_type = {at.value: getattr(asset_row, at.value) or 0 for at in AssetType}
+
+    # ── Query 2: Findings — total, per-severity, open, critical+open, high+open
+    #    (replaces 9 queries) ──
+    is_open = Finding.status == FindingStatus.OPEN
+    finding_query = (
+        select(
+            func.count(Finding.id).label("total"),
+            *[
+                func.count(case((Finding.severity == sev, literal(1)))).label(sev.value)
+                for sev in FindingSeverity
+            ],
+            func.count(case((is_open, literal(1)))).label("open"),
+            func.count(
+                case((
+                    (Finding.severity == FindingSeverity.CRITICAL) & is_open,
+                    literal(1),
+                ))
+            ).label("critical_open"),
+            func.count(
+                case((
+                    (Finding.severity == FindingSeverity.HIGH) & is_open,
+                    literal(1),
+                ))
+            ).label("high_open"),
         )
-    )).scalar() or 0
+        .join(Asset)
+        .where(Asset.tenant_id == tenant_id)
+    )
+    finding_row = (await db.execute(finding_query)).one()
 
-    # Assets by type
-    assets_by_type = {}
-    for asset_type in AssetType:
-        count = (await db.execute(
-            select(func.count(Asset.id)).where(
-                Asset.tenant_id == tenant_id,
-                Asset.is_active.is_(True),
-                Asset.type == asset_type,
-            )
-        )).scalar() or 0
-        assets_by_type[asset_type.value] = count
+    total_findings = finding_row.total or 0
+    findings_by_severity = {sev.value: getattr(finding_row, sev.value) or 0 for sev in FindingSeverity}
+    open_findings = finding_row.open or 0
+    critical_findings = finding_row.critical_open or 0
+    high_findings = finding_row.high_open or 0
 
-    # Services (active assets only)
+    # ── Query 3: Services count (active assets only) ──
     total_services = (await db.execute(
         select(func.count(Service.id))
         .join(Asset)
         .where(Asset.tenant_id == tenant_id, Asset.is_active.is_(True))
     )).scalar() or 0
 
-    # Certificates
-    total_certificates = (await db.execute(
-        select(func.count(Certificate.id))
+    # ── Query 4: Certificates — total + expiring within 30 days (replaces 2 queries) ──
+    # certificates.not_after is TIMESTAMP WITHOUT TIME ZONE, so strip tzinfo
+    thirty_days = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30)
+    cert_query = (
+        select(
+            func.count(Certificate.id).label("total"),
+            func.count(
+                case((
+                    (Certificate.is_expired == False) & (Certificate.not_after <= thirty_days),  # noqa: E712
+                    literal(1),
+                ))
+            ).label("expiring"),
+        )
         .join(Asset)
         .where(Asset.tenant_id == tenant_id)
-    )).scalar() or 0
+    )
+    cert_row = (await db.execute(cert_query)).one()
 
-    # Endpoints
+    total_certificates = cert_row.total or 0
+    expiring_certificates = cert_row.expiring or 0
+
+    # ── Query 5: Endpoints count ──
     total_endpoints = (await db.execute(
         select(func.count(Endpoint.id))
         .join(Asset)
         .where(Asset.tenant_id == tenant_id)
     )).scalar() or 0
 
-    # Findings total
-    total_findings = (await db.execute(
-        select(func.count(Finding.id))
-        .join(Asset)
-        .where(Asset.tenant_id == tenant_id)
-    )).scalar() or 0
-
-    # Findings by severity
-    findings_by_severity = {}
-    for severity in FindingSeverity:
-        count = (await db.execute(
-            select(func.count(Finding.id))
-            .join(Asset)
-            .where(Asset.tenant_id == tenant_id, Finding.severity == severity)
-        )).scalar() or 0
-        findings_by_severity[severity.value] = count
-
-    # Open findings
-    open_findings = (await db.execute(
-        select(func.count(Finding.id))
-        .join(Asset)
-        .where(
-            Asset.tenant_id == tenant_id,
-            Finding.status == FindingStatus.OPEN,
-        )
-    )).scalar() or 0
-
-    # Critical open findings
-    critical_findings = (await db.execute(
-        select(func.count(Finding.id))
-        .join(Asset)
-        .where(
-            Asset.tenant_id == tenant_id,
-            Finding.severity == FindingSeverity.CRITICAL,
-            Finding.status == FindingStatus.OPEN,
-        )
-    )).scalar() or 0
-
-    # High open findings
-    high_findings = (await db.execute(
-        select(func.count(Finding.id))
-        .join(Asset)
-        .where(
-            Asset.tenant_id == tenant_id,
-            Finding.severity == FindingSeverity.HIGH,
-            Finding.status == FindingStatus.OPEN,
-        )
-    )).scalar() or 0
-
-    # Expiring certificates (within 30 days)
-    # certificates.not_after is TIMESTAMP WITHOUT TIME ZONE, so strip tzinfo
-    thirty_days = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30)
-    expiring_certificates = (await db.execute(
-        select(func.count(Certificate.id))
-        .join(Asset)
-        .where(
-            Asset.tenant_id == tenant_id,
-            Certificate.is_expired == False,
-            Certificate.not_after <= thirty_days,
-        )
-    )).scalar() or 0
-
-    # Organization risk score
+    # ── Query 6: Organization risk score (with avg fallback) ──
     org_score_row = (await db.execute(
         select(RiskScore.score)
         .where(
