@@ -53,6 +53,7 @@ FROM debian:bookworm-slim AS massdns-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    ca-certificates \
     gcc \
     make \
     libc6-dev \
