@@ -3,11 +3,13 @@
 # Stage 1: Development
 FROM node:20-alpine AS development
 
+RUN corepack enable && corepack prepare pnpm@9 --activate
+
 WORKDIR /app
 
 # Install dependencies
-COPY package*.json ./
-RUN npm install
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 # Copy source code
 COPY . .
@@ -16,11 +18,13 @@ COPY . .
 EXPOSE 5173
 
 # Run dev server with hot reload
-CMD ["npm", "run", "dev"]
+CMD ["pnpm", "dev"]
 
 
 # Stage 2: Build
 FROM node:20-alpine AS builder
+
+RUN corepack enable && corepack prepare pnpm@9 --activate
 
 WORKDIR /app
 
@@ -28,14 +32,14 @@ ARG VITE_API_BASE_URL=http://localhost:18000
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 
 # Install dependencies
-COPY package*.json ./
-RUN npm install
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 # Copy source code
 COPY . .
 
 # Build for production
-RUN npm run build
+RUN pnpm build
 
 
 # Stage 3: Production

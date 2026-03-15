@@ -1,87 +1,178 @@
-FROM python:3.11-slim
+# =============================================================================
+# EASM Worker - Multi-stage optimized build
+# =============================================================================
+# Stage 1: Compile all Go-based ProjectDiscovery tools
+# Stage 2: Compile massdns from source
+# Stage 3: Install Python dependencies into a virtual environment
+# Stage 4: Slim final image with only runtime artifacts
+# =============================================================================
+# Target image size: < 1.5 GB (down from ~3 GB single-stage)
+# =============================================================================
 
-WORKDIR /app
+# ---------------------------------------------------------------------------
+# Stage 1: Go tool builder
+# ---------------------------------------------------------------------------
+# Use the official Go image (includes git and proper Go toolchain).
+# Debian bookworm variant gives us apt for libpcap-dev (needed by naabu).
+FROM golang:1.23-bookworm AS go-builder
 
-# Install system dependencies including Go
-RUN apt-get update && apt-get install -y \
-    gcc \
-    git \
-    python3-dev \
-    postgresql-client \
-    curl \
-    wget \
-    unzip \
-    jq \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libpcap-dev \
-    golang-go \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies FIRST to avoid PATH conflicts
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+ENV CGO_ENABLED=1
+ENV GOPATH=/go
+ENV GOBIN=/go/bin
 
-# Set GOPATH and add to PATH
-ENV GOPATH=/root/go
-ENV PATH="${GOPATH}/bin:/usr/local/pd-tools:${PATH}"
-
-# Install ProjectDiscovery tools using `go install` (works for all architectures)
-# Install AFTER pip to ensure PD tools override any Python CLI conflicts (like httpx)
-# NOTE: HTTPx v1.7.x has OOM issues with wappalyzergo, using v1.6.8 instead
-RUN mkdir -p /usr/local/pd-tools && \
-    go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest && \
+# Build all ProjectDiscovery tools in a single layer to share Go module cache.
+# Order: most-likely-to-change last (nuclei templates update often).
+# NOTE: httpx pinned to v1.6.8 -- v1.7.x has OOM issues with wappalyzergo.
+RUN go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest && \
     go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest && \
     go install -v github.com/projectdiscovery/httpx/cmd/httpx@v1.6.8 && \
     go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest && \
     go install -v github.com/projectdiscovery/katana/cmd/katana@latest && \
-    go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && \
     go install -v github.com/projectdiscovery/tlsx/cmd/tlsx@latest && \
     go install -v github.com/projectdiscovery/uncover/cmd/uncover@latest && \
     go install -v github.com/projectdiscovery/notify/cmd/notify@latest && \
-    go install -v github.com/owasp-amass/amass/v4/...@master && \
     go install -v github.com/projectdiscovery/alterx/cmd/alterx@latest && \
     go install -v github.com/projectdiscovery/cdncheck/cmd/cdncheck@latest && \
     go install -v github.com/projectdiscovery/cloudlist/cmd/cloudlist@latest && \
+    go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && \
+    go install -v github.com/owasp-amass/amass/v4/...@master && \
     go install -v github.com/d3mondev/puredns/v2@latest && \
-    go install -v github.com/praetorian-inc/fingerprintx/cmd/fingerprintx@latest && \
-    mv ${GOPATH}/bin/* /usr/local/pd-tools/ && \
-    chmod +x /usr/local/pd-tools/*
+    go install -v github.com/praetorian-inc/fingerprintx/cmd/fingerprintx@latest
 
-# Install massdns (required by puredns)
-RUN apt-get update && apt-get install -y --no-install-recommends make && \
-    git clone --depth 1 https://github.com/blechschmidt/massdns.git /tmp/massdns && \
-    cd /tmp/massdns && make -j$(nproc) && cp bin/massdns /usr/local/pd-tools/ && \
-    rm -rf /tmp/massdns && \
-    apt-get purge -y make && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+# Strip debug symbols from all Go binaries to reduce size (~30-40% smaller).
+RUN find /go/bin -type f -executable -exec strip --strip-unneeded {} + 2>/dev/null || true
 
-# Update Nuclei templates
-RUN /usr/local/pd-tools/nuclei -update-templates
+# ---------------------------------------------------------------------------
+# Stage 2: massdns builder (required by puredns at runtime)
+# ---------------------------------------------------------------------------
+FROM debian:bookworm-slim AS massdns-builder
 
-# Install Playwright Chromium browser for Phase 7 Visual Recon
-# This installs Chromium and all required system dependencies (libglib, libnss, etc.)
-# Use a shared path so both root (build-time) and appuser (runtime) find the browser
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    gcc \
+    make \
+    libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 https://github.com/blechschmidt/massdns.git /tmp/massdns && \
+    cd /tmp/massdns && \
+    make -j"$(nproc)" && \
+    strip bin/massdns
+
+# ---------------------------------------------------------------------------
+# Stage 3: Python dependency builder
+# ---------------------------------------------------------------------------
+FROM python:3.11-slim AS python-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    python3-dev \
+    libffi-dev \
+    libcairo2-dev \
+    libpango1.0-dev \
+    libgdk-pixbuf-2.0-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a virtual environment so we can copy it cleanly to the final stage.
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r /tmp/requirements.txt
+
+# ---------------------------------------------------------------------------
+# Stage 4: Final slim runtime image
+# ---------------------------------------------------------------------------
+FROM python:3.11-slim AS runtime
+
+LABEL maintainer="EASM Platform" \
+      description="EASM Celery worker with ProjectDiscovery tools"
+
+WORKDIR /app
+
+# Runtime system dependencies (no compilers, no Go, no gcc):
+# - libpcap0.8: runtime lib for naabu (port scanner)
+# - jq: JSON processing in pipeline scripts
+# - curl/wget: healthcheck and misc downloads
+# - postgresql-client: pg_isready for health probes
+# - libcairo2, libpango*, libgdk*: WeasyPrint PDF rendering
+# - fonts-*: PDF report typography
+# - shared-mime-info: MIME type detection for WeasyPrint
+# - tini: proper PID 1 init for signal forwarding
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpcap0.8 \
+    jq \
+    curl \
+    wget \
+    postgresql-client \
+    tini \
+    libcairo2 \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libgdk-pixbuf-2.0-0 \
+    libffi8 \
+    shared-mime-info \
+    fonts-liberation \
+    fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Python virtual environment from builder stage.
+COPY --from=python-builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
+# Copy all Go tool binaries from the builder stage.
+COPY --from=go-builder /go/bin/ /usr/local/pd-tools/
+
+# Copy massdns binary.
+COPY --from=massdns-builder /tmp/massdns/bin/massdns /usr/local/pd-tools/massdns
+
+# Ensure all tool binaries are executable and on PATH.
+RUN chmod +x /usr/local/pd-tools/*
+ENV PATH="/usr/local/pd-tools:${PATH}"
+
+# Prevent Python from writing .pyc files and enable unbuffered output.
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Use non-interactive Matplotlib backend (Agg for server-side chart rendering).
+ENV MPLBACKEND=Agg
+
+# Install Playwright Chromium browser for Phase 7 Visual Recon.
+# Shared path so both root (build-time) and appuser (runtime) find the browser.
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
-RUN playwright install chromium --with-deps
-RUN chmod -R a+rx /opt/pw-browsers
+RUN playwright install chromium --with-deps && \
+    chmod -R a+rx /opt/pw-browsers
 
-# Create non-root user
+# Update Nuclei templates at build time (will be refreshed at runtime via volume mount).
+RUN nuclei -update-templates
+
+# Create non-root user.
 RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
 
-# Copy Nuclei templates from root to appuser home (nuclei -update-templates ran as root)
+# Copy Nuclei templates from root to appuser home (nuclei -update-templates ran as root).
 RUN cp -r /root/nuclei-templates /home/appuser/nuclei-templates && \
     chown -R appuser:appuser /home/appuser
 
-# Copy application code
+# Copy application code.
 COPY app /app/app
 
-# Set ownership of app directory
+# Set ownership of app directory.
 RUN chown -R appuser:appuser /app
 
-# Switch to non-root user
+# Switch to non-root user.
 USER appuser
 
-# Update GOPATH for non-root user
+# Update GOPATH for non-root user (some PD tools check this).
 ENV GOPATH=/home/appuser/go
 
-# Default command (celery worker)
+# Use tini as init process for proper signal forwarding and zombie reaping.
+ENTRYPOINT ["tini", "--"]
+
+# Default command (celery worker).
 CMD ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=4"]
