@@ -481,9 +481,8 @@ def register_middleware(app):
         allowed_hosts = list(set(parsed_hosts + ["localhost", "127.0.0.1"])) or ["*"]
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
-    # 3. HTTPS redirect (production only)
-    if settings.environment == "production":
-        app.add_middleware(HTTPSRedirectMiddleware, enabled=True)
+    # 3. HTTPS redirect — disabled: Caddy handles HTTP→HTTPS redirect
+    # app.add_middleware(HTTPSRedirectMiddleware, enabled=True)
 
     # 4. Security headers
     app.add_middleware(
