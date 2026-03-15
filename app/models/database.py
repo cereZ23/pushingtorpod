@@ -68,10 +68,9 @@ class Asset(Base):
     findings = relationship("Finding", back_populates="asset", cascade="all, delete-orphan")
     events = relationship("Event", back_populates="asset", cascade="all, delete-orphan")
 
-    # Sprint 2: New enrichment relationships
-    # TODO: Re-enable after fixing circular import
-    # certificates = relationship("Certificate", back_populates="asset", cascade="all, delete-orphan")
-    # endpoints = relationship("Endpoint", back_populates="asset", cascade="all, delete-orphan")
+    # Sprint 2: Enrichment relationships (string refs resolved lazily by SQLAlchemy)
+    certificates = relationship("Certificate", back_populates="asset", cascade="all, delete-orphan")
+    endpoints = relationship("Endpoint", back_populates="asset", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("idx_tenant_type", "tenant_id", "type"),

@@ -13,7 +13,7 @@ from typing import Optional
 from datetime import datetime
 import logging
 
-from app.core.audit import log_data_modification
+from app.core.audit import log_data_modification, log_audit_event, AuditEventType
 
 from app.api.dependencies import (
     get_db,
@@ -692,7 +692,14 @@ def add_scope_rule(
     db.commit()
     db.refresh(scope)
 
-    logger.info(f"Added scope rule ({scope.rule_type}/{scope.match_type}: {scope.pattern}) to project {project.id}")
+    log_data_modification(
+        action="create",
+        resource="scope",
+        resource_id=str(scope.id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        details={"rule_type": scope.rule_type, "match_type": scope.match_type, "pattern": scope.pattern, "project_id": project.id},
+    )
 
     return ScopeResponse.model_validate(scope)
 
@@ -840,9 +847,15 @@ def trigger_scan(
     scan_run.celery_task_id = task.id
     db.commit()
 
-    logger.info(
-        f"Triggered scan run {scan_run.id} for project '{project.name}' "
-        f"(tenant={tenant_id}, trigger={trigger.triggered_by})"
+    log_audit_event(
+        event_type=AuditEventType.DATA_CREATE,
+        action=f"Scan triggered for project '{project.name}'",
+        result="success",
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        resource="scan_run",
+        resource_id=str(scan_run.id),
+        details={"project_id": project.id, "triggered_by": trigger.triggered_by, "profile_id": profile_id},
     )
 
     return TaskResponse(
@@ -1161,7 +1174,16 @@ def cancel_scan_run(
 
     cancel_scan.delay(scan_run.id)
 
-    logger.info(f"Cancellation requested for scan run {run_id} (project {project_id})")
+    log_audit_event(
+        event_type=AuditEventType.CONFIG_CHANGE,
+        action=f"Scan cancelled: run {run_id}",
+        result="success",
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        resource="scan_run",
+        resource_id=str(run_id),
+        details={"project_id": project_id},
+    )
 
     return SuccessResponse(
         success=True,
@@ -1260,7 +1282,14 @@ def create_profile(
     db.commit()
     db.refresh(profile)
 
-    logger.info(f"Created scan profile '{profile.name}' (id={profile.id}) for project {project.id}")
+    log_data_modification(
+        action="create",
+        resource="scan_profile",
+        resource_id=str(profile.id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        details={"name": profile.name, "scan_tier": profile.scan_tier, "project_id": project.id},
+    )
 
     return ScanProfileResponse.model_validate(profile)
 
@@ -1322,7 +1351,14 @@ def update_profile_schedule(
     db.refresh(profile)
 
     action = "set" if schedule.schedule_cron else "cleared"
-    logger.info(f"Schedule {action} for profile {profile_id} (cron={schedule.schedule_cron})")
+    log_data_modification(
+        action="update",
+        resource="scan_profile",
+        resource_id=str(profile_id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        details={"schedule_action": action, "schedule_cron": schedule.schedule_cron, "project_id": project_id},
+    )
 
     return ScanProfileResponse.model_validate(profile)
 
@@ -1542,7 +1578,13 @@ def delete_scan_run_by_id(
     db.delete(scan_run)
     db.commit()
 
-    logger.info(f"Deleted scan run {run_id} (tenant {tenant_id})")
+    log_data_modification(
+        action="delete",
+        resource="scan_run",
+        resource_id=str(run_id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+    )
 
     return SuccessResponse(
         success=True,
@@ -1587,6 +1629,16 @@ def cancel_scan_run_by_id(
     from app.tasks.pipeline import cancel_scan
 
     cancel_scan.delay(scan_run.id)
+
+    log_audit_event(
+        event_type=AuditEventType.CONFIG_CHANGE,
+        action=f"Scan cancelled: run {run_id}",
+        result="success",
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        resource="scan_run",
+        resource_id=str(run_id),
+    )
 
     return SuccessResponse(
         success=True,

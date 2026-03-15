@@ -604,7 +604,11 @@ class RiskScoringEngine:
             logger.warning("Asset %d not found for risk scoring", asset_id)
             return {
                 "asset_id": asset_id,
+                "asset_identifier": None,
                 "risk_score": 0.0,
+                "risk_level": "info",
+                "components": {},
+                "recommendations": [],
                 "error": "asset_not_found",
             }
 

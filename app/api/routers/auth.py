@@ -71,7 +71,11 @@ def _check_account_lockout(email: str) -> None:
     """Check if account is locked due to too many failed login attempts.
 
     Raises HTTPException 429 if the account is currently locked.
+    Fail-open: if Redis is unavailable, the check is skipped (endpoint-level
+    rate limiter ``@limiter.limit("5/minute")`` still applies as defense-in-depth).
     """
+    import redis as _redis
+
     try:
         r = _get_redis()
         key = f"login:failures:{email}"
@@ -87,42 +91,54 @@ def _check_account_lockout(email: str) -> None:
         r.close()
     except HTTPException:
         raise
-    except Exception:
-        logger.warning("Failed to check account lockout for %s", email)
+    except (_redis.ConnectionError, _redis.TimeoutError, OSError) as exc:
+        logger.error("Redis unavailable for account lockout check (%s): %s", email, exc)
+    except _redis.RedisError as exc:
+        logger.error("Redis error during account lockout check (%s): %s", email, exc)
 
 
 def _record_login_failure(email: str) -> None:
     """Increment the failure counter for an email. Set TTL on lockout threshold."""
+    import redis as _redis
+
     try:
         r = _get_redis()
         key = f"login:failures:{email}"
         current = r.incr(key)
         if current >= LOGIN_LOCKOUT_MAX_FAILURES:
-            # Set TTL when reaching the threshold (or reset it on subsequent failures)
             r.expire(key, LOGIN_LOCKOUT_DURATION_SECONDS)
         elif current == 1:
-            # First failure: set a generous TTL so stale keys don't linger forever
             r.expire(key, LOGIN_LOCKOUT_DURATION_SECONDS)
         r.close()
-    except Exception:
-        logger.warning("Failed to record login failure for %s", email)
+    except (_redis.ConnectionError, _redis.TimeoutError, OSError) as exc:
+        logger.error("Redis unavailable for recording login failure (%s): %s", email, exc)
+    except _redis.RedisError as exc:
+        logger.error("Redis error recording login failure (%s): %s", email, exc)
 
 
 def _clear_login_failures(email: str) -> None:
     """Delete the failure counter on successful login."""
+    import redis as _redis
+
     try:
         r = _get_redis()
         r.delete(f"login:failures:{email}")
         r.close()
-    except Exception:
-        logger.warning("Failed to clear login failures for %s", email)
+    except (_redis.ConnectionError, _redis.TimeoutError, OSError) as exc:
+        logger.error("Redis unavailable for clearing login failures (%s): %s", email, exc)
+    except _redis.RedisError as exc:
+        logger.error("Redis error clearing login failures (%s): %s", email, exc)
 
 
 def _check_mfa_lockout(user_id: int) -> None:
     """Check if MFA verification is locked for a user_id.
 
     Raises HTTPException 429 if too many failed MFA attempts.
+    Fail-open: if Redis is unavailable, the check is skipped (endpoint-level
+    rate limiter still applies).
     """
+    import redis as _redis
+
     try:
         r = _get_redis()
         key = f"mfa:failures:{user_id}"
@@ -138,12 +154,16 @@ def _check_mfa_lockout(user_id: int) -> None:
         r.close()
     except HTTPException:
         raise
-    except Exception:
-        logger.warning("Failed to check MFA lockout for user %s", user_id)
+    except (_redis.ConnectionError, _redis.TimeoutError, OSError) as exc:
+        logger.error("Redis unavailable for MFA lockout check (user %s): %s", user_id, exc)
+    except _redis.RedisError as exc:
+        logger.error("Redis error during MFA lockout check (user %s): %s", user_id, exc)
 
 
 def _record_mfa_failure(user_id: int) -> None:
     """Increment MFA failure counter for a user_id."""
+    import redis as _redis
+
     try:
         r = _get_redis()
         key = f"mfa:failures:{user_id}"
@@ -153,18 +173,24 @@ def _record_mfa_failure(user_id: int) -> None:
         elif current == 1:
             r.expire(key, MFA_LOCKOUT_DURATION_SECONDS)
         r.close()
-    except Exception:
-        logger.warning("Failed to record MFA failure for user %s", user_id)
+    except (_redis.ConnectionError, _redis.TimeoutError, OSError) as exc:
+        logger.error("Redis unavailable for recording MFA failure (user %s): %s", user_id, exc)
+    except _redis.RedisError as exc:
+        logger.error("Redis error recording MFA failure (user %s): %s", user_id, exc)
 
 
 def _clear_mfa_failures(user_id: int) -> None:
     """Delete MFA failure counter on successful verification."""
+    import redis as _redis
+
     try:
         r = _get_redis()
         r.delete(f"mfa:failures:{user_id}")
         r.close()
-    except Exception:
-        logger.warning("Failed to clear MFA failures for user %s", user_id)
+    except (_redis.ConnectionError, _redis.TimeoutError, OSError) as exc:
+        logger.error("Redis unavailable for clearing MFA failures (user %s): %s", user_id, exc)
+    except _redis.RedisError as exc:
+        logger.error("Redis error clearing MFA failures (user %s): %s", user_id, exc)
 
 
 def _get_client_ip(request: Request) -> str:

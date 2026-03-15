@@ -1120,7 +1120,15 @@ def rescan_asset(
     asset.enrichment_status = "pending"
     db.commit()
 
-    logger.info(f"Triggered rescan for asset {asset_id} (tenant {tenant_id})")
+    log_audit_event(
+        event_type=AuditEventType.DATA_UPDATE,
+        action=f"Rescan triggered for asset {asset.identifier}",
+        result="success",
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        resource="asset",
+        resource_id=str(asset_id),
+    )
 
     return {
         "status": "queued",
@@ -1220,7 +1228,15 @@ def trigger_asset_screenshot(
         }
     )
 
-    logger.info(f"Triggered visual recon for asset {asset_id} (tenant {tenant_id}), task_id={task.id}")
+    log_audit_event(
+        event_type=AuditEventType.DATA_CREATE,
+        action=f"Screenshot capture triggered for asset {asset.identifier}",
+        result="success",
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        resource="asset",
+        resource_id=str(asset_id),
+    )
 
     return {
         "task_id": task.id,
