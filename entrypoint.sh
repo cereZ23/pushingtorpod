@@ -22,4 +22,4 @@ exec uvicorn app.main:app \
     --workers "${API_WORKERS:-1}" \
     --log-level "${LOG_LEVEL:-info}" \
     --proxy-headers \
-    --forwarded-allow-ips='*'
+    --forwarded-allow-ips='172.16.0.0/12'

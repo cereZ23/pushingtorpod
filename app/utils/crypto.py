@@ -16,17 +16,36 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _fernet_instance = None
+_fernet_checked = False
 
 
 def _get_fernet():
-    """Lazy-init Fernet cipher from MFA_ENCRYPTION_KEY setting."""
-    global _fernet_instance
-    if _fernet_instance is None:
+    """Lazy-init Fernet cipher from MFA_ENCRYPTION_KEY setting.
+
+    In production, raises RuntimeError immediately if the key is missing
+    so the application refuses to operate without proper encryption.
+    In non-production environments (development, test), returns None to
+    allow plaintext fallback.
+    """
+    global _fernet_instance, _fernet_checked
+    if not _fernet_checked:
+        _fernet_checked = True
         key = settings.mfa_encryption_key
         if not key:
-            return None
-        from cryptography.fernet import Fernet
-        _fernet_instance = Fernet(key.encode())
+            if settings.environment == "production":
+                raise RuntimeError(
+                    "MFA_ENCRYPTION_KEY must be set in production. "
+                    "Refusing to start: MFA secrets cannot be stored "
+                    "or decrypted with a missing encryption key."
+                )
+            logger.warning(
+                "MFA_ENCRYPTION_KEY not configured — MFA secrets will be "
+                "stored in plaintext (acceptable in %s environment only)",
+                settings.environment,
+            )
+        else:
+            from cryptography.fernet import Fernet
+            _fernet_instance = Fernet(key.encode())
     return _fernet_instance
 
 
@@ -42,15 +61,13 @@ def encrypt_mfa_secret(plaintext: str) -> str:
 
     Returns:
         Encrypted string prefixed with ``enc:`` or plaintext if no key.
+
+    Raises:
+        RuntimeError: If called in production without MFA_ENCRYPTION_KEY.
     """
     f = _get_fernet()
     if f is None:
-        if settings.environment == "production":
-            raise RuntimeError(
-                "MFA_ENCRYPTION_KEY must be set in production. "
-                "MFA secrets cannot be stored in plaintext."
-            )
-        logger.warning("MFA encryption key not configured — storing plaintext (dev mode only)")
+        # Non-production: _get_fernet already logged a warning
         return plaintext
     token = f.encrypt(plaintext.encode()).decode()
     return f"enc:{token}"

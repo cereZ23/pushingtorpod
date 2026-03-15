@@ -7,8 +7,10 @@ Pydantic models for authentication and authorization
 from __future__ import annotations
 
 from typing import List, Optional
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
 from datetime import datetime
+
+from app.utils.security import validate_password_strength
 
 
 class LoginRequest(BaseModel):
@@ -125,6 +127,14 @@ class UserCreate(BaseModel):
     full_name: Optional[str] = Field(None, description="Full name")
     is_superuser: bool = Field(default=False, description="Superuser status")
 
+    @field_validator("password")
+    @classmethod
+    def check_password_strength(cls, v: str) -> str:
+        is_valid, error = validate_password_strength(v)
+        if not is_valid:
+            raise ValueError(error)
+        return v
+
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
@@ -162,6 +172,14 @@ class ChangePasswordRequest(BaseModel):
     current_password: str = Field(..., description="Current password")
     new_password: str = Field(..., min_length=8, description="New password")
 
+    @field_validator("new_password")
+    @classmethod
+    def check_password_strength(cls, v: str) -> str:
+        is_valid, error = validate_password_strength(v)
+        if not is_valid:
+            raise ValueError(error)
+        return v
+
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
@@ -184,6 +202,14 @@ class ResetPasswordRequest(BaseModel):
     token: str = Field(..., description="Password reset token")
     new_password: str = Field(..., min_length=8, description="New password")
 
+    @field_validator("new_password")
+    @classmethod
+    def check_password_strength(cls, v: str) -> str:
+        is_valid, error = validate_password_strength(v)
+        if not is_valid:
+            raise ValueError(error)
+        return v
+
 
 class InviteAcceptRequest(BaseModel):
     """Accept an invitation"""
@@ -192,6 +218,14 @@ class InviteAcceptRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50, description="Username")
     password: str = Field(..., min_length=8, description="Password")
     full_name: Optional[str] = Field(None, description="Full name")
+
+    @field_validator("password")
+    @classmethod
+    def check_password_strength(cls, v: str) -> str:
+        is_valid, error = validate_password_strength(v)
+        if not is_valid:
+            raise ValueError(error)
+        return v
 
 
 class MfaSetupResponse(BaseModel):

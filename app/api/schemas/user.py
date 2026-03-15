@@ -7,8 +7,10 @@ Pydantic models for tenant-scoped user management and invitations.
 from __future__ import annotations
 
 from typing import Optional
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
 from datetime import datetime
+
+from app.utils.security import validate_password_strength
 
 
 class TenantUserResponse(BaseModel):
@@ -35,6 +37,14 @@ class TenantUserCreate(BaseModel):
     password: str = Field(..., min_length=8)
     full_name: Optional[str] = None
     role: str = Field(default="analyst", pattern="^(viewer|analyst|admin)$")
+
+    @field_validator("password")
+    @classmethod
+    def check_password_strength(cls, v: str) -> str:
+        is_valid, error = validate_password_strength(v)
+        if not is_valid:
+            raise ValueError(error)
+        return v
 
 
 class TenantUserUpdate(BaseModel):

@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 import json
 
 from app.models.database import Service
+from app.api.dependencies import escape_like
 
 
 class ServiceRepository:
@@ -343,7 +344,7 @@ class ServiceRepository:
                 Service.asset.has(tenant_id=tenant_id),
                 or_(
                     Service.http_technologies.contains([technology]),
-                    Service.technologies.like(f'%{technology}%')
+                    Service.technologies.like(f'%{escape_like(technology)}%', escape="\\")
                 )
             )
         ).all()

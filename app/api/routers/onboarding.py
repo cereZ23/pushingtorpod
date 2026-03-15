@@ -6,7 +6,7 @@ Handles self-service customer onboarding
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import List
 import logging
 import re
@@ -16,6 +16,7 @@ from app.core.audit import log_data_modification
 from app.models.database import Tenant, Seed
 from app.models.auth import User, TenantMembership
 from app.rate_limiter import limiter
+from app.utils.security import validate_password_strength
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,14 @@ class OnboardingRequest(BaseModel):
     email: EmailStr = Field(..., description="Admin email address")
     password: str = Field(..., min_length=8, description="Admin password")
     domains: List[str] = Field(..., min_items=1, max_items=10, description="Domains to monitor")
+
+    @field_validator("password")
+    @classmethod
+    def check_password_strength(cls, v: str) -> str:
+        is_valid, error = validate_password_strength(v)
+        if not is_valid:
+            raise ValueError(error)
+        return v
 
     class Config:
         json_schema_extra = {

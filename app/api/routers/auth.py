@@ -49,10 +49,16 @@ from app.rate_limiter import limiter
 
 
 def _get_client_ip(request: Request) -> str:
-    """Extract client IP from request, respecting X-Forwarded-For."""
+    """Extract client IP from request, using the rightmost X-Forwarded-For entry.
+
+    The rightmost IP is the one appended by the trusted reverse proxy (Caddy).
+    The leftmost entries can be freely spoofed by the client, so we must not
+    trust them for rate limiting or audit logging.
+    """
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        # Rightmost IP = added by the closest trusted proxy
+        return forwarded.split(",")[-1].strip()
     return request.client.host if request.client else "unknown"
 
 

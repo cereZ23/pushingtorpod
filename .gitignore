@@ -59,6 +59,11 @@ Thumbs.db
 # Data files (GeoLite2 databases, wordlists, resolvers)
 data/
 
+# RSA / TLS key material
+keys/
+*.pem
+*.key
+
 # Misc
 miseparo/
 .claude/

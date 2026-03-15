@@ -15,6 +15,7 @@ OWASP References:
 - A07:2021 - Identification and Authentication Failures
 """
 
+import os
 import secrets
 import hmac
 import hashlib
@@ -82,22 +83,22 @@ class SecurityKeys:
                         backend=default_backend()
                     )
                 logger.info("Loaded RSA keys from disk")
-                # Warn if key file has overly permissive permissions
-                import os
-                mode = os.stat(private_key_path).st_mode & 0o777
-                if mode & 0o077:
-                    logger.warning(
-                        "RSA private key %s has permissive mode %o — should be 600",
-                        private_key_path, mode,
-                    )
+                # Warn if key files have overly permissive permissions
+                self._check_key_permissions(private_key_path, public_key_path)
             else:
                 # Generate new keys
                 logger.warning("RSA keys not found, generating new keys")
                 self._generate_rsa_keys(private_key_path, public_key_path)
         except Exception as e:
             logger.error(f"Failed to load RSA keys: {e}")
-            # Fallback to HMAC
-            logger.warning("Falling back to HS256 with symmetric secret")
+            # Fallback to HMAC — security downgrade
+            if settings.environment == "production":
+                logger.error(
+                    "SECURITY DOWNGRADE: Falling back from RS256 to HS256 in production. "
+                    "Fix RSA key configuration to restore asymmetric signing."
+                )
+            else:
+                logger.warning("Falling back to HS256 with symmetric secret (non-production)")
             self.algorithm = "HS256"
             self.secret_key = settings.jwt_secret_key
 
@@ -135,9 +136,29 @@ class SecurityKeys:
                 format=serialization.PublicFormat.SubjectPublicKeyInfo
             ))
 
+        # Set restrictive permissions on generated key files
+        os.chmod(private_path, 0o600)
+        os.chmod(public_path, 0o644)
+
         self.private_key = private_key
         self.public_key = public_key
         logger.info("Generated new RSA keys")
+
+    @staticmethod
+    def _check_key_permissions(private_path: Path, public_path: Path):
+        """Check RSA key file permissions and warn if too permissive"""
+        priv_mode = os.stat(private_path).st_mode & 0o777
+        if priv_mode & 0o077:
+            logger.warning(
+                "RSA private key %s has permissive mode %03o — should be 600",
+                private_path, priv_mode,
+            )
+        pub_mode = os.stat(public_path).st_mode & 0o777
+        if pub_mode & 0o002:
+            logger.warning(
+                "RSA public key %s is world-writable (mode %03o) — should be 644",
+                public_path, pub_mode,
+            )
 
     def get_signing_key(self):
         """Get key for signing JWTs"""
