@@ -117,7 +117,7 @@ const navGroups: NavGroup[] = [
       {
         label: "Scans",
         to: "/scans",
-        activeNames: ["Scans", "ScanDetail"],
+        activeNames: ["Scans", "ScanDetail", "ScanDiff"],
       },
       {
         label: "Reports",

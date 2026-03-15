@@ -115,6 +115,12 @@ const router = createRouter({
           meta: { title: "Scan Detail" },
         },
         {
+          path: "scans/:projectId/diff",
+          name: "ScanDiff",
+          component: () => import("@/views/scans/ScanDiffView.vue"),
+          meta: { title: "Scan Comparison" },
+        },
+        {
           path: "issues",
           name: "Issues",
           component: () => import("@/views/issues/IssuesView.vue"),

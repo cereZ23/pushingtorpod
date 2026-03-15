@@ -273,28 +273,48 @@ function getStatsEntries(
 <template>
   <div class="space-y-6">
     <!-- Header -->
-    <div class="flex items-center gap-4">
-      <button
-        @click="goBack"
-        class="p-2 rounded-md text-gray-600 dark:text-dark-text-secondary hover:bg-gray-100 dark:hover:bg-dark-bg-tertiary"
-      >
-        <svg
-          class="w-5 h-5"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-4">
+        <button
+          @click="goBack"
+          class="p-2 rounded-md text-gray-600 dark:text-dark-text-secondary hover:bg-gray-100 dark:hover:bg-dark-bg-tertiary"
         >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M15 19l-7-7 7-7"
-          />
-        </svg>
+          <svg
+            class="w-5 h-5"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M15 19l-7-7 7-7"
+            />
+          </svg>
+        </button>
+        <h2
+          class="text-2xl font-bold text-gray-900 dark:text-dark-text-primary"
+        >
+          Scan Run #{{ runId }}
+        </h2>
+      </div>
+      <button
+        v-if="
+          scanStore.currentScanRun?.status === 'completed' &&
+          scanStore.currentScanRun?.project_id
+        "
+        @click="
+          router.push({
+            name: 'ScanDiff',
+            params: { projectId: scanStore.currentScanRun.project_id },
+            query: { base: String(runId) },
+          })
+        "
+        class="px-3 py-2 text-sm font-medium text-gray-700 dark:text-dark-text-secondary bg-white dark:bg-dark-bg-secondary border border-gray-300 dark:border-dark-border rounded-md hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary transition-colors"
+      >
+        Compare with...
       </button>
-      <h2 class="text-2xl font-bold text-gray-900 dark:text-dark-text-primary">
-        Scan Run #{{ runId }}
-      </h2>
     </div>
 
     <!-- Error -->
