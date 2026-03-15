@@ -552,6 +552,103 @@ def update_project(
     return ProjectResponse.model_validate(project)
 
 
+@router.delete("/projects/{project_id}", response_model=SuccessResponse)
+def delete_project(
+    tenant_id: int,
+    project_id: int,
+    db: Session = Depends(get_db),
+    membership=Depends(verify_tenant_access),
+):
+    """
+    Delete a project and all associated data.
+
+    Removes scopes, scan profiles, scan runs (with their phase results,
+    observations, and risk scores), and unlinks any issues.
+    Projects with running or pending scans cannot be deleted.
+
+    Args:
+        tenant_id: Tenant ID (path)
+        project_id: Project ID (path)
+
+    Returns:
+        Success response
+
+    Raises:
+        404: Project not found
+        403: Insufficient permissions
+        400: Project has running/pending scans
+    """
+    if not membership.has_permission("admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin permission required",
+        )
+
+    project = _get_project_or_404(db, tenant_id, project_id)
+
+    # Block deletion if there are running/pending scans
+    active_scans = (
+        db.query(ScanRun)
+        .filter(
+            ScanRun.project_id == project_id,
+            ScanRun.status.in_([ScanRunStatus.PENDING, ScanRunStatus.RUNNING]),
+        )
+        .count()
+    )
+    if active_scans:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete project with running or pending scans. Cancel them first.",
+        )
+
+    # Clean up FK dependencies on scan runs before cascade deletes them
+    from app.models.risk import RiskScore
+
+    scan_run_ids = [
+        r[0]
+        for r in db.query(ScanRun.id).filter(ScanRun.project_id == project_id).all()
+    ]
+    if scan_run_ids:
+        db.query(RiskScore).filter(RiskScore.scan_run_id.in_(scan_run_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(PhaseResult).filter(
+            PhaseResult.scan_run_id.in_(scan_run_ids)
+        ).delete(synchronize_session=False)
+        db.query(Observation).filter(
+            Observation.scan_run_id.in_(scan_run_ids)
+        ).delete(synchronize_session=False)
+        db.flush()
+
+    # Unlink issues (set project_id to NULL rather than deleting)
+    from app.models.issues import Issue
+
+    db.query(Issue).filter(Issue.project_id == project_id).update(
+        {"project_id": None}, synchronize_session=False
+    )
+
+    # Delete project (cascades to scopes, scan_profiles, scan_runs)
+    project_name = project.name
+    db.delete(project)
+    db.commit()
+
+    log_data_modification(
+        action="delete",
+        resource="project",
+        resource_id=str(project_id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        details={"name": project_name},
+    )
+
+    logger.info(f"Deleted project {project_id} '{project_name}' (tenant {tenant_id})")
+
+    return SuccessResponse(
+        success=True,
+        message=f"Project '{project_name}' deleted",
+    )
+
+
 # ===========================================================================
 # SCOPE ENDPOINTS
 # ===========================================================================
@@ -1444,12 +1541,21 @@ def delete_scan_run_by_id(
             detail="Cannot delete a running or pending scan. Cancel it first.",
         )
 
-    # Delete dependent records first (FK constraints)
+    # Delete dependent records first (FK constraints).
+    # Use synchronize_session=False to avoid session evaluation issues
+    # and flush to ensure SQL executes before the scan_run delete.
     from app.models.risk import RiskScore
 
-    db.query(RiskScore).filter(RiskScore.scan_run_id == run_id).delete()
-    db.query(PhaseResult).filter(PhaseResult.scan_run_id == run_id).delete()
-    db.query(Observation).filter(Observation.scan_run_id == run_id).delete()
+    db.query(RiskScore).filter(RiskScore.scan_run_id == run_id).delete(
+        synchronize_session=False
+    )
+    db.query(PhaseResult).filter(PhaseResult.scan_run_id == run_id).delete(
+        synchronize_session=False
+    )
+    db.query(Observation).filter(Observation.scan_run_id == run_id).delete(
+        synchronize_session=False
+    )
+    db.flush()
     db.delete(scan_run)
     db.commit()
 

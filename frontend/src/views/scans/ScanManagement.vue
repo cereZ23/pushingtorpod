@@ -41,6 +41,10 @@ const showDeleteDialog = ref(false);
 const scanToDelete = ref<ScanRun | null>(null);
 const isDeleting = ref(false);
 
+// Delete project dialog
+const showDeleteProjectDialog = ref(false);
+const isDeletingProject = ref(false);
+
 onMounted(async () => {
   await scanStore.fetchProjects();
   if (scanStore.projects.length > 0 && !scanStore.selectedProject) {
@@ -215,6 +219,24 @@ async function handleUpdateProject(): Promise<void> {
 
   isUpdating.value = false;
   closeEditDialog();
+}
+
+function confirmDeleteProject(): void {
+  showDeleteProjectDialog.value = true;
+}
+
+async function handleDeleteProject(): Promise<void> {
+  if (!scanStore.selectedProject) return;
+  isDeletingProject.value = true;
+  const success = await scanStore.deleteProject(scanStore.selectedProject.id);
+  isDeletingProject.value = false;
+  if (success) {
+    showDeleteProjectDialog.value = false;
+    // If there are remaining projects, select the first one
+    if (scanStore.selectedProject) {
+      await scanStore.fetchScanRuns(scanStore.selectedProject.id);
+    }
+  }
 }
 
 function formatDuration(run: ScanRun): string {
@@ -392,6 +414,12 @@ function formatDuration(run: ScanRun): string {
                 </div>
               </div>
               <div class="flex gap-2">
+                <button
+                  @click="confirmDeleteProject"
+                  class="px-3 py-2 border border-red-300 dark:border-red-700 rounded-md text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors text-sm"
+                >
+                  Delete
+                </button>
                 <button
                   @click="openEditDialog"
                   class="px-3 py-2 border border-gray-300 dark:border-dark-border rounded-md text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary transition-colors text-sm"
@@ -1053,6 +1081,59 @@ function formatDuration(run: ScanRun): string {
               </button>
             </div>
           </form>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Delete Project Dialog -->
+    <Teleport to="body">
+      <div
+        v-if="showDeleteProjectDialog"
+        class="fixed inset-0 z-50 flex items-center justify-center"
+      >
+        <div
+          class="absolute inset-0 bg-black/50"
+          @click="showDeleteProjectDialog = false"
+        />
+        <div
+          class="relative bg-white dark:bg-dark-bg-secondary rounded-lg shadow-xl w-full max-w-md mx-4 border border-gray-200 dark:border-dark-border"
+        >
+          <div
+            class="px-6 py-4 border-b border-gray-200 dark:border-dark-border"
+          >
+            <h3
+              class="text-lg font-semibold text-gray-900 dark:text-dark-text-primary"
+            >
+              Delete Project
+            </h3>
+          </div>
+          <div class="p-6">
+            <p class="text-sm text-gray-600 dark:text-dark-text-secondary">
+              Are you sure you want to delete project
+              <span class="font-semibold">{{
+                scanStore.selectedProject?.name
+              }}</span
+              >? This will permanently remove all scan runs, profiles, and scope
+              rules. This action cannot be undone.
+            </p>
+          </div>
+          <div
+            class="px-6 py-4 border-t border-gray-200 dark:border-dark-border flex justify-end gap-3"
+          >
+            <button
+              @click="showDeleteProjectDialog = false"
+              class="px-4 py-2 border border-gray-300 dark:border-dark-border rounded-md text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              @click="handleDeleteProject"
+              :disabled="isDeletingProject"
+              class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {{ isDeletingProject ? "Deleting..." : "Delete Project" }}
+            </button>
+          </div>
         </div>
       </div>
     </Teleport>

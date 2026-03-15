@@ -397,6 +397,35 @@ export const useScanStore = defineStore("scans", () => {
     }
   }
 
+  async function deleteProject(projectId: number): Promise<boolean> {
+    if (!tenantId.value) {
+      error.value = "No tenant selected";
+      return false;
+    }
+
+    error.value = "";
+
+    try {
+      await apiClient.delete(
+        `/api/v1/tenants/${tenantId.value}/projects/${projectId}`,
+      );
+
+      projects.value = projects.value.filter((p) => p.id !== projectId);
+
+      if (selectedProject.value?.id === projectId) {
+        selectedProject.value =
+          projects.value.length > 0 ? projects.value[0] : null;
+      }
+
+      return true;
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Failed to delete project";
+      error.value = message;
+      return false;
+    }
+  }
+
   function selectProject(project: Project): void {
     selectedProject.value = project;
   }
@@ -433,6 +462,7 @@ export const useScanStore = defineStore("scans", () => {
     cancelScan,
     deleteScanRun,
     updateProject,
+    deleteProject,
     selectProject,
     clearError,
     $reset,
