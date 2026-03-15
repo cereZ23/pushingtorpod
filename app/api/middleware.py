@@ -137,8 +137,9 @@ class HTTPSRedirectMiddleware(BaseHTTPMiddleware):
         if request.url.path in ["/health", "/healthz", "/ready"]:
             return await call_next(request)
 
-        # Redirect HTTP to HTTPS
-        if request.url.scheme == "http":
+        # Redirect HTTP to HTTPS (respect X-Forwarded-Proto from reverse proxy)
+        forwarded_proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+        if forwarded_proto == "http":
             url = request.url.replace(scheme="https")
             logger.info(f"Redirecting HTTP to HTTPS: {request.url} -> {url}")
             return RedirectResponse(url=str(url), status_code=301)
