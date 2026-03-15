@@ -464,10 +464,12 @@ def parse_httpx_result(result: Dict, tenant_logger) -> Optional[Dict]:
         else:
             sanitized_headers = {}
 
-        # Extract technologies (list of strings)
-        technologies = result.get('technologies', [])
+        # Extract technologies — httpx uses 'tech' field (e.g. ["IIS:10.0", "jQuery", "PHP"])
+        technologies = result.get('tech', []) or result.get('technologies', [])
         if not isinstance(technologies, list):
             technologies = []
+        # Strip version suffixes for clean names (IIS:10.0 → IIS), keep raw for versions
+        technologies = [t.split(':')[0] if ':' in t else t for t in technologies if t]
 
         # Build service data
         service_data = {
@@ -476,6 +478,8 @@ def parse_httpx_result(result: Dict, tenant_logger) -> Optional[Dict]:
             'http_status': result.get('status_code'),
             'http_title': sanitize_html(result.get('title', ''))[:500],  # Limit length, sanitize
             'web_server': result.get('webserver', '')[:200],
+            'product': (result.get('webserver', '') or '').split('/')[0].strip()[:200] or None,
+            'version': (result.get('webserver', '') or '').split('/')[1].strip()[:50] if '/' in (result.get('webserver', '') or '') else None,
             'http_technologies': technologies,
             'http_headers': sanitized_headers,
             'response_time_ms': result.get('time', '').replace('ms', '').strip() if result.get('time') else None,

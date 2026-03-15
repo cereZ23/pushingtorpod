@@ -20,7 +20,7 @@ from app.api.schemas.service import (
 )
 from app.api.schemas.envelope import PaginatedEnvelope, PaginationMeta
 from app.models.database import Asset, Service
-from app.services.tech_catalog import get_tech_info
+from app.services.tech_catalog import get_tech_info, normalize_tech_name
 
 logger = logging.getLogger(__name__)
 
@@ -215,24 +215,28 @@ def get_technologies(
 
         # Count product (web server / service product)
         if product:
-            seen_in_row.add(product)
-            if product not in tech_agg:
-                tech_agg[product] = {"count": 0, "versions": {}}
-            tech_agg[product]["count"] += 1
+            norm_product = normalize_tech_name(product)
+            seen_in_row.add(norm_product)
+            if norm_product not in tech_agg:
+                tech_agg[norm_product] = {"count": 0, "versions": {}}
+            tech_agg[norm_product]["count"] += 1
             if version:
-                tech_agg[product]["versions"][version] = (
-                    tech_agg[product]["versions"].get(version, 0) + 1
+                tech_agg[norm_product]["versions"][version] = (
+                    tech_agg[norm_product]["versions"].get(version, 0) + 1
                 )
 
         # Count each detected technology from httpx
         techs = http_techs if isinstance(http_techs, list) else []
         for tech_name in techs:
-            if not tech_name or tech_name in seen_in_row:
+            if not tech_name:
                 continue
-            seen_in_row.add(tech_name)
-            if tech_name not in tech_agg:
-                tech_agg[tech_name] = {"count": 0, "versions": {}}
-            tech_agg[tech_name]["count"] += 1
+            norm_name = normalize_tech_name(tech_name)
+            if norm_name in seen_in_row:
+                continue
+            seen_in_row.add(norm_name)
+            if norm_name not in tech_agg:
+                tech_agg[norm_name] = {"count": 0, "versions": {}}
+            tech_agg[norm_name]["count"] += 1
 
     # Enrich with catalog metadata and build response
     results: list[TechnologyItem] = []

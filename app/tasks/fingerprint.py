@@ -347,9 +347,11 @@ def run_fingerprinting(
                     )
 
             if detected:
-                # Update service technologies (JSON column)
+                # Merge with existing technologies from httpx (don't overwrite)
                 tech_names = [d["name"] for d in detected]
-                service.http_technologies = tech_names
+                existing = service.http_technologies if isinstance(service.http_technologies, list) else []
+                merged = list(dict.fromkeys(existing + tech_names))  # dedupe, preserve order
+                service.http_technologies = merged
 
                 total_detections += len(detected)
 

@@ -40,6 +40,9 @@ CATEGORY_LABELS: dict[str, str] = {
     "build-tools": "Build Tools",
     "reverse-proxy": "Reverse Proxies",
     "load-balancer": "Load Balancers",
+    "os": "Operating Systems",
+    "font": "Fonts & Icons",
+    "build-tool": "Build Tools",
     "tag-managers": "Tag Managers",
     "other": "Other",
 }
@@ -515,7 +518,117 @@ TECH_CATALOG: dict[str, dict[str, str]] = {
         "category": "cms",
         "description": "WordPress plugin for managing multiple contact forms with Ajax, CAPTCHA, and Akismet.",
     },
+    # -- httpx tech-detect common entries --
+    "Windows": {
+        "category": "os",
+        "description": "Microsoft Windows Server operating system.",
+    },
+    "Google Analytics": {
+        "category": "analytics",
+        "description": "Web analytics service by Google for tracking website traffic.",
+    },
+    "Google Tag Manager": {
+        "category": "analytics",
+        "description": "Tag management system by Google for managing tracking pixels.",
+    },
+    "Google Fonts": {
+        "category": "font",
+        "description": "Font delivery service by Google.",
+    },
+    "Bootstrap": {
+        "category": "ui-framework",
+        "description": "Popular CSS framework for responsive web design.",
+    },
+    "Moment.js": {
+        "category": "js-library",
+        "description": "JavaScript library for parsing, validating, and formatting dates.",
+    },
+    "Underscore.js": {
+        "category": "js-library",
+        "description": "JavaScript utility library for functional programming helpers.",
+    },
+    "Lodash": {
+        "category": "js-library",
+        "description": "Modern JavaScript utility library for modularity and performance.",
+    },
+    "Modernizr": {
+        "category": "js-library",
+        "description": "JavaScript library for detecting HTML5/CSS3 browser features.",
+    },
+    "Font Awesome": {
+        "category": "font",
+        "description": "Icon toolkit and font library for web projects.",
+    },
+    "Cloudflare": {
+        "category": "cdn",
+        "description": "Global CDN and DDoS protection service.",
+    },
+    "CloudFront": {
+        "category": "cdn",
+        "description": "Amazon Web Services content delivery network.",
+    },
+    "AWS S3": {
+        "category": "paas",
+        "description": "Amazon Simple Storage Service for object storage.",
+    },
+    "AWS": {
+        "category": "paas",
+        "description": "Amazon Web Services cloud platform.",
+    },
+    "Envoy Proxy": {
+        "category": "reverse-proxy",
+        "description": "High-performance edge/service proxy designed for cloud-native apps.",
+    },
+    "Varnish": {
+        "category": "web-server",
+        "description": "HTTP accelerator and reverse proxy for caching.",
+    },
+    "OpenResty": {
+        "category": "web-server",
+        "description": "Scalable web platform based on Nginx and LuaJIT.",
+    },
+    "HSTS": {
+        "category": "security",
+        "description": "HTTP Strict Transport Security header enforcing HTTPS connections.",
+    },
+    "Webpack": {
+        "category": "build-tool",
+        "description": "Module bundler for JavaScript applications.",
+    },
+    "Vite": {
+        "category": "build-tool",
+        "description": "Fast frontend build tool and dev server.",
+    },
+    "Tailwind CSS": {
+        "category": "ui-framework",
+        "description": "Utility-first CSS framework for rapid UI development.",
+    },
+    "Material UI": {
+        "category": "ui-framework",
+        "description": "React component library implementing Material Design.",
+    },
 }
+
+
+# Aliases for names that httpx/fingerprint produce differently
+TECH_ALIASES: dict[str, str] = {
+    "Microsoft-IIS": "IIS",
+    "Microsoft-HTTPAPI": "IIS",
+    "Microsoft ASP.NET": "ASP.NET",
+    "Windows Server": "Windows",
+    "Google Analytics": "Google Analytics",
+    "Google Tag Manager": "Google Tag Manager",
+    "Google Font API": "Google Fonts",
+    "Amazon CloudFront": "CloudFront",
+    "Amazon S3": "AWS S3",
+    "Amazon Web Services": "AWS",
+    "Envoy": "Envoy Proxy",
+}
+
+
+def normalize_tech_name(name: str) -> str:
+    """Normalize technology name using aliases."""
+    return TECH_ALIASES.get(name, name)
 
 
 def get_tech_info(name: str) -> dict[str, str]:
@@ -523,6 +636,7 @@ def get_tech_info(name: str) -> dict[str, str]:
 
     Returns dict with keys: category, category_label, description, icon.
     """
+    name = normalize_tech_name(name)
     entry = TECH_CATALOG.get(name)
     if not entry:
         name_lower = name.lower()
