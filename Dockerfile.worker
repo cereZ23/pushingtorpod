@@ -1,14 +1,14 @@
 # =============================================================================
 # EASM Worker - Multi-stage optimized build
 # =============================================================================
-# Stage 1: Download pre-built ProjectDiscovery + third-party tool binaries
+# Stage 1: Download pre-built tool binaries (no Go compilation)
 # Stage 2: Compile massdns from source (no binary releases available)
 # Stage 3: Install Python dependencies into a virtual environment
 # Stage 4: Slim final image with only runtime artifacts
 # =============================================================================
 
 # ---------------------------------------------------------------------------
-# Stage 1: Download pre-built tool binaries (fast — no Go compilation)
+# Stage 1: Download pre-built tool binaries
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim AS tool-downloader
 
@@ -20,50 +20,60 @@ WORKDIR /opt/pd-tools
 
 SHELL ["/bin/bash", "-c"]
 
-# Helper: download latest release binary from a GitHub repo.
-# Usage: dl <github_org/repo> <binary_name> [optional_tag]
-# ProjectDiscovery zip pattern: <name>_<version>_linux_amd64.zip
-# Third-party tools may vary — handled with explicit URLs below.
+# Helper: get latest release tag from a GitHub repo
+# Usage: get_tag <org/repo>
+# Helper: download PD tool (zip format)
+# Usage: dl_zip <org/repo> <binary_name> [optional_tag]
+# Helper: download tar.gz tool
+# Usage: dl_tgz <org/repo> <asset_pattern> <binary_name> [optional_tag]
 RUN set -eo pipefail && \
-    dl() { \
-      local repo=$1 name=$2 tag=${3:-}; \
-      if [ -z "$tag" ]; then \
-        tag=$(curl -sI "https://github.com/${repo}/releases/latest" \
-          | grep -i '^location:' | sed 's|.*/||' | tr -d '\r\n'); \
-      fi; \
-      local ver=${tag#v}; \
-      echo "→ ${name} ${ver}"; \
-      curl -sL "https://github.com/${repo}/releases/download/${tag}/${name}_${ver}_linux_amd64.zip" \
-        -o /tmp/${name}.zip && \
-      unzip -o -j /tmp/${name}.zip -d /opt/pd-tools/ && \
-      rm /tmp/${name}.zip; \
+    get_tag() { \
+      curl -sI "https://github.com/$1/releases/latest" \
+        | grep -i '^location:' | sed 's|.*/||' | tr -d '\r\n'; \
     }; \
-    # ProjectDiscovery tools \
-    dl projectdiscovery/subfinder subfinder && \
-    dl projectdiscovery/dnsx dnsx && \
-    dl projectdiscovery/httpx httpx v1.6.8 && \
-    dl projectdiscovery/naabu naabu && \
-    dl projectdiscovery/katana katana && \
-    dl projectdiscovery/tlsx tlsx && \
-    dl projectdiscovery/uncover uncover && \
-    dl projectdiscovery/notify notify && \
-    dl projectdiscovery/alterx alterx && \
-    dl projectdiscovery/cdncheck cdncheck && \
-    dl projectdiscovery/cloudlist cloudlist && \
-    dl projectdiscovery/nuclei nuclei && \
-    # Third-party tools \
-    dl d3mondev/puredns puredns && \
-    dl praetorian-inc/fingerprintx fingerprintx && \
-    # amass — different zip naming (<name>_v<version>_linux_amd64.zip uses tag with 'v') \
-    AMASS_TAG=$(curl -sI "https://github.com/owasp-amass/amass/releases/latest" \
-      | grep -i '^location:' | sed 's|.*/||' | tr -d '\r\n') && \
-    echo "→ amass ${AMASS_TAG}" && \
-    curl -sL "https://github.com/owasp-amass/amass/releases/download/${AMASS_TAG}/amass_Linux_amd64.zip" \
-      -o /tmp/amass.zip && \
-    unzip -o -j /tmp/amass.zip -d /opt/pd-tools/ && \
-    rm /tmp/amass.zip && \
-    # Make all binaries executable \
-    chmod +x /opt/pd-tools/*
+    dl_zip() { \
+      local repo=$1 name=$2 tag=${3:-}; \
+      [ -z "$tag" ] && tag=$(get_tag "$repo"); \
+      local ver=${tag#v}; \
+      echo "→ ${name} ${ver} (zip)"; \
+      curl -sL "https://github.com/${repo}/releases/download/${tag}/${name}_${ver}_linux_amd64.zip" \
+        -o /tmp/dl.zip && \
+      unzip -o -j /tmp/dl.zip -d /opt/pd-tools/ && rm /tmp/dl.zip; \
+    }; \
+    dl_tgz() { \
+      local repo=$1 asset=$2 name=$3 tag=${4:-}; \
+      [ -z "$tag" ] && tag=$(get_tag "$repo"); \
+      local ver=${tag#v}; \
+      local url="https://github.com/${repo}/releases/download/${tag}/${asset}"; \
+      echo "→ ${name} ${ver} (tgz)"; \
+      curl -sL "$url" | tar xz -C /opt/pd-tools/ && true; \
+    }; \
+    # ── ProjectDiscovery tools (zip format) ── \
+    dl_zip projectdiscovery/subfinder subfinder && \
+    dl_zip projectdiscovery/dnsx dnsx && \
+    dl_zip projectdiscovery/httpx httpx v1.6.8 && \
+    dl_zip projectdiscovery/naabu naabu && \
+    dl_zip projectdiscovery/katana katana && \
+    dl_zip projectdiscovery/tlsx tlsx && \
+    dl_zip projectdiscovery/uncover uncover && \
+    dl_zip projectdiscovery/notify notify && \
+    dl_zip projectdiscovery/alterx alterx && \
+    dl_zip projectdiscovery/cdncheck cdncheck && \
+    dl_zip projectdiscovery/cloudlist cloudlist && \
+    dl_zip projectdiscovery/nuclei nuclei && \
+    # ── puredns (tgz, capital-L "Linux") ── \
+    dl_tgz d3mondev/puredns puredns-Linux-amd64.tgz puredns && \
+    # ── fingerprintx (tar.gz, pin v1.1.13 — newer tags have no binaries) ── \
+    dl_tgz praetorian-inc/fingerprintx fingerprintx_1.1.13_linux_amd64.tar.gz fingerprintx v1.1.13 && \
+    # ── amass (tar.gz, different naming) ── \
+    AMASS_TAG=$(get_tag owasp-amass/amass) && \
+    echo "→ amass ${AMASS_TAG} (tgz)" && \
+    curl -sL "https://github.com/owasp-amass/amass/releases/download/${AMASS_TAG}/amass_linux_amd64.tar.gz" \
+      | tar xz -C /opt/pd-tools/ --strip-components=1 2>/dev/null || \
+    curl -sL "https://github.com/owasp-amass/amass/releases/download/${AMASS_TAG}/amass_linux_amd64.tar.gz" \
+      | tar xz -C /opt/pd-tools/ && \
+    # ── Make all binaries executable ── \
+    chmod +x /opt/pd-tools/* 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Stage 2: massdns builder (C source — no binary releases)
