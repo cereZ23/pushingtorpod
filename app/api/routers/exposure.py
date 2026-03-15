@@ -11,7 +11,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, case
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 import logging
 
 from app.api.dependencies import get_db, verify_tenant_access, PaginationParams, escape_like
@@ -476,6 +476,7 @@ def get_exposure_changes(
     new_findings = (
         db.query(Finding)
         .join(Asset)
+        .options(joinedload(Finding.asset))
         .filter(
             Asset.tenant_id == tenant_id,
             Finding.status == FindingStatus.OPEN,
@@ -503,6 +504,7 @@ def get_exposure_changes(
     resolved_findings = (
         db.query(Finding)
         .join(Asset)
+        .options(joinedload(Finding.asset))
         .filter(
             Asset.tenant_id == tenant_id,
             Finding.status == FindingStatus.FIXED,

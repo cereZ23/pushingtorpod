@@ -10,7 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, case
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 import logging
 
 from app.api.dependencies import get_db, verify_tenant_access
@@ -366,6 +366,7 @@ def get_recent_findings(
     findings = (
         db.query(Finding)
         .join(Asset)
+        .options(joinedload(Finding.asset))
         .filter(Asset.tenant_id == tenant_id, Asset.is_active.is_(True))
         .order_by(Finding.first_seen.desc())
         .limit(limit)

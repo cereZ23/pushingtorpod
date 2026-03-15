@@ -7,7 +7,7 @@ finding retests and bulk operations with a configurable limit.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional
 from datetime import datetime
@@ -80,7 +80,7 @@ def _get_finding_for_tenant(
     finding_id: int,
 ) -> Finding:
     """Fetch a finding scoped to the given tenant, or raise 404."""
-    finding = db.query(Finding).join(Asset).filter(
+    finding = db.query(Finding).join(Asset).options(joinedload(Finding.asset)).filter(
         Finding.id == finding_id,
         Asset.tenant_id == tenant_id,
     ).first()
@@ -366,7 +366,7 @@ def bulk_retest(
 
     for finding_id in payload.finding_ids:
         # Fetch finding with tenant isolation
-        finding = db.query(Finding).join(Asset).filter(
+        finding = db.query(Finding).join(Asset).options(joinedload(Finding.asset)).filter(
             Finding.id == finding_id,
             Asset.tenant_id == tenant_id,
         ).first()

@@ -5,7 +5,7 @@ Handles service data from enrichment (HTTP, ports, TLS)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, or_
 from typing import Optional, List
 import logging
@@ -57,7 +57,7 @@ def list_services(
     - search: Full-text search
     """
     # Build query with tenant isolation
-    query = db.query(Service).join(Asset).filter(
+    query = db.query(Service).join(Asset).options(joinedload(Service.asset)).filter(
         Asset.tenant_id == tenant_id,
         Asset.is_active == True,  # noqa: E712 — exclude services on deactivated assets
     )

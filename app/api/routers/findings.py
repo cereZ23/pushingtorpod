@@ -5,7 +5,7 @@ Handles vulnerability findings from Nuclei and other sources
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, or_, and_
 from typing import Optional, List
 from datetime import datetime, timedelta, timezone
@@ -390,7 +390,7 @@ def get_finding(
     Raises:
         - 404: Finding not found
     """
-    finding = db.query(Finding).join(Asset).filter(
+    finding = db.query(Finding).join(Asset).options(joinedload(Finding.asset)).filter(
         Finding.id == finding_id,
         Asset.tenant_id == tenant_id
     ).first()

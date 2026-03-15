@@ -33,7 +33,7 @@ class RiskScore(Base):
     tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
     scope_type = Column(String(20), nullable=False)  # 'issue', 'asset', 'organization'
     scope_id = Column(Integer)  # issue_id, asset_id, or null for org
-    scan_run_id = Column(Integer, ForeignKey('scan_runs.id'))
+    scan_run_id = Column(Integer, ForeignKey('scan_runs.id', ondelete='SET NULL'))
     score = Column(Float, nullable=False)  # 0-100
     grade = Column(String(2))  # A, B, C, D, F
     components = Column(JSON)  # Score breakdown {base_severity, confidence, exposure_factor, ...}
@@ -77,8 +77,8 @@ class Alert(Base):
     severity = Column(String(20), nullable=False)
     title = Column(String(500), nullable=False)
     body = Column(Text)
-    related_asset_id = Column(Integer, ForeignKey('assets.id'))
-    related_finding_id = Column(Integer, ForeignKey('findings.id'))
+    related_asset_id = Column(Integer, ForeignKey('assets.id', ondelete='SET NULL'))
+    related_finding_id = Column(Integer, ForeignKey('findings.id', ondelete='SET NULL'))
     status = Column(Enum(AlertStatus), default=AlertStatus.PENDING)
     channels_sent = Column(JSON)  # ["slack", "email"]
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

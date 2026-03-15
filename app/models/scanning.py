@@ -275,7 +275,7 @@ class PhaseResult(Base):
     __tablename__ = 'phase_results'
 
     id = Column(Integer, primary_key=True)
-    scan_run_id = Column(Integer, ForeignKey('scan_runs.id'), nullable=False)
+    scan_run_id = Column(Integer, ForeignKey('scan_runs.id', ondelete='CASCADE'), nullable=False)
     phase = Column(String(10), nullable=False)  # '0', '1', '1b', '1c', '2', etc.
     status = Column(Enum(PhaseStatus), default=PhaseStatus.PENDING)
     started_at = Column(DateTime)
@@ -329,8 +329,8 @@ class Observation(Base):
 
     id = Column(Integer, primary_key=True)
     tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
-    scan_run_id = Column(Integer, ForeignKey('scan_runs.id'))
-    asset_id = Column(Integer, ForeignKey('assets.id'))
+    scan_run_id = Column(Integer, ForeignKey('scan_runs.id', ondelete='SET NULL'))
+    asset_id = Column(Integer, ForeignKey('assets.id', ondelete='SET NULL'))
     source = Column(String(100), nullable=False)  # 'subfinder', 'crtsh', 'dnsx', etc.
     observation_type = Column(String(100), nullable=False)  # 'passive_subdomain', 'spf_ip', 'mx_ip'
     raw_data = Column(JSON)

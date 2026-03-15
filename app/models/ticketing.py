@@ -74,7 +74,7 @@ class Ticket(Base):
 
     id = Column(Integer, primary_key=True)
     tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
-    finding_id = Column(Integer, ForeignKey('findings.id'), nullable=False)
+    finding_id = Column(Integer, ForeignKey('findings.id', ondelete='CASCADE'), nullable=False)
     provider = Column(String(50), nullable=False)  # 'jira', 'servicenow'
     external_id = Column(String(255), nullable=False)  # e.g., "EASM-123" or "INC0012345"
     external_url = Column(String(2048))

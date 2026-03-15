@@ -37,7 +37,7 @@ class Asset(Base):
     __tablename__ = 'assets'
 
     id = Column(Integer, primary_key=True)
-    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
+    tenant_id = Column(Integer, ForeignKey('tenants.id', ondelete='CASCADE'), nullable=False)
     type = Column(Enum(AssetType), nullable=False)
     identifier = Column(String(500), nullable=False)  # Domain, IP, URL
     first_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -87,7 +87,7 @@ class Service(Base):
     __tablename__ = 'services'
 
     id = Column(Integer, primary_key=True)
-    asset_id = Column(Integer, ForeignKey('assets.id'), nullable=False)
+    asset_id = Column(Integer, ForeignKey('assets.id', ondelete='CASCADE'), nullable=False)
     port = Column(Integer)
     protocol = Column(String(50))
     product = Column(String(255))
@@ -146,7 +146,7 @@ class Finding(Base):
     __tablename__ = 'findings'
 
     id = Column(Integer, primary_key=True)
-    asset_id = Column(Integer, ForeignKey('assets.id'), nullable=False)
+    asset_id = Column(Integer, ForeignKey('assets.id', ondelete='CASCADE'), nullable=False)
     source = Column(String(50), default='nuclei')  # nuclei, manual, custom
     template_id = Column(String(255))
     name = Column(String(500), nullable=False)
@@ -197,7 +197,7 @@ class Event(Base):
     __tablename__ = 'events'
 
     id = Column(Integer, primary_key=True)
-    asset_id = Column(Integer, ForeignKey('assets.id'), nullable=False)
+    asset_id = Column(Integer, ForeignKey('assets.id', ondelete='CASCADE'), nullable=False)
     kind = Column(Enum(EventKind), nullable=False)
     payload = Column(Text)  # JSON
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -217,7 +217,7 @@ class Seed(Base):
     __tablename__ = 'seeds'
 
     id = Column(Integer, primary_key=True)
-    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
+    tenant_id = Column(Integer, ForeignKey('tenants.id', ondelete='CASCADE'), nullable=False)
     type = Column(String(50))  # domain, asn, ip_range, keyword
     value = Column(String(500), nullable=False)
     enabled = Column(Boolean, default=True)
