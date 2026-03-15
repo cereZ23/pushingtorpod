@@ -233,7 +233,15 @@ class ScanRun(Base):
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     profile_id = Column(Integer, ForeignKey("scan_profiles.id"))
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
-    status = Column(Enum(ScanRunStatus), default=ScanRunStatus.PENDING)
+    status = Column(
+        Enum(
+            ScanRunStatus,
+            values_callable=lambda x: [e.value for e in x],
+            native_enum=False,
+            create_constraint=False,
+        ),
+        default=ScanRunStatus.PENDING,
+    )
     triggered_by = Column(String(100))  # 'manual', 'schedule', 'api'
     started_at = Column(DateTime)
     completed_at = Column(DateTime)
@@ -294,7 +302,15 @@ class PhaseResult(Base):
     id = Column(Integer, primary_key=True)
     scan_run_id = Column(Integer, ForeignKey("scan_runs.id", ondelete="CASCADE"), nullable=False)
     phase = Column(String(10), nullable=False)  # '0', '1', '1b', '1c', '2', etc.
-    status = Column(Enum(PhaseStatus), default=PhaseStatus.PENDING)
+    status = Column(
+        Enum(
+            PhaseStatus,
+            values_callable=lambda x: [e.value for e in x],
+            native_enum=False,
+            create_constraint=False,
+        ),
+        default=PhaseStatus.PENDING,
+    )
     started_at = Column(DateTime)
     completed_at = Column(DateTime)
     stats = Column(JSON)  # Phase-specific stats {items_found, items_processed, etc.}
