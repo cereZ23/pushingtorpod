@@ -504,7 +504,7 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     tier_config = {
         1: {"top_ports": "100", "rate": 100, "full_scan": False, "timeout": 300},
         2: {"top_ports": "1000", "rate": 500, "full_scan": False, "timeout": 600},
-        3: {"top_ports": "1000", "rate": 1000, "full_scan": False, "timeout": 600},
+        3: {"top_ports": "full", "rate": 1000, "full_scan": True, "timeout": 1800},
     }
     config = tier_config.get(scan_tier, tier_config[1])
 

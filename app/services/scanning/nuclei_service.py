@@ -318,6 +318,7 @@ class NucleiService:
                 "http/takeovers/",
                 "http/exposures/",
                 "http/vulnerabilities/",
+                "cloud/",
                 "dns/",
                 "ssl/",
                 "network/",
@@ -328,7 +329,7 @@ class NucleiService:
         args.extend(
             [
                 "-exclude-tags",
-                "dos,headless,fuzz,osint,token-spray",
+                "dos,headless,fuzz,osint,token-spray,intrusive",
             ]
         )
 

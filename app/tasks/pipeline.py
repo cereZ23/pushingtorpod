@@ -530,9 +530,8 @@ def _should_skip_phase(phase_id: str, project: Project, scan_tier: int = 1) -> t
         pass
 
     if phase_id == "5c":
-        # fingerprintx requires tier 2+
-        if scan_tier < 2:
-            return True, "Service fingerprinting requires tier 2+"
+        # fingerprintx is a passive protocol handshake — safe for all tiers
+        pass
 
     if phase_id == "7":
         if not getattr(app_settings, "feature_visual_recon_enabled", True):

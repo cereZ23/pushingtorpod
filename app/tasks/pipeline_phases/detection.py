@@ -147,8 +147,8 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     # http/misconfiguration/ overlaps with Phase 8 misconfig.py (50 controls).
     # Tier 2+ gets the full set for deeper analysis.
     tier_templates = {
-        1: ["http/cves/", "http/exposed-panels/", "http/takeovers/", "http/default-logins/", "ssl/"],
-        # Tier 2/3: None = use nuclei_service default (all 10 dirs)
+        1: ["http/cves/", "http/exposed-panels/", "http/takeovers/", "http/default-logins/", "http/exposures/", "ssl/"],
+        # Tier 2/3: None = use nuclei_service default (all dirs including cloud/)
     }
     templates_for_scan = tier_templates.get(scan_tier)
 
