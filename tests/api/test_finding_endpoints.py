@@ -6,7 +6,7 @@ Total: 8 tests
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 
 from app.models import Asset, Finding, AssetType, FindingSeverity, FindingStatus
@@ -91,9 +91,9 @@ class TestFindingEndpoints:
         for finding in findings:
             assert finding["status"].lower() == "open"
 
-        # Filter for false positives
+        # Filter for suppressed findings
         response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/findings", params={"status": "false_positive"}
+            f"/api/v1/tenants/{test_tenant.id}/findings", params={"status": "suppressed"}
         )
 
         assert response.status_code == 200
@@ -105,7 +105,7 @@ class TestFindingEndpoints:
             findings = data
 
         for finding in findings:
-            assert finding["status"].lower() in ["false_positive", "suppressed"]
+            assert finding["status"].lower() == "suppressed"
 
     def test_get_finding_by_id_returns_details(self, authenticated_client, test_tenant, sample_finding):
         """Test getting single finding by ID returns full details"""
@@ -128,29 +128,29 @@ class TestFindingEndpoints:
             assert isinstance(data["asset"], dict)
             assert "identifier" in data["asset"]
 
-    def test_update_finding_status_to_false_positive(self, authenticated_client, test_tenant, open_finding):
-        """Test updating finding status to false positive"""
+    def test_update_finding_status_to_suppressed(self, authenticated_client, test_tenant, open_finding):
+        """Test updating finding status to suppressed (false positive)"""
         response = authenticated_client.patch(
             f"/api/v1/tenants/{test_tenant.id}/findings/{open_finding.id}",
-            json={"status": "false_positive", "reason": "This is not actually vulnerable"},
+            json={"status": "suppressed", "notes": "This is not actually vulnerable"},
         )
 
         assert response.status_code == 200
         data = response.json()
 
         # Verify status updated
-        assert data["status"].lower() in ["false_positive", "suppressed"]
+        assert data["status"].lower() == "suppressed"
 
         # Verify finding is retrievable with new status
         response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/findings/{open_finding.id}")
         data = response.json()
-        assert data["status"].lower() in ["false_positive", "suppressed"]
+        assert data["status"].lower() == "suppressed"
 
     def test_update_finding_status_to_fixed(self, authenticated_client, test_tenant, open_finding):
         """Test updating finding status to fixed"""
         response = authenticated_client.patch(
             f"/api/v1/tenants/{test_tenant.id}/findings/{open_finding.id}",
-            json={"status": "fixed", "reason": "Patched vulnerability"},
+            json={"status": "fixed", "notes": "Patched vulnerability"},
         )
 
         assert response.status_code == 200
@@ -211,6 +211,42 @@ class TestFindingEndpoints:
 
 
 @pytest.fixture
+def sample_asset(db_session, test_tenant):
+    """Create a sample asset owned by test_tenant (overrides conftest version that uses 'tenant')"""
+    asset = Asset(
+        tenant_id=test_tenant.id,
+        identifier="test-finding.example.com",
+        type=AssetType.SUBDOMAIN,
+        risk_score=10.0,
+        is_active=True,
+    )
+    db_session.add(asset)
+    db_session.commit()
+    db_session.refresh(asset)
+    return asset
+
+
+@pytest.fixture
+def sample_finding(db_session, sample_asset):
+    """Create a sample finding (overrides conftest version to use local sample_asset)"""
+    finding = Finding(
+        asset_id=sample_asset.id,
+        source="nuclei",
+        template_id="CVE-2021-12345",
+        name="Test Vulnerability",
+        severity=FindingSeverity.HIGH,
+        cvss_score=7.5,
+        cve_id="CVE-2021-12345",
+        evidence={"proof": "data"},
+        status=FindingStatus.OPEN,
+    )
+    db_session.add(finding)
+    db_session.commit()
+    db_session.refresh(finding)
+    return finding
+
+
+@pytest.fixture
 def tenant_with_findings(db_session, test_tenant):
     """Create tenant with assets and findings"""
     # Create assets
@@ -233,14 +269,13 @@ def tenant_with_findings(db_session, test_tenant):
         db_session.refresh(asset)
         finding = Finding(
             asset_id=asset.id,
-            tenant_id=test_tenant.id,
             source="nuclei",
             template_id=f"CVE-2021-{44228 + i}",
             name=f"Vulnerability {i}",
             severity=FindingSeverity.HIGH,
             cvss_score=7.5 + i * 0.5,
             status=FindingStatus.OPEN,
-            evidence=f'{{"proof": "data{i}"}}',
+            evidence={"proof": f"data{i}"},
         )
         findings.append(finding)
 
@@ -276,14 +311,13 @@ def findings_mixed_severity(db_session, test_tenant):
     for i, severity in enumerate(severities):
         finding = Finding(
             asset_id=asset.id,
-            tenant_id=test_tenant.id,
             source="nuclei",
             template_id=f"VULN-{severity.value}-{i}",
             name=f"{severity.value} Vulnerability {i}",
             severity=severity,
             cvss_score=10.0 if severity == FindingSeverity.CRITICAL else 7.5,
             status=FindingStatus.OPEN,
-            evidence="{}",
+            evidence={},
         )
         findings.append(finding)
 
@@ -299,21 +333,20 @@ def findings_various_statuses(db_session, test_tenant, sample_asset):
         FindingStatus.OPEN,
         FindingStatus.OPEN,
         FindingStatus.FIXED,
-        FindingStatus.FALSE_POSITIVE,
+        FindingStatus.SUPPRESSED,
     ]
 
     findings = []
     for i, status in enumerate(statuses):
         finding = Finding(
             asset_id=sample_asset.id,
-            tenant_id=test_tenant.id,
             source="nuclei",
             template_id=f"STATUS-TEST-{i}",
             name=f"Finding {status.value} {i}",
             severity=FindingSeverity.MEDIUM,
             cvss_score=5.0,
             status=status,
-            evidence="{}",
+            evidence={},
         )
         findings.append(finding)
 
@@ -327,14 +360,13 @@ def open_finding(db_session, test_tenant, sample_asset):
     """Create an open finding for status update tests"""
     finding = Finding(
         asset_id=sample_asset.id,
-        tenant_id=test_tenant.id,
         source="nuclei",
         template_id="UPDATE-TEST-001",
         name="Test Finding for Updates",
         severity=FindingSeverity.HIGH,
         cvss_score=7.5,
         status=FindingStatus.OPEN,
-        evidence='{"test": "data"}',
+        evidence={"test": "data"},
     )
     db_session.add(finding)
     db_session.commit()
@@ -358,14 +390,13 @@ def other_tenant_findings(db_session, other_tenant):
 
     finding = Finding(
         asset_id=asset.id,
-        tenant_id=other_tenant.id,
         source="nuclei",
         template_id="OTHER-TENANT-001",
         name="Other Tenant Finding",
         severity=FindingSeverity.MEDIUM,
         cvss_score=5.5,
         status=FindingStatus.OPEN,
-        evidence="{}",
+        evidence={},
     )
     db_session.add(finding)
     db_session.commit()
@@ -381,14 +412,13 @@ def duplicate_findings(db_session, test_tenant, sample_asset):
     for i in range(3):
         finding = Finding(
             asset_id=sample_asset.id,
-            tenant_id=test_tenant.id,
             source="nuclei",
             template_id="CVE-2021-44228",  # Same template
             name="Log4Shell RCE",
             severity=FindingSeverity.CRITICAL,
             cvss_score=10.0,
-            status=FindingStatus.OPEN if i == 0 else FindingStatus.FALSE_POSITIVE,
-            evidence=f'{{"scan": {i}}}',
+            status=FindingStatus.OPEN if i == 0 else FindingStatus.SUPPRESSED,
+            evidence={"scan": i},
             first_seen=datetime.now(timezone.utc) - timedelta(days=i),
         )
         findings.append(finding)

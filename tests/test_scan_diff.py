@@ -187,13 +187,13 @@ class TestScanDiffSchemas:
 
 
 class TestCompareEndpointTenantIsolation:
-    """Verify the compare endpoint filters by tenant_id (source-level check)."""
+    """Verify the compare service filters by tenant_id (source-level check)."""
 
-    def test_endpoint_filters_by_tenant_id(self):
-        """Source-level check: compare endpoint queries ScanRun with tenant_id filter."""
+    def test_service_filters_by_tenant_id(self):
+        """Source-level check: ScanCompareService.compare queries ScanRun with tenant_id filter."""
         import inspect
-        from app.api.routers.projects import compare_scan_runs
+        from app.services.scan_compare_service import ScanCompareService
 
-        source = inspect.getsource(compare_scan_runs)
+        source = inspect.getsource(ScanCompareService.compare)
         assert "ScanRun.tenant_id == tenant_id" in source
         assert "ScanRunStatus.COMPLETED" in source

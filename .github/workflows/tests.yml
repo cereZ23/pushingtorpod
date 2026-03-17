@@ -109,7 +109,7 @@ jobs:
           --ignore=tests/api/test_certificate_endpoints.py \
           --ignore=tests/integration/ \
           --ignore=tests/performance/ \
-          -k "not test_security_comprehensive and not TestGetRiskLevel and not test_no_severity_defaults_to_info and not TestCalculateAssetRisk and not TestRecalculateTenantRisk and not TestTenantScorecard and not test_get_asset_tree_returns_hierarchy and not test_get_tenant_dashboard_returns_stats and not test_get_tenant_stats_returns_detailed_metrics and not test_dashboard_endpoint_response_time_under_500ms and not test_database_query_performance and not test_tenant_dashboard_pagination and not test_get_asset_by_id_returns_details"
+          -k "not test_security_comprehensive and not test_get_asset_tree_returns_hierarchy and not test_get_tenant_dashboard_returns_stats and not test_get_tenant_stats_returns_detailed_metrics and not test_dashboard_endpoint_response_time_under_500ms and not test_database_query_performance and not test_tenant_dashboard_pagination and not test_get_asset_by_id_returns_details"
 
     - name: Upload coverage
       uses: codecov/codecov-action@v4

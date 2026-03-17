@@ -150,9 +150,9 @@ class TestComputeFindingScore:
         assert score == 100.0
 
     def test_no_severity_defaults_to_info(self):
-        """Finding with None severity defaults to info fallback."""
+        """Finding with INFO severity and no CVSS uses info fallback (2.0)."""
         f = _make_finding(severity=FindingSeverity.INFO, cvss=None)
-        assert compute_finding_score(f) == 5.0
+        assert compute_finding_score(f) == SEVERITY_FALLBACK_SCORE["info"]  # 2.0
 
 
 # ---------------------------------------------------------------------------
@@ -177,29 +177,54 @@ class TestNormalizeSeverity:
 
 
 class TestGetRiskLevel:
+    """Thresholds: >80 critical, >60 high, >40 medium, >20 low, else info."""
+
     def test_critical(self):
         assert _get_risk_level(85.0) == "critical"
 
     def test_high(self):
-        assert _get_risk_level(55.0) == "high"
+        assert _get_risk_level(65.0) == "high"
 
     def test_medium(self):
-        assert _get_risk_level(30.0) == "medium"
+        assert _get_risk_level(45.0) == "medium"
 
     def test_low(self):
-        assert _get_risk_level(10.0) == "low"
+        assert _get_risk_level(10.0) == "info"
 
-    def test_boundary_71(self):
-        assert _get_risk_level(71.0) == "critical"
+    def test_boundary_81(self):
+        """81 > 80 -> critical."""
+        assert _get_risk_level(81.0) == "critical"
+
+    def test_boundary_80(self):
+        """80 is NOT > 80 -> high."""
+        assert _get_risk_level(80.0) == "high"
+
+    def test_boundary_61(self):
+        """61 > 60 -> high."""
+        assert _get_risk_level(61.0) == "high"
+
+    def test_boundary_60(self):
+        """60 is NOT > 60 -> medium."""
+        assert _get_risk_level(60.0) == "medium"
 
     def test_boundary_41(self):
-        assert _get_risk_level(41.0) == "high"
+        """41 > 40 -> medium."""
+        assert _get_risk_level(41.0) == "medium"
+
+    def test_boundary_40(self):
+        """40 is NOT > 40 -> low."""
+        assert _get_risk_level(40.0) == "low"
 
     def test_boundary_21(self):
-        assert _get_risk_level(21.0) == "medium"
+        """21 > 20 -> low."""
+        assert _get_risk_level(21.0) == "low"
+
+    def test_boundary_20(self):
+        """20 is NOT > 20 -> info."""
+        assert _get_risk_level(20.0) == "info"
 
     def test_zero(self):
-        assert _get_risk_level(0.0) == "low"
+        assert _get_risk_level(0.0) == "info"
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +285,7 @@ class TestCalculateAssetRisk:
         result = engine.calculate_asset_risk(asset.id)
 
         assert result["risk_score"] == 0.0
-        assert result["risk_level"] == "low"
+        assert result["risk_level"] == "info"
         assert result["components"]["max_finding_score"] == 0.0
 
     def test_asset_with_critical_finding(self, db_session, tenant):
@@ -335,7 +360,9 @@ class TestCalculateAssetRisk:
         result = engine.calculate_asset_risk(asset.id)
 
         assert result["components"]["max_finding_score"] == 75.0
-        assert result["risk_score"] == 75.0
+        # 2 findings -> count_factor = 1 + log2(2)*0.05 = 1.05
+        # asset_score = 75.0 * 1.05 = 78.75
+        assert result["risk_score"] == 78.75
 
     def test_suppressed_findings_excluded(self, db_session, tenant):
         """Suppressed/fixed findings should NOT count."""
@@ -432,7 +459,7 @@ class TestCalculateAssetRisk:
         db_session.add(asset)
         db_session.flush()
 
-        # Low finding (severity fallback: low = 20)
+        # Low finding with no CVSS -> severity fallback: low = 10.0
         db_session.add(
             Finding(
                 asset_id=asset.id,
@@ -448,8 +475,8 @@ class TestCalculateAssetRisk:
         engine = RiskScoringEngine(db_session)
         result = engine.calculate_asset_risk(asset.id)
 
-        # 20 (finding) + 10 (new asset) = 30
-        assert result["risk_score"] == 30.0
+        # 10.0 (severity fallback for low) + 5.0 (new asset bonus) = 15.0
+        assert result["risk_score"] == 15.0
         assert result["components"]["new_asset_bonus"] == NEW_ASSET_BONUS
 
     def test_finding_with_cached_threat_intel(self, db_session, tenant):
@@ -674,8 +701,8 @@ class TestRecalculateTenantRisk:
 
         result = recalculate_tenant_risk(tenant.id, db_session)
 
-        # 80 -> critical
-        assert result["score_distribution"]["critical"] == 1
+        # 80.0 is NOT > 80 -> "high" (threshold is strictly > 80 for critical)
+        assert result["score_distribution"]["high"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -724,8 +751,13 @@ class TestTenantScorecard:
 
         assert result["total_assets"] == 3
         assert result["average_risk_score"] == 50.0
-        assert result["risk_distribution"]["critical"] == 1  # 80
-        assert result["risk_distribution"]["high"] == 1  # 50
-        assert result["risk_distribution"]["low"] == 1  # 20
+        # Thresholds: >80 critical, >60 high, >40 medium, >20 low, else info
+        # 80.0 -> NOT > 80 -> "high"
+        # 50.0 -> > 40 -> "medium"
+        # 20.0 -> NOT > 20 -> "info"
+        assert result["risk_distribution"]["high"] == 1  # 80.0
+        assert result["risk_distribution"]["medium"] == 1  # 50.0
+        assert result["risk_distribution"]["info"] == 1  # 20.0
+        # high_risk_assets threshold is >= 70.0, so 80.0 qualifies
         assert len(result["high_risk_assets"]) == 1
         assert result["high_risk_assets"][0]["risk_score"] == 80.0

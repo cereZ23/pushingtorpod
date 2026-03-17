@@ -34,6 +34,12 @@ from app.models.scanning import (
     Observation,
 )
 from app.models.database import Asset, Finding
+from app.services.scan_compare_service import ScanCompareService
+from app.services.scan_run_service import (
+    ScanRunService,
+    _serialize_scan_run,
+    _serialize_phase_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -243,40 +249,6 @@ def _get_project_or_404(
             detail="Project not found",
         )
     return project
-
-
-def _serialize_scan_run(scan_run: ScanRun) -> dict:
-    """Convert a ScanRun ORM instance to a response-friendly dict."""
-    return {
-        "id": scan_run.id,
-        "project_id": scan_run.project_id,
-        "profile_id": scan_run.profile_id,
-        "tenant_id": scan_run.tenant_id,
-        "status": scan_run.status.value if hasattr(scan_run.status, "value") else str(scan_run.status),
-        "triggered_by": scan_run.triggered_by,
-        "started_at": scan_run.started_at,
-        "completed_at": scan_run.completed_at,
-        "stats": scan_run.stats,
-        "error_message": scan_run.error_message,
-        "celery_task_id": scan_run.celery_task_id,
-        "created_at": scan_run.created_at,
-        "duration_seconds": scan_run.duration_seconds,
-    }
-
-
-def _serialize_phase_result(phase: PhaseResult) -> dict:
-    """Convert a PhaseResult ORM instance to a response-friendly dict."""
-    return {
-        "id": phase.id,
-        "scan_run_id": phase.scan_run_id,
-        "phase": phase.phase,
-        "status": phase.status.value if hasattr(phase.status, "value") else str(phase.status),
-        "started_at": phase.started_at,
-        "completed_at": phase.completed_at,
-        "stats": phase.stats,
-        "error_message": phase.error_message,
-        "duration_seconds": phase.duration_seconds,
-    }
 
 
 # ===========================================================================
@@ -784,74 +756,14 @@ def trigger_scan(
 
     project = _get_project_or_404(db, tenant_id, project_id)
 
-    # Validate profile if provided, otherwise auto-create from scan_tier
-    profile_id = trigger.profile_id
-    if profile_id is not None:
-        profile = (
-            db.query(ScanProfile)
-            .filter(
-                ScanProfile.id == profile_id,
-                ScanProfile.project_id == project_id,
-            )
-            .first()
-        )
-        if not profile:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Scan profile {profile_id} not found for this project",
-            )
-    else:
-        # Auto-create or find a default profile for the requested tier
-        tier = trigger.scan_tier
-        tier_names = {1: "Safe", 2: "Moderate", 3: "Aggressive"}
-        tier_ports = {1: "top-100", 2: "top-1000", 3: "full"}
-        tier_rates = {1: 10, 2: 50, 3: 100}
-        tier_timeouts = {1: 60, 2: 120, 3: 240}
-        default_name = f"Default {tier_names.get(tier, 'Safe')} (Tier {tier})"
-
-        profile = (
-            db.query(ScanProfile)
-            .filter(
-                ScanProfile.project_id == project_id,
-                ScanProfile.name == default_name,
-            )
-            .first()
-        )
-
-        if not profile:
-            profile = ScanProfile(
-                project_id=project.id,
-                name=default_name,
-                scan_tier=tier,
-                port_scan_mode=tier_ports.get(tier, "top-100"),
-                max_rate_pps=tier_rates.get(tier, 10),
-                timeout_minutes=tier_timeouts.get(tier, 120),
-            )
-            db.add(profile)
-            db.flush()
-
-        profile_id = profile.id
-
-    # Create scan run
-    scan_run = ScanRun(
-        project_id=project.id,
-        profile_id=profile_id,
+    service = ScanRunService(db)
+    scan_run, task_id = service.trigger_scan(
         tenant_id=tenant_id,
-        status=ScanRunStatus.PENDING,
+        project=project,
+        profile_id=trigger.profile_id,
+        scan_tier=trigger.scan_tier,
         triggered_by=trigger.triggered_by,
     )
-    db.add(scan_run)
-    db.commit()
-    db.refresh(scan_run)
-
-    # Dispatch to Celery
-    from app.tasks.pipeline import run_scan_pipeline
-
-    task = run_scan_pipeline.delay(scan_run.id)
-
-    # Store celery task id
-    scan_run.celery_task_id = task.id
-    db.commit()
 
     log_audit_event(
         event_type=AuditEventType.DATA_CREATE,
@@ -861,11 +773,11 @@ def trigger_scan(
         tenant_id=tenant_id,
         resource="scan_run",
         resource_id=str(scan_run.id),
-        details={"project_id": project.id, "triggered_by": trigger.triggered_by, "profile_id": profile_id},
+        details={"project_id": project.id, "triggered_by": trigger.triggered_by, "profile_id": scan_run.profile_id},
     )
 
     return TaskResponse(
-        task_id=task.id,
+        task_id=task_id,
         status="queued",
         message=f"Scan queued for project '{project.name}'",
         data={"scan_run_id": scan_run.id},
@@ -956,34 +868,9 @@ def get_scan_progress(
     """
     _get_project_or_404(db, tenant_id, project_id)
 
-    scan_run = (
-        db.query(ScanRun)
-        .filter(
-            ScanRun.id == run_id,
-            ScanRun.project_id == project_id,
-            ScanRun.tenant_id == tenant_id,
-        )
-        .first()
-    )
-    if not scan_run:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Scan run not found",
-        )
-
-    phases = (
-        db.query(PhaseResult)
-        .filter(
-            PhaseResult.scan_run_id == run_id,
-        )
-        .order_by(PhaseResult.phase.asc())
-        .all()
-    )
-
-    return ScanProgressResponse(
-        scan_run=_serialize_scan_run(scan_run),
-        phases=[_serialize_phase_result(p) for p in phases],
-    )
+    service = ScanRunService(db)
+    result = service.get_scan_progress(tenant_id, project_id, run_id)
+    return ScanProgressResponse(**result)
 
 
 @router.get("/projects/{project_id}/scans/{run_id}/changes", response_model=list[ChangeEventResponse])
@@ -1138,225 +1025,9 @@ def compare_scan_runs(
 
     Both runs must belong to the same project/tenant and be COMPLETED.
     """
-    from app.tasks.diff_alert import _snapshot_from_stats, _compute_diff
-    from app.api.schemas.scan_diff import (
-        ScanRunSummary,
-        DiffSummary,
-        DiffAssets,
-        DiffAssetItem,
-        DiffServices,
-        DiffServiceItem,
-        DiffFindings,
-        DiffFindingItem,
-    )
-    from app.utils.logger import TenantLoggerAdapter
-
     _get_project_or_404(db, tenant_id, project_id)
-
-    # Fetch both runs scoped to tenant + project
-    base_run = (
-        db.query(ScanRun)
-        .filter(
-            ScanRun.id == base_run_id,
-            ScanRun.project_id == project_id,
-            ScanRun.tenant_id == tenant_id,
-        )
-        .first()
-    )
-    compare_run = (
-        db.query(ScanRun)
-        .filter(
-            ScanRun.id == compare_run_id,
-            ScanRun.project_id == project_id,
-            ScanRun.tenant_id == tenant_id,
-        )
-        .first()
-    )
-
-    if not base_run or not compare_run:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="One or both scan runs not found in this project",
-        )
-
-    if base_run.status != ScanRunStatus.COMPLETED or compare_run.status != ScanRunStatus.COMPLETED:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Both scan runs must be in COMPLETED status",
-        )
-
-    base_stats = base_run.stats or {}
-    compare_stats = compare_run.stats or {}
-
-    if "snapshot" not in base_stats or "snapshot" not in compare_stats:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="One or both scan runs lack snapshot data (runs before diff engine was enabled)",
-        )
-
-    base_snapshot = _snapshot_from_stats(base_stats)
-    compare_snapshot = _snapshot_from_stats(compare_stats)
-
-    tenant_logger = TenantLoggerAdapter(logger, {"tenant_id": tenant_id})
-    diff = _compute_diff(compare_snapshot, base_snapshot, tenant_logger)
-
-    # --- Resolve asset keys: "tenant_id:type:identifier" ---
-    added_assets = []
-    for key in diff.new_assets:
-        parts = key.split(":", 2)
-        if len(parts) == 3:
-            added_assets.append(DiffAssetItem(identifier=parts[2], type=parts[1]))
-
-    removed_assets = []
-    for key in diff.removed_assets:
-        parts = key.split(":", 2)
-        if len(parts) == 3:
-            removed_assets.append(DiffAssetItem(identifier=parts[2], type=parts[1]))
-
-    # --- Resolve service keys: "asset_id:port:proto" ---
-    # Build asset_id -> identifier lookup for referenced assets
-    all_service_asset_ids: set[int] = set()
-    for key in list(diff.new_services) + list(diff.removed_services):
-        parts = key.split(":")
-        if len(parts) >= 3:
-            try:
-                all_service_asset_ids.add(int(parts[0]))
-            except ValueError:
-                pass
-
-    asset_id_to_identifier: dict[int, str] = {}
-    if all_service_asset_ids:
-        rows = db.query(Asset.id, Asset.identifier).filter(Asset.id.in_(all_service_asset_ids)).all()
-        asset_id_to_identifier = {r.id: r.identifier for r in rows}
-
-    added_services = []
-    for key in diff.new_services:
-        parts = key.split(":")
-        if len(parts) >= 3:
-            try:
-                aid = int(parts[0])
-                added_services.append(
-                    DiffServiceItem(
-                        asset_identifier=asset_id_to_identifier.get(aid, str(aid)),
-                        port=int(parts[1]),
-                        protocol=parts[2],
-                    )
-                )
-            except (ValueError, IndexError):
-                pass
-
-    removed_services = []
-    for key in diff.removed_services:
-        parts = key.split(":")
-        if len(parts) >= 3:
-            try:
-                aid = int(parts[0])
-                removed_services.append(
-                    DiffServiceItem(
-                        asset_identifier=asset_id_to_identifier.get(aid, str(aid)),
-                        port=int(parts[1]),
-                        protocol=parts[2],
-                    )
-                )
-            except (ValueError, IndexError):
-                pass
-
-    # --- Resolve finding keys: "asset_id:template_id:matcher_name" ---
-    all_finding_asset_ids: set[int] = set()
-    for key in list(diff.new_findings) + list(diff.resolved_findings):
-        parts = key.split(":", 2)
-        if len(parts) >= 1:
-            try:
-                all_finding_asset_ids.add(int(parts[0]))
-            except ValueError:
-                pass
-
-    # Extend the asset lookup
-    missing_ids = all_finding_asset_ids - set(asset_id_to_identifier.keys())
-    if missing_ids:
-        rows = db.query(Asset.id, Asset.identifier).filter(Asset.id.in_(missing_ids)).all()
-        for r in rows:
-            asset_id_to_identifier[r.id] = r.identifier
-
-    # Build finding lookup for enrichment
-    finding_lookup: dict[str, Finding] = {}
-    if diff.new_findings or diff.resolved_findings:
-        all_fkeys = set(diff.new_findings) | set(diff.resolved_findings)
-        candidate_asset_ids = set()
-        for key in all_fkeys:
-            parts = key.split(":", 2)
-            if parts:
-                try:
-                    candidate_asset_ids.add(int(parts[0]))
-                except ValueError:
-                    pass
-
-        if candidate_asset_ids:
-            findings_rows = db.query(Finding).filter(Finding.asset_id.in_(candidate_asset_ids)).all()
-            for f in findings_rows:
-                fkey = f"{f.asset_id}:{f.template_id}:{f.matcher_name}"
-                finding_lookup[fkey] = f
-
-    added_findings = []
-    for key in diff.new_findings:
-        parts = key.split(":", 2)
-        f = finding_lookup.get(key)
-        aid = None
-        try:
-            aid = int(parts[0]) if parts else None
-        except ValueError:
-            pass
-        added_findings.append(
-            DiffFindingItem(
-                id=f.id if f else None,
-                name=f.name if f else (parts[1] if len(parts) > 1 else None),
-                severity=(f.severity.value if f and hasattr(f.severity, "value") else (str(f.severity) if f else None)),
-                asset_identifier=asset_id_to_identifier.get(aid, str(aid)) if aid else None,
-            )
-        )
-
-    resolved_findings = []
-    for key in diff.resolved_findings:
-        parts = key.split(":", 2)
-        f = finding_lookup.get(key)
-        aid = None
-        try:
-            aid = int(parts[0]) if parts else None
-        except ValueError:
-            pass
-        resolved_findings.append(
-            DiffFindingItem(
-                id=f.id if f else None,
-                name=f.name if f else (parts[1] if len(parts) > 1 else None),
-                severity=(f.severity.value if f and hasattr(f.severity, "value") else (str(f.severity) if f else None)),
-                asset_identifier=asset_id_to_identifier.get(aid, str(aid)) if aid else None,
-            )
-        )
-
-    return ScanCompareResponse(
-        base_run=ScanRunSummary(
-            id=base_run.id,
-            status=base_run.status.value if hasattr(base_run.status, "value") else str(base_run.status),
-            completed_at=base_run.completed_at,
-        ),
-        compare_run=ScanRunSummary(
-            id=compare_run.id,
-            status=compare_run.status.value if hasattr(compare_run.status, "value") else str(compare_run.status),
-            completed_at=compare_run.completed_at,
-        ),
-        is_suspicious=diff.is_suspicious,
-        summary=DiffSummary(
-            new_assets=len(diff.new_assets),
-            removed_assets=len(diff.removed_assets),
-            new_services=len(diff.new_services),
-            removed_services=len(diff.removed_services),
-            new_findings=len(diff.new_findings),
-            resolved_findings=len(diff.resolved_findings),
-        ),
-        assets=DiffAssets(added=added_assets, removed=removed_assets),
-        services=DiffServices(added=added_services, removed=removed_services),
-        findings=DiffFindings(added=added_findings, resolved=resolved_findings),
-    )
+    service = ScanCompareService(db)
+    return service.compare(tenant_id, project_id, base_run_id, compare_run_id)
 
 
 @router.post("/projects/{project_id}/scans/{run_id}/cancel", response_model=SuccessResponse)
@@ -1394,30 +1065,8 @@ def cancel_scan_run(
 
     _get_project_or_404(db, tenant_id, project_id)
 
-    scan_run = (
-        db.query(ScanRun)
-        .filter(
-            ScanRun.id == run_id,
-            ScanRun.project_id == project_id,
-            ScanRun.tenant_id == tenant_id,
-        )
-        .first()
-    )
-    if not scan_run:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Scan run not found",
-        )
-
-    if scan_run.status not in (ScanRunStatus.PENDING, ScanRunStatus.RUNNING):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot cancel scan in status '{scan_run.status.value}'",
-        )
-
-    from app.tasks.pipeline import cancel_scan
-
-    cancel_scan.delay(scan_run.id)
+    service = ScanRunService(db)
+    service.cancel_scan_run(tenant_id, project_id, run_id)
 
     log_audit_event(
         event_type=AuditEventType.CONFIG_CHANGE,
@@ -1851,29 +1500,8 @@ def cancel_scan_run_by_id(
             detail="Write permission required",
         )
 
-    scan_run = (
-        db.query(ScanRun)
-        .filter(
-            ScanRun.id == run_id,
-            ScanRun.tenant_id == tenant_id,
-        )
-        .first()
-    )
-    if not scan_run:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Scan run not found",
-        )
-
-    if scan_run.status not in (ScanRunStatus.PENDING, ScanRunStatus.RUNNING):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot cancel scan in status '{scan_run.status.value}'",
-        )
-
-    from app.tasks.pipeline import cancel_scan
-
-    cancel_scan.delay(scan_run.id)
+    service = ScanRunService(db)
+    service.cancel_scan_run_by_tenant(tenant_id, run_id)
 
     log_audit_event(
         event_type=AuditEventType.CONFIG_CHANGE,
