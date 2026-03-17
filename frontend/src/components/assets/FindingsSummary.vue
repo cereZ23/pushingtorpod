@@ -120,12 +120,12 @@ function formatRelativeDate(dateString: string | undefined | null): string {
     </div>
 
     <!-- Findings table -->
-    <div v-if="findings.length > 0" class="overflow-x-auto">
-      <table class="w-full text-sm">
+    <div v-if="findings.length > 0" class="min-w-0 overflow-x-auto">
+      <table class="w-full text-sm table-fixed">
         <thead>
           <tr class="border-b border-gray-200 dark:border-dark-border">
             <th
-              class="pb-3 pr-4 text-left text-xs font-medium text-gray-500 dark:text-dark-text-tertiary uppercase tracking-wider w-24"
+              class="pb-3 pr-4 text-left text-xs font-medium text-gray-500 dark:text-dark-text-tertiary uppercase tracking-wider w-20"
             >
               Severity
             </th>
@@ -135,27 +135,27 @@ function formatRelativeDate(dateString: string | undefined | null): string {
               Name
             </th>
             <th
-              class="pb-3 pr-4 text-left text-xs font-medium text-gray-500 dark:text-dark-text-tertiary uppercase tracking-wider"
+              class="pb-3 pr-4 text-left text-xs font-medium text-gray-500 dark:text-dark-text-tertiary uppercase tracking-wider w-28"
             >
               CVE
             </th>
             <th
-              class="pb-3 pr-4 text-left text-xs font-medium text-gray-500 dark:text-dark-text-tertiary uppercase tracking-wider"
+              class="pb-3 pr-4 text-left text-xs font-medium text-gray-500 dark:text-dark-text-tertiary uppercase tracking-wider w-16"
             >
               CVSS
             </th>
             <th
-              class="pb-3 pr-4 text-left text-xs font-medium text-gray-500 dark:text-dark-text-tertiary uppercase tracking-wider"
+              class="pb-3 pr-4 text-left text-xs font-medium text-gray-500 dark:text-dark-text-tertiary uppercase tracking-wider w-20"
             >
               Status
             </th>
             <th
-              class="pb-3 pr-4 text-left text-xs font-medium text-gray-500 dark:text-dark-text-tertiary uppercase tracking-wider"
+              class="pb-3 pr-4 text-left text-xs font-medium text-gray-500 dark:text-dark-text-tertiary uppercase tracking-wider w-16"
             >
               Source
             </th>
             <th
-              class="pb-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-tertiary uppercase tracking-wider"
+              class="pb-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-tertiary uppercase tracking-wider w-24"
             >
               Last Seen
             </th>
@@ -178,9 +178,10 @@ function formatRelativeDate(dateString: string | undefined | null): string {
                 {{ finding.severity }}
               </span>
             </td>
-            <td class="py-3 pr-4">
+            <td class="py-3 pr-4 max-w-0">
               <span
-                class="text-gray-900 dark:text-dark-text-primary font-medium group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors"
+                class="block truncate text-gray-900 dark:text-dark-text-primary font-medium group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors"
+                :title="finding.name"
               >
                 {{ finding.name }}
               </span>
