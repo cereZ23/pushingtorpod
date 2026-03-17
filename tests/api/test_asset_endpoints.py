@@ -18,7 +18,7 @@ class TestAssetEndpoints:
     def test_list_assets_returns_paginated_results(self, authenticated_client, test_tenant, many_assets):
         """Test listing assets returns paginated results"""
         response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/assets", params={"limit": 10, "offset": 0}
+            f"/api/v1/tenants/{test_tenant.id}/assets", params={"page": 1, "page_size": 10}
         )
 
         assert response.status_code == 200
@@ -28,7 +28,7 @@ class TestAssetEndpoints:
         assert "data" in data
         assert "meta" in data
 
-        # Verify data
+        # Verify data — page_size=10 so at most 10 returned
         assert len(data["data"]) <= 10
         assert data["meta"]["total"] >= 10
         assert isinstance(data["data"], list)
@@ -43,8 +43,10 @@ class TestAssetEndpoints:
 
     def test_list_assets_with_type_filter(self, authenticated_client, test_tenant, mixed_type_assets):
         """Test filtering assets by type"""
-        # Filter for subdomains only
-        response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/assets", params={"type": "subdomain"})
+        # Filter for subdomains only — API param is 'asset_type', not 'type'
+        response = authenticated_client.get(
+            f"/api/v1/tenants/{test_tenant.id}/assets", params={"asset_type": "subdomain"}
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -54,7 +56,7 @@ class TestAssetEndpoints:
             assert asset["type"] == "subdomain"
 
         # Filter for IPs
-        response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/assets", params={"type": "ip"})
+        response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/assets", params={"asset_type": "ip"})
 
         assert response.status_code == 200
         data = response.json()
@@ -154,17 +156,16 @@ class TestAssetEndpoints:
 
     def test_create_asset_seed_success(self, authenticated_client, test_tenant):
         """Test creating a new asset seed successfully"""
-        seed_data = {"type": "domain", "identifier": "newseed.example.com", "priority": "high"}
+        # SeedCreate expects 'value' (not 'identifier') and 'enabled'
+        seed_data = {"type": "domain", "value": "newseed.example.com", "enabled": True}
 
         response = authenticated_client.post(f"/api/v1/tenants/{test_tenant.id}/assets/seeds", json=seed_data)
 
         assert response.status_code in [200, 201]
         data = response.json()
 
-        assert data["identifier"] == seed_data["identifier"]
+        assert data["value"] == seed_data["value"]
         assert data["type"] == seed_data["type"]
-        if "priority" in data:
-            assert data["priority"] == seed_data["priority"]
 
     def test_create_asset_seed_invalid_domain_rejected(self, authenticated_client, test_tenant):
         """Test creating asset seed with invalid domain is rejected"""
@@ -205,7 +206,7 @@ class TestAssetEndpoints:
         performance_timer.start()
 
         response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/assets", params={"limit": 100, "offset": 0}
+            f"/api/v1/tenants/{test_tenant.id}/assets", params={"page": 1, "page_size": 100}
         )
 
         elapsed = performance_timer.stop()
@@ -213,6 +214,7 @@ class TestAssetEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert len(data["data"]) == 100
+        assert data["meta"]["page_size"] == 100
 
         # Should respond in under 500ms
         performance_timer.assert_faster_than(0.5, f"Asset listing with 1000 records")
