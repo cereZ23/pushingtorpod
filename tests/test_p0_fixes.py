@@ -261,7 +261,7 @@ class TestProjectsAuditLogging:
         import inspect as _inspect
         from app.api.routers import projects
 
-        source = _inspect.getsource(projects.create_scan_profile)
+        source = _inspect.getsource(projects.create_profile)
         assert "log_data_modification" in source
 
     def test_update_profile_schedule_calls_audit(self):
