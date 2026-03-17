@@ -2860,23 +2860,9 @@ def run_misconfig_detection(
             f"Starting misconfiguration detection: {len(assets)} assets, {len(_CONTROLS)} controls registered"
         )
 
-        # Mark stale assets: domains/subdomains that no longer resolve DNS
-        import socket
-
-        stale_count = 0
-        for asset in assets:
-            if asset.type and asset.type.value in ("domain", "subdomain"):
-                try:
-                    socket.getaddrinfo(asset.identifier, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-                except socket.gaierror:
-                    asset.is_active = False
-                    stale_count += 1
-                    tenant_logger.info(f"Marking stale asset (no DNS): {asset.identifier}")
-        if stale_count:
-            db.commit()
-            tenant_logger.info(f"Marked {stale_count} stale assets as inactive")
-            # Re-query to exclude newly deactivated assets
-            assets = [a for a in assets if a.is_active]
+        # NOTE: Stale DNS check removed — Phase 3 (DNSX) already resolves all
+        # assets and marks unresolvable ones. Running socket.getaddrinfo() here
+        # was redundant and added 5-60s of sequential blocking DNS lookups.
 
         for asset in assets:
             asset_type_value = asset.type.value if asset.type else ""
