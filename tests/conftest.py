@@ -79,20 +79,32 @@ def db_engine():
 
 @pytest.fixture(scope="function")
 def db_session(db_engine):
-    """Create database session with transaction rollback for test isolation"""
-    # Create a connection
-    connection = db_engine.connect()
+    """Create database session with transaction rollback for test isolation.
 
-    # Begin a transaction
+    Uses the nested savepoint pattern so that session.commit() inside
+    endpoint code only commits a SAVEPOINT, not the outer transaction.
+    The outer transaction is rolled back at the end, undoing everything.
+    """
+    from sqlalchemy import event
+
+    connection = db_engine.connect()
     transaction = connection.begin()
 
-    # Create a session bound to the connection
     SessionLocal = sessionmaker(bind=connection)
     session = SessionLocal()
 
+    # Start a nested savepoint
+    session.begin_nested()
+
+    # Restart the nested savepoint after each commit so subsequent
+    # operations within the same test still run inside a savepoint.
+    @event.listens_for(session, "after_transaction_end")
+    def restart_savepoint(sess, trans):
+        if trans.nested and not trans._parent.nested:
+            sess.begin_nested()
+
     yield session
 
-    # Rollback the transaction to undo all changes
     session.close()
     transaction.rollback()
     connection.close()
@@ -626,30 +638,35 @@ def mock_tenant_logger():
 
 @pytest.fixture
 def client(db_session):
-    """FastAPI test client with test database"""
+    """FastAPI test client with test database.
+
+    Overrides BOTH get_db locations (app.database and app.api.dependencies)
+    because different routers may import from either module.
+    """
     from fastapi.testclient import TestClient
 
-    # Import app and database dependency
     try:
         from app.api.main import app
-        from app.database import get_db
 
-        # Override database dependency
         def override_get_db():
             try:
                 yield db_session
             finally:
                 pass
 
-        app.dependency_overrides[get_db] = override_get_db
+        # Override both get_db functions — routers import from
+        # app.api.dependencies, but some code uses app.database.
+        from app.api.dependencies import get_db as deps_get_db
+        from app.database import get_db as db_get_db
+
+        app.dependency_overrides[deps_get_db] = override_get_db
+        app.dependency_overrides[db_get_db] = override_get_db
 
         test_client = TestClient(app)
         yield test_client
 
-        # Clear overrides after test
         app.dependency_overrides.clear()
     except ImportError:
-        # Fallback if app not yet created
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 

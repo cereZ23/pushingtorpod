@@ -81,32 +81,21 @@ jobs:
     - name: Run database migrations
       run: alembic upgrade head
 
-    - name: Run unit tests
+    - name: Run all tests
       run: |
-        pytest tests/unit/ -v \
+        pytest tests/ -v \
           --cov=app \
           --cov-report=xml \
           --cov-report=term-missing \
           --durations=20 \
-          --timeout=120
-
-    - name: Run standalone tests (no DB fixtures)
-      run: |
-        pytest \
-          tests/test_correlation.py \
-          tests/test_dedup.py \
-          tests/test_h1_security.py \
-          tests/test_models.py \
-          tests/test_network_intel.py \
-          tests/test_pipeline.py \
-          tests/test_siem_export.py \
-          tests/test_sprint02_security.py \
-          tests/test_threat_intel.py \
-          tests/test_ticketing.py \
-          tests/api/test_account_lockout.py \
-          tests/api/test_graph_router.py \
-          -v --timeout=120 \
-          -k "not test_security_comprehensive and not TestRiskScoringIntegration and not test_risk_scoring_degrades_without_threat_intel"
+          --timeout=120 \
+          --ignore=tests/test_secure_executor.py \
+          --ignore=tests/test_discovery.py \
+          --ignore=tests/test_visual_recon.py \
+          --ignore=tests/test_integration_discovery.py \
+          --ignore=tests/test_enrichment_pipeline_e2e.py \
+          --ignore=tests/performance/ \
+          -k "not test_security_comprehensive"
 
     - name: Upload coverage
       uses: codecov/codecov-action@v4
