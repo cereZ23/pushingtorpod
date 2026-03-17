@@ -46,7 +46,7 @@ RUN set -eo pipefail && \
       local ver=${tag#v}; \
       local url="https://github.com/${repo}/releases/download/${tag}/${asset}"; \
       echo "→ ${name} ${ver} (tgz)"; \
-      curl -sL "$url" | tar xz -C /opt/pd-tools/ && true; \
+      curl -sfL "$url" -o /tmp/dl.tgz && tar xz -C /opt/pd-tools/ -f /tmp/dl.tgz && rm /tmp/dl.tgz; \
     }; \
     # ── ProjectDiscovery tools (zip format) ── \
     dl_zip projectdiscovery/subfinder subfinder && \
@@ -160,8 +160,8 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
 RUN playwright install chromium --with-deps && \
     chmod -R a+rx /opt/pw-browsers
 
-# Update Nuclei templates at build time.
-RUN nuclei -update-templates
+# Update Nuclei templates at build time (skip if binary missing).
+RUN which nuclei && nuclei -update-templates || echo "WARN: nuclei not found, skipping template update"
 
 # Create non-root user.
 RUN groupadd --gid 1000 appuser && \
