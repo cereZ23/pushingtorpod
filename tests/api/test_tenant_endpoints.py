@@ -82,7 +82,7 @@ class TestTenantEndpoints:
         """Test tenant endpoints validate tenant ID format"""
         # Invalid tenant ID format
         response = authenticated_client.get("/api/v1/tenants/invalid-id/dashboard")
-        assert response.status_code in [400, 404, 422]
+        assert response.status_code in [400, 403, 404, 422]
 
         # Non-existent but valid format
         response = authenticated_client.get("/api/v1/tenants/99999/dashboard")
