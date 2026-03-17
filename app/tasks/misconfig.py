@@ -1172,6 +1172,178 @@ def check_hdr_008(
     return findings
 
 
+@register(
+    control_id="HDR-009",
+    name="CORS origin reflection",
+    severity="high",
+    confidence=0.90,
+    category="Security Headers",
+    asset_types=["domain", "subdomain"],
+)
+def check_hdr_009(
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
+) -> list[dict]:
+    """Detect CORS origin reflection (server echoes arbitrary Origin header).
+
+    More exploitable than wildcard CORS: when combined with
+    Access-Control-Allow-Credentials: true, enables cross-origin
+    credential theft / account takeover.
+    """
+    findings: list[dict] = []
+    for svc in services:
+        if not _is_web_service(svc) or _is_default_vhost(svc):
+            continue
+        if svc.http_status is None and svc.port not in _HTTP_PORTS:
+            continue
+        headers = _get_http_headers(svc)
+        acao = headers.get("access-control-allow-origin", "")
+        # Check for reflection pattern: origin value contains a domain that
+        # is NOT the asset itself (httpx stores the response headers from a
+        # standard request, so reflected origins appear when the server echoes
+        # the request Origin without validation).
+        if acao and acao != "*":
+            asset_domain = asset.identifier.lower()
+            acao_lower = acao.lower().strip()
+            # If the ACAO is set to something other than the asset's own domain
+            # and includes credentials, it may be reflecting origins.
+            acac = headers.get("access-control-allow-credentials", "").lower()
+            if acac == "true" and asset_domain not in acao_lower:
+                findings.append(
+                    {
+                        "name": "CORS origin reflection with credentials",
+                        "severity": "high",
+                        "confidence": 0.75,
+                        "evidence": {
+                            "port": svc.port,
+                            "access_control_allow_origin": acao,
+                            "access_control_allow_credentials": "true",
+                        },
+                        "control_id": "HDR-009",
+                        "finding_key": f"HDR-009:{asset.identifier}:{svc.port}",
+                        "remediation": (
+                            "Do not reflect the Origin header in Access-Control-Allow-Origin. "
+                            "Maintain an explicit allowlist of trusted origins. "
+                            "Never combine origin reflection with Allow-Credentials: true."
+                        ),
+                    }
+                )
+    return findings
+
+
+@register(
+    control_id="HDR-010",
+    name="Insecure cookie attributes",
+    severity="medium",
+    confidence=0.85,
+    category="Security Headers",
+    asset_types=["domain", "subdomain"],
+)
+def check_hdr_010(
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
+) -> list[dict]:
+    """Detect cookies missing Secure, HttpOnly, or SameSite attributes."""
+    findings: list[dict] = []
+    for svc in services:
+        if not _is_web_service(svc) or _is_default_vhost(svc):
+            continue
+        if svc.http_status is None and svc.port not in _HTTP_PORTS:
+            continue
+        headers = _get_http_headers(svc)
+        set_cookie = headers.get("set-cookie", "")
+        if not set_cookie:
+            continue
+        cookie_lower = set_cookie.lower()
+        missing = []
+        if "secure" not in cookie_lower:
+            missing.append("Secure")
+        if "httponly" not in cookie_lower:
+            missing.append("HttpOnly")
+        if "samesite" not in cookie_lower:
+            missing.append("SameSite")
+        if missing:
+            findings.append(
+                {
+                    "name": f"Cookie missing attributes: {', '.join(missing)}",
+                    "severity": "medium",
+                    "confidence": 0.85,
+                    "evidence": {
+                        "port": svc.port,
+                        "set_cookie_preview": set_cookie[:200],
+                        "missing_attributes": missing,
+                    },
+                    "control_id": "HDR-010",
+                    "finding_key": f"HDR-010:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Set Secure (HTTPS only), HttpOnly (no JS access), and "
+                        "SameSite=Lax or Strict on all cookies to prevent session "
+                        "hijacking and CSRF attacks."
+                    ),
+                }
+            )
+    return findings
+
+
+@register(
+    control_id="INF-009",
+    name="Dangerous HTTP methods enabled",
+    severity="medium",
+    confidence=0.80,
+    category="Information Disclosure",
+    asset_types=["domain", "subdomain"],
+)
+def check_inf_009(
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
+) -> list[dict]:
+    """Detect TRACE, PUT, or DELETE methods enabled via Allow header.
+
+    TRACE enables Cross-Site Tracing (XST) attacks. PUT can allow
+    arbitrary file upload. DELETE can allow resource destruction.
+    """
+    findings: list[dict] = []
+    for svc in services:
+        if not _is_web_service(svc) or _is_default_vhost(svc):
+            continue
+        if svc.http_status is None and svc.port not in _HTTP_PORTS:
+            continue
+        headers = _get_http_headers(svc)
+        allow = headers.get("allow", "")
+        if not allow:
+            continue
+        methods = {m.strip().upper() for m in allow.split(",")}
+        dangerous = methods & {"TRACE", "PUT", "DELETE"}
+        if dangerous:
+            sev = "high" if "TRACE" in dangerous else "medium"
+            findings.append(
+                {
+                    "name": f"Dangerous HTTP methods enabled: {', '.join(sorted(dangerous))}",
+                    "severity": sev,
+                    "confidence": 0.80,
+                    "evidence": {
+                        "port": svc.port,
+                        "allow_header": allow,
+                        "dangerous_methods": sorted(dangerous),
+                    },
+                    "control_id": "INF-009",
+                    "finding_key": f"INF-009:{asset.identifier}:{svc.port}",
+                    "remediation": (
+                        "Disable TRACE method to prevent Cross-Site Tracing (XST). "
+                        "Disable PUT and DELETE unless required by the application. "
+                        "Configure the web server to only allow GET, HEAD, POST, OPTIONS."
+                    ),
+                }
+            )
+    return findings
+
+
 # ---------------------------------------------------------------------------
 # Admin Panel Detection (ADM-001 .. ADM-004)
 # ---------------------------------------------------------------------------
