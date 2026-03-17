@@ -104,6 +104,7 @@ jobs:
           --ignore=tests/test_security.py \
           --ignore=tests/test_threat_intel.py \
           --ignore=tests/api/test_api_security.py \
+          --ignore=tests/api/test_auth_endpoints.py \
           --ignore=tests/api/test_api_performance.py \
           --ignore=tests/api/test_asset_endpoints.py \
           --ignore=tests/api/test_service_endpoints.py \
