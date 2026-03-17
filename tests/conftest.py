@@ -638,40 +638,29 @@ def mock_tenant_logger():
 
 @pytest.fixture
 def client(db_session):
-    """FastAPI test client with test database.
+    """FastAPI test client with test database (no auth).
 
     Overrides BOTH get_db locations (app.database and app.api.dependencies)
     because different routers may import from either module.
     """
     from fastapi.testclient import TestClient
+    from app.api.main import app
+    from app.api.dependencies import get_db as deps_get_db
+    from app.database import get_db as db_get_db
 
-    try:
-        from app.api.main import app
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
 
-        def override_get_db():
-            try:
-                yield db_session
-            finally:
-                pass
+    app.dependency_overrides[deps_get_db] = override_get_db
+    app.dependency_overrides[db_get_db] = override_get_db
 
-        # Override both get_db functions — routers import from
-        # app.api.dependencies, but some code uses app.database.
-        from app.api.dependencies import get_db as deps_get_db
-        from app.database import get_db as db_get_db
+    test_client = TestClient(app)
+    yield test_client
 
-        app.dependency_overrides[deps_get_db] = override_get_db
-        app.dependency_overrides[db_get_db] = override_get_db
-
-        test_client = TestClient(app)
-        yield test_client
-
-        app.dependency_overrides.clear()
-    except ImportError:
-        from fastapi import FastAPI
-        from fastapi.testclient import TestClient
-
-        app = FastAPI()
-        yield TestClient(app)
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
@@ -994,10 +983,34 @@ def api_client():
 
 
 @pytest.fixture
-def authenticated_client(client, auth_headers):
-    """Test client with JWT token pre-configured"""
-    client.headers.update(auth_headers)
-    return client
+def authenticated_client(db_session, test_user, test_tenant):
+    """Test client with auth bypassed via dependency override.
+
+    Overrides get_current_user to return test_user directly,
+    avoiding JWT generation/verification and Redis dependency.
+    """
+    from fastapi.testclient import TestClient
+    from app.api.main import app
+    from app.api.dependencies import get_db as deps_get_db, get_current_user
+    from app.database import get_db as db_get_db
+
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+
+    async def override_get_current_user():
+        return test_user
+
+    app.dependency_overrides[deps_get_db] = override_get_db
+    app.dependency_overrides[db_get_db] = override_get_db
+    app.dependency_overrides[get_current_user] = override_get_current_user
+
+    test_client = TestClient(app)
+    yield test_client
+
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
