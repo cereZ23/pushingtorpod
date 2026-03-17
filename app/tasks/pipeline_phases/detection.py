@@ -188,6 +188,40 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             total_scanned += cdn_result.get("assets_scanned", 0)
             total_urls += cdn_result.get("urls_scanned", 0)
 
+    # Pass 3: DNS & Network protocol checks (SPF/DKIM/DMARC, zone transfer,
+    # SSH, FTP, SNMP, exposed databases). These templates use info/low severity
+    # which is excluded from the main HTTP scan to avoid 4000+ noise templates.
+    #
+    # Tier 1: dns/ only (SPF, DKIM, DMARC, DNSSEC, zone transfer) — fast, ~1 min
+    # Tier 2: dns/ + network/ basics (SSH, FTP, SNMP, Redis, MySQL, MongoDB)
+    # Tier 3: dns/ + network/ full (all protocol checks)
+    dns_network_templates = {
+        1: ["dns/"],
+        2: ["dns/", "network/"],
+        3: ["dns/", "network/"],
+    }
+    dns_net_tpls = dns_network_templates.get(scan_tier, ["dns/"])
+
+    # All domain/subdomain assets need DNS checks; standalone IPs need network checks
+    dns_net_asset_ids = [a.id for a in all_assets]
+    if dns_net_asset_ids:
+        tenant_logger.info(
+            f"Nuclei DNS/network pass: {len(dns_net_asset_ids)} assets, "
+            f"templates={dns_net_tpls} (tier {scan_tier})"
+        )
+        dns_result = run_nuclei_scan(
+            tenant_id,
+            dns_net_asset_ids,
+            severity=["critical", "high", "medium", "low", "info"],
+            templates=dns_net_tpls,
+            rate_limit=rate_limit,
+            concurrency=concurrency,
+            timeout=300,  # DNS/network checks are fast
+        )
+        if isinstance(dns_result, dict):
+            total_created += dns_result.get("findings_created", 0)
+            total_updated += dns_result.get("findings_updated", 0)
+
     return {
         "findings_created": total_created,
         "findings_updated": total_updated,
@@ -197,6 +231,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         "severity_filter": severity,
         "interactsh_enabled": use_interactsh,
         "cdn_assets_scanned": len(cdn_asset_ids),
+        "dns_network_templates": dns_net_tpls,
     }
 
 
