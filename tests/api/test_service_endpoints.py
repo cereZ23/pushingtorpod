@@ -23,8 +23,8 @@ class TestServiceEndpoints:
 
         # Verify response structure
         if isinstance(data, dict):
-            assert "items" in data
-            services = data["items"]
+            assert "data" in data
+            services = data["data"]
         else:
             services = data
 
@@ -54,7 +54,7 @@ class TestServiceEndpoints:
         data = response.json()
 
         if isinstance(data, dict):
-            services = data.get("items", data)
+            services = data.get("data", data)
         else:
             services = data
 
@@ -74,7 +74,7 @@ class TestServiceEndpoints:
         data = response.json()
 
         if isinstance(data, dict):
-            services = data["items"]
+            services = data["data"]
         else:
             services = data
 
@@ -91,7 +91,7 @@ class TestServiceEndpoints:
         data = response.json()
 
         if isinstance(data, dict):
-            services = data["items"]
+            services = data["data"]
         else:
             services = data
 
@@ -111,7 +111,7 @@ class TestServiceEndpoints:
         data = response.json()
 
         if isinstance(data, dict):
-            services = data["items"]
+            services = data["data"]
         else:
             services = data
 

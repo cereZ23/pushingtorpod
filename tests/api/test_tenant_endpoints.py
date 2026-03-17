@@ -42,9 +42,9 @@ class TestTenantEndpoints:
         assert stats["total_assets"] > 0
         assert isinstance(stats["total_findings"], int)
 
-    def test_get_tenant_dashboard_requires_auth(self, api_client, test_tenant):
+    def test_get_tenant_dashboard_requires_auth(self, client, test_tenant):
         """Test tenant dashboard requires authentication"""
-        response = api_client.get(f"/api/v1/tenants/{test_tenant.id}/dashboard")
+        response = client.get(f"/api/v1/tenants/{test_tenant.id}/dashboard")
 
         assert response.status_code == 401
         data = response.json()

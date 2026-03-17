@@ -24,8 +24,8 @@ class TestFindingEndpoints:
 
         # Verify response structure
         if isinstance(data, dict):
-            assert "items" in data
-            findings = data["items"]
+            assert "data" in data
+            findings = data["data"]
         else:
             findings = data
 
@@ -52,7 +52,7 @@ class TestFindingEndpoints:
         data = response.json()
 
         if isinstance(data, dict):
-            findings = data["items"]
+            findings = data["data"]
         else:
             findings = data
 
@@ -67,7 +67,7 @@ class TestFindingEndpoints:
         data = response.json()
 
         if isinstance(data, dict):
-            findings = data["items"]
+            findings = data["data"]
         else:
             findings = data
 
@@ -83,7 +83,7 @@ class TestFindingEndpoints:
         data = response.json()
 
         if isinstance(data, dict):
-            findings = data["items"]
+            findings = data["data"]
         else:
             findings = data
 
@@ -100,7 +100,7 @@ class TestFindingEndpoints:
         data = response.json()
 
         if isinstance(data, dict):
-            findings = data["items"]
+            findings = data["data"]
         else:
             findings = data
 
@@ -171,7 +171,7 @@ class TestFindingEndpoints:
         data = response.json()
 
         if isinstance(data, dict):
-            findings = data["items"]
+            findings = data["data"]
         else:
             findings = data
 
@@ -196,7 +196,7 @@ class TestFindingEndpoints:
         data = response.json()
 
         if isinstance(data, dict):
-            findings = data["items"]
+            findings = data["data"]
         else:
             findings = data
 

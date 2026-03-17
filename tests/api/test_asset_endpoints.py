@@ -25,19 +25,17 @@ class TestAssetEndpoints:
         data = response.json()
 
         # Verify pagination structure
-        assert "items" in data
-        assert "total" in data
-        assert "limit" in data
-        assert "offset" in data
+        assert "data" in data
+        assert "meta" in data
 
         # Verify data
-        assert len(data["items"]) <= 10
-        assert data["total"] >= 10
-        assert isinstance(data["items"], list)
+        assert len(data["data"]) <= 10
+        assert data["meta"]["total"] >= 10
+        assert isinstance(data["data"], list)
 
         # Verify asset structure
-        if len(data["items"]) > 0:
-            asset = data["items"][0]
+        if len(data["data"]) > 0:
+            asset = data["data"][0]
             assert "id" in asset
             assert "identifier" in asset
             assert "type" in asset
@@ -52,7 +50,7 @@ class TestAssetEndpoints:
         data = response.json()
 
         # All returned assets should be subdomains
-        for asset in data["items"]:
+        for asset in data["data"]:
             assert asset["type"] == "subdomain"
 
         # Filter for IPs
@@ -61,7 +59,7 @@ class TestAssetEndpoints:
         assert response.status_code == 200
         data = response.json()
 
-        for asset in data["items"]:
+        for asset in data["data"]:
             assert asset["type"] == "ip"
 
     def test_list_assets_with_priority_filter(self, authenticated_client, test_tenant, priority_assets):
@@ -72,7 +70,7 @@ class TestAssetEndpoints:
         data = response.json()
 
         # All returned assets should be critical priority
-        for asset in data["items"]:
+        for asset in data["data"]:
             assert asset.get("priority") == "critical" or asset.get("risk_score", 0) >= 75
 
     def test_list_assets_with_search_query(self, authenticated_client, test_tenant, searchable_assets):
@@ -85,7 +83,7 @@ class TestAssetEndpoints:
         data = response.json()
 
         # All returned assets should contain search term
-        for asset in data["items"]:
+        for asset in data["data"]:
             assert search_term.lower() in asset["identifier"].lower()
 
     def test_list_assets_enforces_tenant_isolation(
@@ -98,7 +96,7 @@ class TestAssetEndpoints:
         data = response.json()
 
         # Should only see test_tenant assets, not other_tenant assets
-        for asset in data["items"]:
+        for asset in data["data"]:
             # If tenant_id is exposed, verify it
             if "tenant_id" in asset:
                 assert asset["tenant_id"] == test_tenant.id
@@ -158,7 +156,7 @@ class TestAssetEndpoints:
         """Test creating a new asset seed successfully"""
         seed_data = {"type": "domain", "identifier": "newseed.example.com", "priority": "high"}
 
-        response = authenticated_client.post(f"/api/v1/tenants/{test_tenant.id}/seeds", json=seed_data)
+        response = authenticated_client.post(f"/api/v1/tenants/{test_tenant.id}/assets/seeds", json=seed_data)
 
         assert response.status_code in [200, 201]
         data = response.json()
@@ -178,7 +176,7 @@ class TestAssetEndpoints:
         ]
 
         for seed_data in invalid_seeds:
-            response = authenticated_client.post(f"/api/v1/tenants/{test_tenant.id}/seeds", json=seed_data)
+            response = authenticated_client.post(f"/api/v1/tenants/{test_tenant.id}/assets/seeds", json=seed_data)
 
             assert response.status_code in [400, 422]
 
@@ -194,7 +192,7 @@ class TestAssetEndpoints:
         ]
 
         for seed_data in internal_ips:
-            response = authenticated_client.post(f"/api/v1/tenants/{test_tenant.id}/seeds", json=seed_data)
+            response = authenticated_client.post(f"/api/v1/tenants/{test_tenant.id}/assets/seeds", json=seed_data)
 
             # Should reject internal IPs for security
             assert response.status_code in [400, 422]
@@ -214,7 +212,7 @@ class TestAssetEndpoints:
 
         assert response.status_code == 200
         data = response.json()
-        assert len(data["items"]) == 100
+        assert len(data["data"]) == 100
 
         # Should respond in under 500ms
         performance_timer.assert_faster_than(0.5, f"Asset listing with 1000 records")

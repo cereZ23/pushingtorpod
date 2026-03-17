@@ -28,7 +28,7 @@ class TestAPIPerformance:
 
         assert response.status_code == 200
         data = response.json()
-        assert len(data["items"]) == 50
+        assert len(data["data"]) == 50
 
         # Should respond in under 200ms
         performance_timer.assert_faster_than(0.2, "Asset listing with 1000 records")
@@ -127,7 +127,7 @@ class TestAPIPerformance:
 
             assert response.status_code == 200
             data = response.json()
-            assert len(data["items"]) <= 100
+            assert len(data["data"]) <= 100
 
         # Calculate statistics
         avg_time = mean(response_times)
