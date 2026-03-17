@@ -206,8 +206,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     dns_net_asset_ids = [a.id for a in all_assets]
     if dns_net_asset_ids:
         tenant_logger.info(
-            f"Nuclei DNS/network pass: {len(dns_net_asset_ids)} assets, "
-            f"templates={dns_net_tpls} (tier {scan_tier})"
+            f"Nuclei DNS/network pass: {len(dns_net_asset_ids)} assets, templates={dns_net_tpls} (tier {scan_tier})"
         )
         dns_result = run_nuclei_scan(
             tenant_id,
