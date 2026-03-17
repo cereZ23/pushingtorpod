@@ -9,7 +9,7 @@ import pytest
 import time
 from datetime import datetime, timedelta
 from fastapi.testclient import TestClient
-from jose import jwt
+import jwt
 
 from app.models import User, Tenant
 from app.config import get_settings
