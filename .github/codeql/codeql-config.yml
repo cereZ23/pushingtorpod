@@ -1,0 +1,36 @@
+name: "EASM CodeQL Configuration"
+
+# Exclude test directories from analysis — they contain hardcoded URLs,
+# mock data, and intentionally insecure patterns that trigger false positives.
+paths-ignore:
+  - tests
+  - "**/*test*"
+  - "**/*spec*"
+
+# Disable specific queries that produce false positives in this codebase:
+#
+# py/full-ssrf: SIEM push helpers receive admin-configured URLs already
+#   validated by validate_endpoint_url_ssrf() — CodeQL doesn't trace the
+#   validation through the call chain.
+#
+# py/insecure-protocol: cert_harvest.py intentionally uses CERT_NONE to
+#   collect certificates from arbitrary hosts for security analysis.
+#
+# py/weak-sensitive-data-hashing: SHA-256 is used for API key lookup
+#   (high-entropy random tokens), not user passwords.
+#
+# py/bad-tag-filter: enrichment.py regex tag stripping is defense-in-depth
+#   sanitization of scanner output, not the primary XSS defense.
+query-filters:
+  - exclude:
+      id: py/full-ssrf
+      path: app/api/routers/siem.py
+  - exclude:
+      id: py/insecure-protocol
+      path: app/tasks/cert_harvest.py
+  - exclude:
+      id: py/weak-sensitive-data-hashing
+      path: app/utils/auth.py
+  - exclude:
+      id: py/bad-tag-filter
+      path: app/tasks/enrichment.py

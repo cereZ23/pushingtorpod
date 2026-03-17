@@ -30,7 +30,10 @@ def fetch_certificate(host: str, port: int = 443, timeout: float = 10.0) -> Opti
     """
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE  # Accept self-signed too
+    # Intentionally accept any certificate (including self-signed, expired,
+    # and misconfigured) — this is an EASM reconnaissance tool that needs
+    # to harvest certificates from arbitrary hosts for security analysis.
+    ctx.verify_mode = ssl.CERT_NONE  # noqa: S501 — intentional for cert harvesting
 
     try:
         with socket.create_connection((host, port), timeout=timeout) as sock:

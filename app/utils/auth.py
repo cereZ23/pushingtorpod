@@ -163,7 +163,10 @@ def hash_api_key(api_key: str) -> str:
     Returns:
         Hashed API key
     """
-    return hashlib.sha256(api_key.encode()).hexdigest()
+    # SHA-256 is appropriate for API key lookup (high-entropy random tokens,
+    # not user-chosen passwords). bcrypt/argon2 would add latency on every
+    # API call without security benefit for 256-bit random keys.
+    return hashlib.sha256(api_key.encode()).hexdigest()  # noqa: S324
 
 
 def verify_api_key(db: Session, api_key: str) -> tuple[User, int]:

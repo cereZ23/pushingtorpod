@@ -546,8 +546,9 @@ def sanitize_html(text: str) -> str:
     if not text:
         return ""
 
-    # Remove script tags
-    text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    # Remove script tags (defense-in-depth sanitization of httpx response
+    # metadata before DB storage — not the primary XSS defense layer).
+    text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)  # noqa: S603
 
     # Remove iframe tags
     text = re.sub(r"<iframe[^>]*>.*?</iframe>", "", text, flags=re.DOTALL | re.IGNORECASE)

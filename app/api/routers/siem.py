@@ -206,7 +206,9 @@ def _push_splunk_hec(events: list[dict], endpoint_url: str, token: str) -> None:
     payload = "\n".join(json.dumps(evt) for evt in events)
 
     with httpx.Client(timeout=_PUSH_TIMEOUT, verify=True) as client:
-        response = client.post(
+        # endpoint_url is admin-configured and validated via validate_endpoint_url_ssrf()
+        # before reaching this helper. See _validate_siem_endpoint() and push_to_siem().
+        response = client.post(  # nosec: SSRF validated upstream
             endpoint_url,
             content=payload,
             headers={
@@ -226,7 +228,9 @@ def _push_cef(events: list[str], endpoint_url: str, token: str) -> None:
     payload = "\n".join(events)
 
     with httpx.Client(timeout=_PUSH_TIMEOUT, verify=True) as client:
-        response = client.post(
+        # endpoint_url is admin-configured and validated via validate_endpoint_url_ssrf()
+        # before reaching this helper. See _validate_siem_endpoint() and push_to_siem().
+        response = client.post(  # nosec: SSRF validated upstream
             endpoint_url,
             content=payload,
             headers={
