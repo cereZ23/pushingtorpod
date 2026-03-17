@@ -644,7 +644,7 @@ def client(db_session):
     because different routers may import from either module.
     """
     from fastapi.testclient import TestClient
-    from app.api.main import app
+    from app.main import app
     from app.api.dependencies import get_db as deps_get_db
     from app.database import get_db as db_get_db
 
@@ -990,7 +990,7 @@ def authenticated_client(db_session, test_user, test_tenant):
     avoiding JWT generation/verification and Redis dependency.
     """
     from fastapi.testclient import TestClient
-    from app.api.main import app
+    from app.main import app
     from app.api.dependencies import get_db as deps_get_db, get_current_user
     from app.database import get_db as db_get_db
 
