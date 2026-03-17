@@ -688,7 +688,7 @@ def test_tenant(db_session):
 def test_user(db_session, test_tenant):
     """Create test user with hashed password"""
     from app.models.auth import User
-    from app.security.auth import get_password_hash
+    from app.core.security import hash_password as get_password_hash
 
     user = User(
         email="test@example.com",
@@ -715,7 +715,7 @@ def test_user(db_session, test_tenant):
 def admin_user(db_session, test_tenant):
     """Create admin user"""
     from app.models.auth import User
-    from app.security.auth import get_password_hash
+    from app.core.security import hash_password as get_password_hash
 
     user = User(
         email="admin@example.com",
@@ -746,12 +746,11 @@ def auth_headers(client, test_user):
         token = response.json()["access_token"]
         return {"Authorization": f"Bearer {token}"}
 
-    # Login endpoint not available (e.g. minimal test app) — generate token directly
+    # Login endpoint not available — generate token directly
     from datetime import timedelta
-    from app.security.auth import create_access_token
+    from app.utils.auth import create_access_token
 
-    token_data = {"sub": test_user.email, "user_id": test_user.id}
-    token = create_access_token(token_data, expires_delta=timedelta(hours=1))
+    token = create_access_token(user_id=test_user.id, email=test_user.email, expires_delta=timedelta(hours=1))
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -763,12 +762,10 @@ def admin_headers(client, admin_user):
         token = response.json()["access_token"]
         return {"Authorization": f"Bearer {token}"}
 
-    # Login endpoint not available (e.g. minimal test app) — generate token directly
     from datetime import timedelta
-    from app.security.auth import create_access_token
+    from app.utils.auth import create_access_token
 
-    token_data = {"sub": admin_user.email, "user_id": admin_user.id, "is_superuser": True}
-    token = create_access_token(token_data, expires_delta=timedelta(hours=1))
+    token = create_access_token(user_id=admin_user.id, email=admin_user.email, expires_delta=timedelta(hours=1))
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -779,12 +776,9 @@ def refresh_token(client, test_user):
     if response.status_code == 200:
         return response.json().get("refresh_token")
 
-    # Login endpoint not available (e.g. minimal test app) — generate token directly
-    from datetime import timedelta
-    from app.security.auth import create_refresh_token
+    from app.utils.auth import create_refresh_token
 
-    token_data = {"sub": test_user.email, "user_id": test_user.id}
-    return create_refresh_token(token_data, expires_delta=timedelta(days=7))
+    return create_refresh_token(user_id=test_user.id, email=test_user.email)
 
 
 @pytest.fixture
@@ -801,7 +795,7 @@ def other_tenant(db_session):
 def other_tenant_user(db_session, other_tenant):
     """Create user belonging to other tenant"""
     from app.models.auth import User, TenantMembership
-    from app.security.auth import get_password_hash
+    from app.core.security import hash_password as get_password_hash
 
     user = User(
         email="other@example.com",
