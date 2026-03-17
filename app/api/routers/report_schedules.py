@@ -78,7 +78,7 @@ def _schedule_to_response(schedule: ReportSchedule) -> ReportScheduleResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/", response_model=List[ReportScheduleResponse])
+@router.get("", response_model=List[ReportScheduleResponse])
 def list_report_schedules(
     tenant_id: int,
     db: Session = Depends(get_db),
@@ -110,7 +110,7 @@ def list_report_schedules(
 
 
 @router.post(
-    "/",
+    "",
     response_model=ReportScheduleResponse,
     status_code=status.HTTP_201_CREATED,
 )
