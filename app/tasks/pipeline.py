@@ -570,7 +570,7 @@ def _execute_phase(
     elif phase_id == "5b":
         return _phase_5b_cdn_detection(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == "5c":
-        return _phase_5c_service_fingerprint(tenant_id, project_id, scan_run_id, db, tenant_logger)
+        return _phase_5c_service_fingerprint(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier)
     elif phase_id == "6":
         return _phase_6_fingerprinting(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == "6b":

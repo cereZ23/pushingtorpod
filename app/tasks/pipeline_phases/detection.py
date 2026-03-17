@@ -115,15 +115,13 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         interactsh_server = app_settings.interactsh_server or "oast.pro"
         tenant_logger.info("Nuclei: interactsh enabled (server=%s)", interactsh_server)
 
-    # Tier-based concurrency, rate limit, and timeout
-    # Tier 1 uses reduced template set (~2k) and finishes in 5-10 min
-    # Tier 2/3 use full template set (~7k) and need more time
-    tier_concurrency = {1: 25, 2: 25, 3: 30}
-    tier_rate_limit = {1: 150, 2: 300, 3: 500}
-    tier_timeout = {1: 600, 2: 1200, 3: 1800}
-    concurrency = tier_concurrency.get(scan_tier, 25)
-    rate_limit = tier_rate_limit.get(scan_tier, 300)
-    timeout = tier_timeout.get(scan_tier, 1800)
+    # CPU/RAM-aware concurrency, rate limit, and timeout
+    from app.services.resource_scaler import get_scan_params
+
+    params = get_scan_params(scan_tier)
+    concurrency = params.nuclei_concurrency
+    rate_limit = params.nuclei_rate_limit
+    timeout = params.nuclei_timeout
 
     # Apply adaptive throttle if active
     from app.services.adaptive_throttle import get_throttle

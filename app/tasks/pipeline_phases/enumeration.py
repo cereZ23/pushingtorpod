@@ -499,14 +499,18 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     from app.tasks.enrichment import run_naabu
     from app.models.database import Asset, AssetType
 
-    # Tier-based port configuration
-    # Tier 1 uses top-100 with 300s timeout (connect scan in Docker is slow)
-    tier_config = {
-        1: {"top_ports": "100", "rate": 100, "full_scan": False, "timeout": 300},
-        2: {"top_ports": "1000", "rate": 500, "full_scan": False, "timeout": 600},
-        3: {"top_ports": "full", "rate": 1000, "full_scan": True, "timeout": 1800},
+    # CPU/RAM-aware port configuration
+    from app.services.resource_scaler import get_scan_params
+
+    params = get_scan_params(scan_tier)
+    tier_ports = {1: "100", 2: "1000", 3: "full"}
+    tier_full = {1: False, 2: False, 3: True}
+    config = {
+        "top_ports": tier_ports.get(scan_tier, "1000"),
+        "rate": params.naabu_rate,
+        "full_scan": tier_full.get(scan_tier, False),
+        "timeout": params.naabu_timeout,
     }
-    config = tier_config.get(scan_tier, tier_config[1])
 
     # Apply adaptive throttle if active
     from app.services.adaptive_throttle import get_throttle
@@ -641,7 +645,7 @@ def _phase_5b_cdn_detection(tenant_id, project_id, scan_run_id, db, tenant_logge
     }
 
 
-def _phase_5c_service_fingerprint(tenant_id, project_id, scan_run_id, db, tenant_logger):
+def _phase_5c_service_fingerprint(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier=1):
     """Phase 5c: Service fingerprinting with fingerprintx.
 
     Runs on open ports discovered by naabu (Phase 5). Updates service
@@ -649,6 +653,13 @@ def _phase_5c_service_fingerprint(tenant_id, project_id, scan_run_id, db, tenant
     """
     from app.tasks.service_fingerprint import run_fingerprintx
     from app.models.database import Asset, AssetType, Service
+    from app.services.resource_scaler import get_scan_params
+    from app.config import settings
+
+    # Apply CPU-aware timeout (default 300s is too long for small scans)
+    params = get_scan_params(scan_tier)
+    settings.fingerprintx_timeout = params.fingerprintx_timeout
+    tenant_logger.info(f"fingerprintx timeout set to {params.fingerprintx_timeout}s (tier {scan_tier})")
 
     # Build host:port targets from services table
     services = (
