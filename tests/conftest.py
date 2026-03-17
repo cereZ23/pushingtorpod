@@ -687,29 +687,8 @@ def test_tenant(db_session):
 @pytest.fixture
 def test_user(db_session, test_tenant):
     """Create test user with hashed password"""
-    try:
-        from app.models.user import User
-    except ImportError:
-        # Create minimal User class if not exists
-        from sqlalchemy import Column, Integer, String, Boolean
-
-        class User(Base):
-            __tablename__ = "users"
-            id = Column(Integer, primary_key=True)
-            email = Column(String, unique=True, nullable=False)
-            username = Column(String, unique=True, nullable=False)
-            hashed_password = Column(String, nullable=False)
-            is_active = Column(Boolean, default=True)
-            is_superuser = Column(Boolean, default=False)
-
-    try:
-        from app.security.auth import get_password_hash
-    except ImportError:
-        # Fallback password hash
-        import bcrypt
-
-        def get_password_hash(password: str) -> str:
-            return bcrypt.hashpw(password.encode(), bcrypt.gensalt(12)).decode()
+    from app.models.auth import User
+    from app.security.auth import get_password_hash
 
     user = User(
         email="test@example.com",
@@ -723,14 +702,11 @@ def test_user(db_session, test_tenant):
     db_session.refresh(user)
 
     # Create tenant membership
-    try:
-        from app.models.user import TenantMembership
+    from app.models.auth import TenantMembership
 
-        membership = TenantMembership(user_id=user.id, tenant_id=test_tenant.id, role="member")
-        db_session.add(membership)
-        db_session.commit()
-    except ImportError:
-        pass
+    membership = TenantMembership(user_id=user.id, tenant_id=test_tenant.id, role="member")
+    db_session.add(membership)
+    db_session.commit()
 
     return user
 
@@ -738,27 +714,8 @@ def test_user(db_session, test_tenant):
 @pytest.fixture
 def admin_user(db_session, test_tenant):
     """Create admin user"""
-    try:
-        from app.models.user import User
-    except ImportError:
-        from sqlalchemy import Column, Integer, String, Boolean
-
-        class User(Base):
-            __tablename__ = "users"
-            id = Column(Integer, primary_key=True)
-            email = Column(String, unique=True, nullable=False)
-            username = Column(String, unique=True, nullable=False)
-            hashed_password = Column(String, nullable=False)
-            is_active = Column(Boolean, default=True)
-            is_superuser = Column(Boolean, default=False)
-
-    try:
-        from app.security.auth import get_password_hash
-    except ImportError:
-        import bcrypt
-
-        def get_password_hash(password: str) -> str:
-            return bcrypt.hashpw(password.encode(), bcrypt.gensalt(12)).decode()
+    from app.models.auth import User
+    from app.security.auth import get_password_hash
 
     user = User(
         email="admin@example.com",
@@ -772,14 +729,11 @@ def admin_user(db_session, test_tenant):
     db_session.refresh(user)
 
     # Create tenant membership with admin role
-    try:
-        from app.models.user import TenantMembership
+    from app.models.auth import TenantMembership
 
-        membership = TenantMembership(user_id=user.id, tenant_id=test_tenant.id, role="admin")
-        db_session.add(membership)
-        db_session.commit()
-    except ImportError:
-        pass
+    membership = TenantMembership(user_id=user.id, tenant_id=test_tenant.id, role="admin")
+    db_session.add(membership)
+    db_session.commit()
 
     return user
 
@@ -846,18 +800,8 @@ def other_tenant(db_session):
 @pytest.fixture
 def other_tenant_user(db_session, other_tenant):
     """Create user belonging to other tenant"""
-    try:
-        from app.models.user import User, TenantMembership
-    except ImportError:
-        return None
-
-    try:
-        from app.security.auth import get_password_hash
-    except ImportError:
-        import bcrypt
-
-        def get_password_hash(password: str) -> str:
-            return bcrypt.hashpw(password.encode(), bcrypt.gensalt(12)).decode()
+    from app.models.auth import User, TenantMembership
+    from app.security.auth import get_password_hash
 
     user = User(
         email="other@example.com",
