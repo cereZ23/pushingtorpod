@@ -49,9 +49,7 @@ class TestServiceEndpoints:
         asset_id = asset_with_multiple_services.id
 
         # Services are at /tenants/{tid}/services?asset_id=X (not nested under assets)
-        response = authenticated_client.get(
-            f"/api/v1/tenants/{test_tenant.id}/services", params={"asset_id": asset_id}
-        )
+        response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/services", params={"asset_id": asset_id})
 
         assert response.status_code == 200
         data = response.json()
