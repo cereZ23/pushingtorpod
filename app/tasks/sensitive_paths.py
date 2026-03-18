@@ -1382,6 +1382,7 @@ _SEVERITY_FILTER: set[str] | None = {"critical", "high"}
 
 async def _run_scan_async(
     targets: list[tuple[Asset, list[str]]],
+    max_paths: int = 0,
 ) -> dict[int, list[dict[str, Any]]]:
     """
     Run the full async scan across all targets with global timeout.
@@ -1391,10 +1392,11 @@ async def _run_scan_async(
     global_semaphore = asyncio.Semaphore(_MAX_CONNECTIONS_TOTAL)
     host_semaphore = asyncio.Semaphore(10)  # Up to 10 hosts scanned concurrently
 
-    # Filter paths by severity if configured
-    paths_to_scan = SENSITIVE_PATHS
+    # Apply max_paths limit first (SENSITIVE_PATHS is sorted by priority,
+    # critical paths first), then apply severity filter on the result.
+    paths_to_scan = SENSITIVE_PATHS[:max_paths] if max_paths > 0 else SENSITIVE_PATHS
     if _SEVERITY_FILTER is not None:
-        paths_to_scan = [p for p in SENSITIVE_PATHS if p["severity"] in _SEVERITY_FILTER]
+        paths_to_scan = [p for p in paths_to_scan if p["severity"] in _SEVERITY_FILTER]
 
     asset_findings: dict[int, list[dict[str, Any]]] = {}
 
@@ -1455,6 +1457,7 @@ def run_sensitive_path_scan(
     asset_ids: list[int],
     db=None,
     scan_run_id: int | None = None,
+    max_paths: int = 0,
 ) -> dict[str, Any]:
     """
     Run sensitive path discovery for assets with HTTP services.
@@ -1521,10 +1524,14 @@ def run_sensitive_path_scan(
             return stats
 
         stats["assets_scanned"] = len(targets)
-        total_paths = sum(len(urls) * len(SENSITIVE_PATHS) for _, urls in targets)
+        paths_to_scan = SENSITIVE_PATHS[:max_paths] if max_paths > 0 else SENSITIVE_PATHS
+        total_paths = sum(len(urls) * len(paths_to_scan) for _, urls in targets)
         stats["paths_checked"] = total_paths
 
-        tenant_logger.info(f"Sensitive path scan: {len(targets)} assets, {total_paths} path checks to perform")
+        tenant_logger.info(
+            f"Sensitive path scan: {len(targets)} assets, {total_paths} path checks to perform"
+            + (f" (limited to top {max_paths} paths)" if max_paths > 0 else "")
+        )
 
         # Run the async scan with hard timeout to prevent indefinite hanging.
         # asyncio.wait_for() can fail to cancel stuck httpx connections at the
@@ -1535,9 +1542,11 @@ def run_sensitive_path_scan(
             if loop.is_running():
                 # Running inside an existing event loop (e.g. Celery with asyncio)
                 with concurrent.futures.ThreadPoolExecutor() as pool:
-                    asset_findings = pool.submit(asyncio.run, _run_scan_async(targets)).result(timeout=hard_timeout)
+                    asset_findings = pool.submit(asyncio.run, _run_scan_async(targets, max_paths=max_paths)).result(
+                        timeout=hard_timeout
+                    )
             else:
-                asset_findings = asyncio.run(_run_scan_async(targets))
+                asset_findings = asyncio.run(_run_scan_async(targets, max_paths=max_paths))
         except (RuntimeError, concurrent.futures.TimeoutError) as exc:
             if isinstance(exc, concurrent.futures.TimeoutError):
                 tenant_logger.error(
@@ -1546,7 +1555,7 @@ def run_sensitive_path_scan(
                 asset_findings = {}
             else:
                 # No event loop exists — fall back to asyncio.run
-                asset_findings = asyncio.run(_run_scan_async(targets))
+                asset_findings = asyncio.run(_run_scan_async(targets, max_paths=max_paths))
 
         # Extract 429 count from scan results
         total_429s = asset_findings.pop("_http_429_count", 0)

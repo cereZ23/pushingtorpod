@@ -84,15 +84,17 @@ def _phase_6b_web_crawling(tenant_id, project_id, scan_run_id, db, tenant_logger
     }
 
 
-def _phase_6c_sensitive_paths(tenant_id, project_id, scan_run_id, db, tenant_logger):
+def _phase_6c_sensitive_paths(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier=1):
     """Phase 6c: Sensitive path discovery.
 
     Probes assets with HTTP services for commonly exposed sensitive paths
     (config files, VCS metadata, backups, admin panels, debug endpoints).
     Only scans hostnames + standalone IPs (skip resolved-from-hostname IPs).
+    For Tier 1 scans, only the top 50 most impactful paths are checked.
     """
     from app.tasks.sensitive_paths import run_sensitive_path_scan
     from app.models.database import Asset, AssetType
+    from app.services.resource_scaler import get_scan_params
 
     hostname_assets = (
         db.query(Asset)
@@ -130,8 +132,18 @@ def _phase_6c_sensitive_paths(tenant_id, project_id, scan_run_id, db, tenant_log
         return {"findings_created": 0, "assets_scanned": 0}
 
     asset_ids = [a.id for a in assets]
-    tenant_logger.info(f"Sensitive path scan: {len(asset_ids)} assets (deduped IPs)")
-    result = run_sensitive_path_scan(tenant_id, asset_ids, db=db, scan_run_id=scan_run_id)
+    params = get_scan_params(scan_tier=scan_tier)
+    tenant_logger.info(
+        f"Sensitive path scan: {len(asset_ids)} assets (deduped IPs), "
+        f"max_paths={params.sensitive_paths_limit or 'unlimited'}"
+    )
+    result = run_sensitive_path_scan(
+        tenant_id,
+        asset_ids,
+        db=db,
+        scan_run_id=scan_run_id,
+        max_paths=params.sensitive_paths_limit,
+    )
 
     return {
         "findings_created": result.get("findings_created", 0) if isinstance(result, dict) else 0,

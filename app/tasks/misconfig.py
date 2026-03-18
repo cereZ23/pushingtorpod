@@ -1,7 +1,7 @@
 """
 Misconfiguration Detection Engine - Phase 8
 
-Implements 17 security controls across 7 categories using a decorator-based
+Implements 19 security controls across 7 categories using a decorator-based
 control registry. Each control function inspects asset data (services, certificates,
 HTTP headers, DNS records) and produces structured findings.
 
@@ -15,7 +15,7 @@ Categories and control IDs:
   - TLS Certificate Intelligence  (TLS-001, TLS-005, TLS-009, TLS-010)
   - Security Headers              (HDR-004, HDR-007, HDR-008, HDR-009, HDR-010)
   - Information Disclosure        (INF-009)
-  - Email Security                (EML-001, EML-002, EML-003)
+  - Email Security                (EML-001, EML-002, EML-003, EML-006, EML-007)
   - DNS Security                  (DNS-001)
   - Authentication                (AUTH-001, AUTH-002)
   - Service Exposure              (EXP-006)
@@ -1005,6 +1005,119 @@ def check_eml_003(
                 ),
             }
         )
+    return findings
+
+
+@register(
+    control_id="EML-006",
+    name="SMTP service without STARTTLS",
+    severity="medium",
+    confidence=0.80,
+    category="Email Security",
+    asset_types=["domain", "subdomain"],
+)
+def check_eml_006(
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
+) -> list[dict]:
+    """Check SMTP services for STARTTLS support and banner info."""
+    import socket
+
+    findings: list[dict] = []
+    smtp_ports = {25, 465, 587}
+    for svc in services:
+        if svc.port not in smtp_ports:
+            continue
+        try:
+            with socket.create_connection((asset.identifier, svc.port), timeout=5) as sock:
+                banner = sock.recv(1024).decode("utf-8", errors="replace").strip()
+                sock.sendall(b"EHLO easm-scanner\r\n")
+                ehlo_resp = sock.recv(4096).decode("utf-8", errors="replace")
+                has_starttls = "STARTTLS" in ehlo_resp.upper()
+
+                if svc.port == 25 and not has_starttls:
+                    findings.append(
+                        {
+                            "name": (f"SMTP on port {svc.port} does not support STARTTLS"),
+                            "severity": "medium",
+                            "confidence": 0.80,
+                            "evidence": {
+                                "port": svc.port,
+                                "banner": banner[:200],
+                                "starttls": False,
+                            },
+                            "control_id": "EML-006",
+                            "finding_key": f"EML-006:{asset.identifier}:{svc.port}",
+                            "remediation": ("Enable STARTTLS on the SMTP server to encrypt email in transit."),
+                        }
+                    )
+                sock.sendall(b"QUIT\r\n")
+        except (socket.timeout, OSError):
+            pass  # Port not reachable or connection refused
+    return findings
+
+
+@register(
+    control_id="EML-007",
+    name="SMTP open relay",
+    severity="critical",
+    confidence=0.70,
+    category="Email Security",
+    asset_types=["domain", "subdomain"],
+)
+def check_eml_007(
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
+) -> list[dict]:
+    """Check if SMTP server is an open relay (accepts mail for arbitrary domains)."""
+    import smtplib
+    import socket
+
+    findings: list[dict] = []
+    for svc in services:
+        if svc.port not in {25, 587}:
+            continue
+        try:
+            with smtplib.SMTP(asset.identifier, svc.port, timeout=10) as smtp:
+                smtp.ehlo("easm-scanner")
+                # Try STARTTLS if available
+                try:
+                    smtp.starttls()
+                    smtp.ehlo("easm-scanner")
+                except smtplib.SMTPNotSupportedError:
+                    pass
+                # Test relay: try to send from external to external
+                code, msg = smtp.mail("test@easm-scanner.invalid")
+                if code == 250:
+                    code2, msg2 = smtp.rcpt("test@example.com")
+                    if code2 == 250:
+                        findings.append(
+                            {
+                                "name": f"SMTP open relay on port {svc.port}",
+                                "severity": "critical",
+                                "confidence": 0.70,
+                                "evidence": {
+                                    "port": svc.port,
+                                    "mail_from_response": (f"{code} {msg.decode('utf-8', errors='replace')}"),
+                                    "rcpt_to_response": (f"{code2} {msg2.decode('utf-8', errors='replace')}"),
+                                },
+                                "control_id": "EML-007",
+                                "finding_key": (f"EML-007:{asset.identifier}:{svc.port}"),
+                                "remediation": (
+                                    "Configure the SMTP server to require "
+                                    "authentication before relaying mail. An open "
+                                    "relay can be abused to send spam and will "
+                                    "result in the IP being blacklisted."
+                                ),
+                            }
+                        )
+                    smtp.rset()
+        except (smtplib.SMTPException, socket.timeout, OSError):
+            pass  # Connection failed or SMTP error
     return findings
 
 
