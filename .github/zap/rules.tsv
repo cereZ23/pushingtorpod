@@ -1,0 +1,6 @@
+10003	IGNORE	(Vulnerable JS Library - flagged by Dependabot separately)
+10015	IGNORE	(Re-examine Cache-control Directives - API responses)
+10049	IGNORE	(Non-Storable Content - API responses)
+10050	IGNORE	(Retrieved from Cache - expected behavior)
+10109	IGNORE	(Modern Web Application - informational)
+90033	IGNORE	(Loosely Scoped Cookie - SameSite handled at app level)

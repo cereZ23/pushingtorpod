@@ -1,0 +1,106 @@
+name: OWASP ZAP Security Scan
+
+# Weekly authenticated DAST scan against production
+on:
+  schedule:
+    - cron: '0 3 * * 1'  # Every Monday 3 AM UTC
+  workflow_dispatch:  # Manual trigger
+
+permissions:
+  contents: read
+  issues: write  # ZAP action can create issues for findings
+
+env:
+  TARGET_URL: https://easm.securekt.com
+
+jobs:
+  zap-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Authenticate and get JWT token
+      id: auth
+      run: |
+        RESPONSE=$(curl -sf "${{ env.TARGET_URL }}/api/v1/auth/login" \
+          -X POST \
+          -H "Content-Type: application/json" \
+          -d '{"email":"${{ secrets.ZAP_SCAN_EMAIL }}","password":"${{ secrets.ZAP_SCAN_PASSWORD }}"}')
+
+        TOKEN=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+
+        if [ -z "$TOKEN" ]; then
+          echo "::error::Failed to authenticate for ZAP scan"
+          exit 1
+        fi
+
+        echo "::add-mask::$TOKEN"
+        echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+        echo "Authenticated successfully"
+
+    - name: Create ZAP context file
+      run: |
+        cat > zap-context.yaml <<'CONTEXT'
+        env:
+          contexts:
+            - name: "EASM Platform"
+              urls:
+                - "https://easm.securekt.com"
+              includePaths:
+                - "https://easm.securekt.com/api/v1/.*"
+              excludePaths:
+                - "https://easm.securekt.com/api/v1/auth/login"
+                - "https://easm.securekt.com/api/v1/.*/scans$"
+              authentication:
+                method: "manual"
+              sessionManagement:
+                method: "headers"
+                parameters:
+                  Authorization: "Bearer ${{ steps.auth.outputs.token }}"
+        CONTEXT
+
+    - name: ZAP API Scan (OpenAPI spec)
+      uses: zaproxy/action-api-scan@v0.9.0
+      with:
+        target: "${{ env.TARGET_URL }}/api/openapi.json"
+        cmd_options: >-
+          -z "-config replacer.full_list(0).description=auth
+               -config replacer.full_list(0).enabled=true
+               -config replacer.full_list(0).matchtype=REQ_HEADER
+               -config replacer.full_list(0).matchstr=Authorization
+               -config replacer.full_list(0).regex=false
+               -config replacer.full_list(0).replacement=Bearer\ ${{ steps.auth.outputs.token }}"
+        rules_file_name: '.github/zap/rules.tsv'
+        allow_issue_writing: false
+        fail_action: false
+      continue-on-error: true
+
+    - name: ZAP Baseline Scan (Web UI)
+      uses: zaproxy/action-baseline@v0.14.0
+      with:
+        target: "${{ env.TARGET_URL }}/"
+        cmd_options: >-
+          -z "-config replacer.full_list(0).description=auth
+               -config replacer.full_list(0).enabled=true
+               -config replacer.full_list(0).matchtype=REQ_HEADER
+               -config replacer.full_list(0).matchstr=Authorization
+               -config replacer.full_list(0).regex=false
+               -config replacer.full_list(0).replacement=Bearer\ ${{ steps.auth.outputs.token }}"
+          -j
+        rules_file_name: '.github/zap/rules.tsv'
+        allow_issue_writing: false
+        fail_action: false
+      continue-on-error: true
+
+    - name: Upload ZAP reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: zap-reports
+        path: |
+          zap-report.html
+          zap-report.json
+          zap-report.md
+        retention-days: 30
