@@ -98,8 +98,8 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
 
     # Split assets: CDN-fronted hosts only get takeover/ssl checks (CVE scans
     # would hit the CDN edge, not the origin, producing false positives).
-    direct_assets = [a for a in all_assets if not a.cdn_name]
-    cdn_assets = [a for a in all_assets if a.cdn_name]
+    direct_assets = [a for a in all_assets if not getattr(a, "cdn_name", None)]
+    cdn_assets = [a for a in all_assets if getattr(a, "cdn_name", None)]
 
     if not all_assets:
         return {"findings_created": 0, "scan_tier": scan_tier}
