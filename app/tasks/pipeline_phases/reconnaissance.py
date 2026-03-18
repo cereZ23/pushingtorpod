@@ -91,10 +91,16 @@ def _phase_6c_sensitive_paths(tenant_id, project_id, scan_run_id, db, tenant_log
     (config files, VCS metadata, backups, admin panels, debug endpoints).
     Only scans hostnames + standalone IPs (skip resolved-from-hostname IPs).
     For Tier 1 scans, only the top 50 most impactful paths are checked.
+
+    IP dedup: when multiple hostnames resolve to the same IP, only one
+    representative hostname is probed per unique IP.  Findings discovered
+    on the representative are replicated to all sibling assets sharing
+    that IP, so no exposures are missed in the output.
     """
     from app.tasks.sensitive_paths import run_sensitive_path_scan
     from app.models.database import Asset, AssetType
     from app.services.resource_scaler import get_scan_params
+    from app.services.ip_dedup import dedup_by_resolved_ip
 
     hostname_assets = (
         db.query(Asset)
@@ -131,10 +137,16 @@ def _phase_6c_sensitive_paths(tenant_id, project_id, scan_run_id, db, tenant_log
     if not assets:
         return {"findings_created": 0, "assets_scanned": 0}
 
+    # Deduplicate hostnames resolving to the same IP -- probing the same
+    # server 6 times with different Host headers is wasteful and produces
+    # identical results for path-based checks.
+    assets, ip_dedup_skipped = dedup_by_resolved_ip(assets, tenant_id, db)
+
     asset_ids = [a.id for a in assets]
     params = get_scan_params(scan_tier=scan_tier)
     tenant_logger.info(
-        f"Sensitive path scan: {len(asset_ids)} assets (deduped IPs), "
+        f"Sensitive path scan: {len(asset_ids)} assets "
+        f"({ip_dedup_skipped} same-IP duplicates skipped), "
         f"max_paths={params.sensitive_paths_limit or 'unlimited'}"
     )
     result = run_sensitive_path_scan(
@@ -150,6 +162,7 @@ def _phase_6c_sensitive_paths(tenant_id, project_id, scan_run_id, db, tenant_log
         "findings_updated": result.get("findings_updated", 0) if isinstance(result, dict) else 0,
         "assets_scanned": result.get("assets_scanned", 0) if isinstance(result, dict) else 0,
         "paths_checked": result.get("paths_checked", 0) if isinstance(result, dict) else 0,
+        "ip_dedup_skipped": ip_dedup_skipped,
     }
 
 

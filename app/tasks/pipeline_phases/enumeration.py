@@ -656,6 +656,10 @@ def _phase_5c_service_fingerprint(tenant_id, project_id, scan_run_id, db, tenant
 
     Runs on open ports discovered by naabu (Phase 5). Updates service
     product/version with more accurate protocol-level identification.
+
+    IP dedup: when multiple hostnames resolve to the same IP, fingerprintx
+    only probes one representative hostname per unique (IP, port) pair.
+    Results are propagated to all sibling services sharing that IP+port.
     """
     from app.tasks.service_fingerprint import run_fingerprintx
     from app.models.database import Asset, AssetType, Service
@@ -682,23 +686,102 @@ def _phase_5c_service_fingerprint(tenant_id, project_id, scan_run_id, db, tenant
     if not services:
         return {"services_fingerprinted": 0, "protocols_identified": 0}
 
-    # Build target list as host:port
+    # ---------------------------------------------------------------
+    # IP dedup: build a map of hostname -> resolved IPs so we can
+    # skip fingerprinting the same (IP, port) pair multiple times.
+    # ---------------------------------------------------------------
+    # Collect all assets referenced by these services
+    asset_ids_in_scope = list({svc.asset_id for svc in services})
+    assets_in_scope = db.query(Asset).filter(Asset.id.in_(asset_ids_in_scope)).all()
+    asset_by_id = {a.id: a for a in assets_in_scope}
+
+    # Build hostname -> primary resolved IP map via relationships
+    hostname_asset_ids = [a.id for a in assets_in_scope if a.type in (AssetType.DOMAIN, AssetType.SUBDOMAIN)]
+
+    asset_to_primary_ip: dict[int, str] = {}
+    if hostname_asset_ids:
+        rels = (
+            db.query(Relationship)
+            .filter(
+                Relationship.tenant_id == tenant_id,
+                Relationship.rel_type == "resolves_to",
+                Relationship.source_asset_id.in_(hostname_asset_ids),
+            )
+            .all()
+        )
+        # Batch-load target IP assets to avoid N+1 queries
+        target_ip_ids = list({r.target_asset_id for r in rels})
+        if target_ip_ids:
+            ip_assets = db.query(Asset).filter(Asset.id.in_(target_ip_ids)).all()
+            ip_by_id = {a.id: a.identifier for a in ip_assets}
+            for rel in rels:
+                ip_str = ip_by_id.get(rel.target_asset_id)
+                if ip_str:
+                    # Keep only first (deterministic) IP per hostname
+                    if rel.source_asset_id not in asset_to_primary_ip:
+                        asset_to_primary_ip[rel.source_asset_id] = ip_str
+
+    # Deduplicate targets: for each unique (resolved_ip, port), keep only
+    # one representative target.  Map skipped services to the representative
+    # so we can propagate results.
+    seen_ip_port: dict[tuple[str, int], str] = {}  # (ip, port) -> representative target key
     targets = []
-    service_map: dict[str, Service] = {}
+    service_map: dict[str, Service] = {}  # target_key -> service
+    sibling_services: dict[str, list[Service]] = {}  # representative target -> list of sibling services
+    ip_dedup_skipped = 0
+
     for svc in services:
-        asset = svc.asset
-        if asset and svc.port:
-            target = f"{asset.identifier}:{svc.port}"
-            targets.append(target)
-            service_map[target] = svc
+        asset = asset_by_id.get(svc.asset_id)
+        if not asset or not svc.port:
+            continue
+
+        target = f"{asset.identifier}:{svc.port}"
+        resolved_ip = asset_to_primary_ip.get(asset.id)
+
+        if resolved_ip:
+            dedup_key = (resolved_ip, svc.port)
+            if dedup_key in seen_ip_port:
+                # This (IP, port) is already being fingerprinted via another hostname.
+                # Record as sibling for result propagation.
+                representative = seen_ip_port[dedup_key]
+                sibling_services.setdefault(representative, []).append(svc)
+                ip_dedup_skipped += 1
+                continue
+            seen_ip_port[dedup_key] = target
+
+        targets.append(target)
+        service_map[target] = svc
 
     if not targets:
         return {"services_fingerprinted": 0, "protocols_identified": 0}
+
+    tenant_logger.info(
+        f"fingerprintx: {len(targets)} targets to scan "
+        f"({ip_dedup_skipped} same-IP duplicates skipped, "
+        f"{len(sibling_services)} groups will inherit results)"
+    )
 
     results = run_fingerprintx(targets, tenant_id)
 
     protocols_identified = 0
     services_updated = 0
+
+    def _apply_fingerprint(svc: Service, entry: dict) -> tuple[int, int]:
+        """Apply fingerprint data to a service. Returns (updated, protocols)."""
+        _updated = 0
+        _protocols = 0
+        if entry.get("service"):
+            svc.product = entry["service"]
+            _updated = 1
+        if entry.get("version"):
+            svc.version = entry["version"]
+        if entry.get("protocol"):
+            svc.protocol = entry["protocol"]
+            _protocols = 1
+        if entry.get("tls"):
+            svc.has_tls = True
+        svc.enrichment_source = "fingerprintx"
+        return _updated, _protocols
 
     for entry in results:
         host = entry.get("host", "")
@@ -709,19 +792,16 @@ def _phase_5c_service_fingerprint(tenant_id, project_id, scan_run_id, db, tenant
         if not svc:
             continue
 
-        # Update with more precise fingerprint data
-        if entry.get("service"):
-            svc.product = entry["service"]
-            services_updated += 1
-        if entry.get("version"):
-            svc.version = entry["version"]
-        if entry.get("protocol"):
-            svc.protocol = entry["protocol"]
-            protocols_identified += 1
-        if entry.get("tls"):
-            svc.has_tls = True
-        # Mark enrichment source
-        svc.enrichment_source = "fingerprintx"
+        # Apply to the representative service
+        u, p = _apply_fingerprint(svc, entry)
+        services_updated += u
+        protocols_identified += p
+
+        # Propagate to all sibling services sharing the same (IP, port)
+        for sibling_svc in sibling_services.get(target_key, []):
+            su, sp = _apply_fingerprint(sibling_svc, entry)
+            services_updated += su
+            protocols_identified += sp
 
     db.commit()
 
@@ -729,4 +809,5 @@ def _phase_5c_service_fingerprint(tenant_id, project_id, scan_run_id, db, tenant
         "services_fingerprinted": services_updated,
         "protocols_identified": protocols_identified,
         "targets_scanned": len(targets),
+        "ip_dedup_skipped": ip_dedup_skipped,
     }

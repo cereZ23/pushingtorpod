@@ -156,9 +156,31 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     }
     templates_for_scan = tier_templates.get(scan_tier)
 
-    # Pass 1: Full scan on direct (non-CDN) assets
-    if asset_ids:
-        result = run_nuclei_scan(
+    # DNS/network template config (Pass 3)
+    # Tier 1: dns/ only (SPF, DKIM, DMARC, DNSSEC, zone transfer) -- fast, ~1 min
+    # Tier 2: dns/ + network/ basics (SSH, FTP, SNMP, Redis, MySQL, MongoDB)
+    # Tier 3: dns/ + network/ full (all protocol checks)
+    dns_network_templates = {
+        1: ["dns/"],
+        2: ["dns/", "network/"],
+        3: ["dns/", "network/"],
+    }
+    dns_net_tpls = dns_network_templates.get(scan_tier, ["dns/"])
+    dns_net_asset_ids = [a.id for a in all_assets]
+
+    # ---------------------------------------------------------------
+    # Run all Nuclei passes concurrently using threads.
+    # Each pass targets different assets/templates so they don't
+    # interfere with each other.  This eliminates sequential startup
+    # overhead (~20s per Nuclei process) and overlaps I/O-bound work.
+    # ---------------------------------------------------------------
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _run_pass_1():
+        """Pass 1: HTTP + SSL templates on direct (non-CDN) assets."""
+        if not asset_ids:
+            return None
+        return run_nuclei_scan(
             tenant_id,
             asset_ids,
             severity=severity,
@@ -168,62 +190,63 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             timeout=timeout,
             interactsh_server=interactsh_server if use_interactsh else None,
         )
-        if isinstance(result, dict):
-            total_created += result.get("findings_created", 0)
-            total_updated += result.get("findings_updated", 0)
-            total_scanned += result.get("assets_scanned", 0)
-            total_urls += result.get("urls_scanned", 0)
 
-    # Pass 2: CDN-fronted assets -- only takeover + SSL checks (fast, ~2 min)
-    if cdn_asset_ids:
+    def _run_pass_2():
+        """Pass 2: CDN-fronted assets -- takeover + SSL checks only."""
+        if not cdn_asset_ids:
+            return None
         tenant_logger.info(f"Nuclei CDN pass: {len(cdn_asset_ids)} CDN-fronted assets (takeovers + ssl only)")
-        cdn_result = run_nuclei_scan(
+        return run_nuclei_scan(
             tenant_id,
             cdn_asset_ids,
             severity=["critical", "high", "medium"],
             templates=["http/takeovers/", "ssl/"],
             rate_limit=rate_limit,
             concurrency=concurrency,
-            timeout=300,  # CDN pass is fast -- 5 min max
+            timeout=300,
         )
-        if isinstance(cdn_result, dict):
-            total_created += cdn_result.get("findings_created", 0)
-            total_updated += cdn_result.get("findings_updated", 0)
-            total_scanned += cdn_result.get("assets_scanned", 0)
-            total_urls += cdn_result.get("urls_scanned", 0)
 
-    # Pass 3: DNS & Network protocol checks (SPF/DKIM/DMARC, zone transfer,
-    # SSH, FTP, SNMP, exposed databases). These templates use info/low severity
-    # which is excluded from the main HTTP scan to avoid 4000+ noise templates.
-    #
-    # Tier 1: dns/ only (SPF, DKIM, DMARC, DNSSEC, zone transfer) — fast, ~1 min
-    # Tier 2: dns/ + network/ basics (SSH, FTP, SNMP, Redis, MySQL, MongoDB)
-    # Tier 3: dns/ + network/ full (all protocol checks)
-    dns_network_templates = {
-        1: ["dns/"],
-        2: ["dns/", "network/"],
-        3: ["dns/", "network/"],
-    }
-    dns_net_tpls = dns_network_templates.get(scan_tier, ["dns/"])
-
-    # All domain/subdomain assets need DNS checks; standalone IPs need network checks
-    dns_net_asset_ids = [a.id for a in all_assets]
-    if dns_net_asset_ids:
+    def _run_pass_3():
+        """Pass 3: DNS & network protocol checks on all assets."""
+        if not dns_net_asset_ids:
+            return None
         tenant_logger.info(
             f"Nuclei DNS/network pass: {len(dns_net_asset_ids)} assets, templates={dns_net_tpls} (tier {scan_tier})"
         )
-        dns_result = run_nuclei_scan(
+        return run_nuclei_scan(
             tenant_id,
             dns_net_asset_ids,
             severity=["critical", "high", "medium", "low", "info"],
             templates=dns_net_tpls,
             rate_limit=rate_limit,
             concurrency=concurrency,
-            timeout=300,  # DNS/network checks are fast
+            timeout=300,
         )
-        if isinstance(dns_result, dict):
-            total_created += dns_result.get("findings_created", 0)
-            total_updated += dns_result.get("findings_updated", 0)
+
+    passes = {"pass_1": _run_pass_1, "pass_2": _run_pass_2, "pass_3": _run_pass_3}
+    # Only submit passes that have targets
+    active_passes = {
+        k: fn
+        for k, fn in passes.items()
+        if ((k == "pass_1" and asset_ids) or (k == "pass_2" and cdn_asset_ids) or (k == "pass_3" and dns_net_asset_ids))
+    }
+
+    tenant_logger.info(f"Nuclei: running {len(active_passes)} passes concurrently: {', '.join(active_passes.keys())}")
+
+    with ThreadPoolExecutor(max_workers=len(active_passes) or 1) as executor:
+        futures = {executor.submit(fn): name for name, fn in active_passes.items()}
+        for future in as_completed(futures):
+            pass_name = futures[future]
+            try:
+                result = future.result()
+                if isinstance(result, dict):
+                    total_created += result.get("findings_created", 0)
+                    total_updated += result.get("findings_updated", 0)
+                    total_scanned += result.get("assets_scanned", 0)
+                    total_urls += result.get("urls_scanned", 0)
+                    tenant_logger.info(f"Nuclei {pass_name} complete: {result.get('findings_created', 0)} findings")
+            except Exception as exc:
+                tenant_logger.error(f"Nuclei {pass_name} failed: {exc}")
 
     return {
         "findings_created": total_created,
