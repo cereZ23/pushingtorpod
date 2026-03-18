@@ -94,13 +94,22 @@ jobs:
         fail_action: false
       continue-on-error: true
 
+    - name: Collect ZAP reports
+      if: always()
+      run: |
+        # ZAP actions write reports to the workspace root with various names
+        find . -maxdepth 1 -name "*.html" -o -name "*.json" -o -name "*.md" | head -20
+        ls -la zap_* report_* *.html 2>/dev/null || true
+
     - name: Upload ZAP reports
       uses: actions/upload-artifact@v4
       if: always()
       with:
         name: zap-reports
         path: |
-          zap-report.html
-          zap-report.json
-          zap-report.md
+          **/*zap*
+          **/*report*
+          !node_modules/**
+          !.git/**
+        if-no-files-found: warn
         retention-days: 30
