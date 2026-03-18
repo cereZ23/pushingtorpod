@@ -7,35 +7,9 @@
 # =============================================================================
 
 services:
-  caddy:
-    image: caddy:2-alpine
-    container_name: easm-caddy
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"  # HTTP/3
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      api:
-        condition: service_healthy
-      ui:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 128M
-          cpus: '0.25'
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "5"
-    networks:
-      - easm-network
+  # NOTE: Caddy runs on the host (not in Docker) to serve both EASM and CSPM.
+  # Config: /etc/caddy/Caddyfile (managed separately)
+  # API and UI expose ports to localhost for the host Caddy to reverse-proxy.
 
   postgres:
     image: postgres:15-alpine
@@ -180,7 +154,8 @@ services:
       RATE_LIMIT_REQUESTS_PER_MINUTE: 120
       RATE_LIMIT_REQUESTS_PER_HOUR: 3000
       SAML_FRONTEND_URL: https://easm.securekt.com
-    # No ports exposed — Caddy handles external access
+    ports:
+      - "127.0.0.1:8000:8000"  # Host Caddy reverse-proxies to this
     volumes:
       - jwt-keys:/app/keys
       - ./data:/app/data:ro
@@ -214,7 +189,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
-    # No ports exposed — Caddy handles external access
+    ports:
+      - "127.0.0.1:3080:80"  # Host Caddy reverse-proxies to this
     deploy:
       resources:
         limits:
@@ -348,8 +324,6 @@ volumes:
   redis_data:
   minio_data:
   jwt-keys:
-  caddy_data:
-  caddy_config:
 
 networks:
   easm-network:
