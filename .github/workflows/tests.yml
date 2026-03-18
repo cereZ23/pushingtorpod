@@ -169,13 +169,28 @@ jobs:
         python-version: '3.11'
 
     - name: Install security tools
-      run: pip install bandit safety
+      run: pip install bandit safety semgrep
 
     - name: Bandit security scan
       run: bandit -r app/ -f json -o bandit-report.json -ll --exit-zero
 
     - name: Safety dependency check
       run: safety check --json > safety-report.json 2>&1 || true
+
+    - name: Semgrep scan (Python + Vue/JS)
+      run: |
+        semgrep scan \
+          --config=p/python \
+          --config=p/javascript \
+          --config=p/vue \
+          --config=p/owasp-top-ten \
+          --config=p/xss \
+          --sarif -o semgrep-report.sarif \
+          --exclude='tests/' \
+          --exclude='node_modules/' \
+          --exclude='*.test.*' \
+          app/ frontend/src/ \
+          || true
 
     - name: Upload security reports
       uses: actions/upload-artifact@v4
@@ -184,6 +199,7 @@ jobs:
         path: |
           bandit-report.json
           safety-report.json
+          semgrep-report.sarif
 
   # ─── Lint ──────────────────────────────────────────────────────
   lint:
