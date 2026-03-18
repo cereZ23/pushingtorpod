@@ -3,6 +3,7 @@ interface Props {
   open: boolean;
   title: string;
   message: string;
+  entityName?: string;
   isLoading: boolean;
   isDangerous?: boolean;
   confirmLabel?: string;
@@ -11,6 +12,7 @@ interface Props {
 withDefaults(defineProps<Props>(), {
   isDangerous: true,
   confirmLabel: "Delete",
+  entityName: "",
 });
 
 const emit = defineEmits<{
@@ -37,10 +39,12 @@ const emit = defineEmits<{
           </h3>
         </div>
         <div class="p-6">
-          <p
-            class="text-sm text-gray-600 dark:text-dark-text-secondary"
-            v-html="message"
-          />
+          <p class="text-sm text-gray-600 dark:text-dark-text-secondary">
+            {{ message }}
+            <span v-if="entityName" class="font-semibold">{{
+              entityName
+            }}</span>
+          </p>
         </div>
         <div
           class="px-6 py-4 border-t border-gray-200 dark:border-dark-border flex justify-end gap-3"

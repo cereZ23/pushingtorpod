@@ -165,10 +165,11 @@ async function handleDeleteScan(): Promise<void> {
   }
 }
 
-const deleteScanMessage = computed(() => {
-  if (!scanToDelete.value) return "";
-  return `Are you sure you want to delete scan run <span class="font-mono font-semibold">#${scanToDelete.value.id}</span>? This will permanently remove all phase results and observations. This action cannot be undone.`;
-});
+const deleteScanMessage =
+  "Are you sure you want to delete this scan run? This will permanently remove all phase results and observations. This action cannot be undone.";
+const deleteScanEntityName = computed(() =>
+  scanToDelete.value ? `#${scanToDelete.value.id}` : "",
+);
 
 // --- Edit project ---
 
@@ -231,10 +232,11 @@ async function handleDeleteProject(): Promise<void> {
   }
 }
 
-const deleteProjectMessage = computed(() => {
-  const name = scanStore.selectedProject?.name ?? "";
-  return `Are you sure you want to delete project <span class="font-semibold">${name}</span>? This will permanently remove all scan runs, profiles, and scope rules. This action cannot be undone.`;
-});
+const deleteProjectMessage =
+  "Are you sure you want to delete project? This will permanently remove all scan runs, profiles, and scope rules. This action cannot be undone.";
+const deleteProjectEntityName = computed(
+  () => scanStore.selectedProject?.name ?? "",
+);
 </script>
 
 <template>
@@ -477,6 +479,7 @@ const deleteProjectMessage = computed(() => {
       :open="showDeleteDialog"
       title="Delete Scan Run"
       :message="deleteScanMessage"
+      :entity-name="deleteScanEntityName"
       :is-loading="isDeleting"
       @close="showDeleteDialog = false"
       @confirm="handleDeleteScan"
@@ -623,6 +626,7 @@ const deleteProjectMessage = computed(() => {
       :open="showDeleteProjectDialog"
       title="Delete Project"
       :message="deleteProjectMessage"
+      :entity-name="deleteProjectEntityName"
       :is-loading="isDeletingProject"
       confirm-label="Delete Project"
       @close="showDeleteProjectDialog = false"
