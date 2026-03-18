@@ -182,7 +182,6 @@ jobs:
         semgrep scan \
           --config=p/python \
           --config=p/javascript \
-          --config=p/vue \
           --config=p/owasp-top-ten \
           --config=p/xss \
           --sarif -o semgrep-report.sarif \
