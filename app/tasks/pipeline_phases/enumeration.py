@@ -559,13 +559,19 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     if not assets:
         return {"ports_discovered": 0, "scan_tier": scan_tier}
 
+    # Dedup hostnames that resolve to the same IP — scanning the same
+    # server 6 times via different hostnames wastes time and duplicates findings.
+    from app.services.ip_dedup import dedup_by_resolved_ip
+
+    assets, ip_dedup_skipped = dedup_by_resolved_ip(assets, tenant_id, db)
+
     asset_ids = [a.id for a in assets]
     tenant_logger.info(
         f"Naabu: top_ports={config['top_ports']}, rate={effective_rate} pkt/s "
         f"{'(throttled) ' if throttle.is_throttled else ''}"
         f"full_scan={config['full_scan']} (tier {scan_tier}), "
-        f"targets={len(asset_ids)} ({len(hostname_assets)} hostnames + {len(standalone_ips)} standalone IPs, "
-        f"{len(covered_ip_ids)} duplicate IPs skipped)"
+        f"targets={len(asset_ids)} ({len(hostname_assets)} hostnames, "
+        f"{len(covered_ip_ids)} covered IPs skipped, {ip_dedup_skipped} same-IP hostnames deduped)"
     )
     result = run_naabu(
         tenant_id,

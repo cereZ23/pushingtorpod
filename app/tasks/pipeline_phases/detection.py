@@ -90,9 +90,14 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         .all()
     )
 
+    # Dedup hostnames resolving to the same IP before scanning
+    from app.services.ip_dedup import dedup_by_resolved_ip
+
+    all_assets = hostname_assets + standalone_ips
+    all_assets, ip_dedup_skipped = dedup_by_resolved_ip(all_assets, tenant_id, db)
+
     # Split assets: CDN-fronted hosts only get takeover/ssl checks (CVE scans
     # would hit the CDN edge, not the origin, producing false positives).
-    all_assets = hostname_assets + standalone_ips
     direct_assets = [a for a in all_assets if not a.cdn_name]
     cdn_assets = [a for a in all_assets if a.cdn_name]
 
@@ -103,7 +108,8 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     cdn_asset_ids = [a.id for a in cdn_assets]
     tenant_logger.info(
         f"Nuclei targets: {len(all_assets)} total ({len(direct_assets)} direct + "
-        f"{len(cdn_assets)} CDN-fronted, {len(covered_ip_ids)} duplicate IPs skipped)"
+        f"{len(cdn_assets)} CDN-fronted, {len(covered_ip_ids)} covered IPs skipped, "
+        f"{ip_dedup_skipped} same-IP hostnames deduped)"
     )
 
     # Interactsh OOB callback support (Tier 3 only)
