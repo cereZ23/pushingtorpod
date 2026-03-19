@@ -64,6 +64,14 @@ keys/
 *.pem
 *.key
 
+# Linter/formatter caches
+.ruff_cache/
+.mypy_cache/
+
+# Database dumps
+backups/
+*.dump
+
 # Misc
 miseparo/
 .claude/
