@@ -155,7 +155,7 @@ services:
       RATE_LIMIT_REQUESTS_PER_HOUR: 3000
       SAML_FRONTEND_URL: https://easm.securekt.com
     ports:
-      - "127.0.0.1:8000:8000"  # Host Caddy reverse-proxies to this
+      - "127.0.0.1:8002:8000"  # Host Caddy reverse-proxies to :8002
     volumes:
       - jwt-keys:/app/keys
       - ./data:/app/data:ro
@@ -190,7 +190,7 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "127.0.0.1:3080:80"  # Host Caddy reverse-proxies to this
+      - "127.0.0.1:3002:80"  # Host Caddy reverse-proxies to :3002
     deploy:
       resources:
         limits:
