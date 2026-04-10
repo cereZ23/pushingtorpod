@@ -29,14 +29,19 @@ def _phase_6_fingerprinting(tenant_id, project_id, scan_run_id, db, tenant_logge
     return {"technologies_detected": 0}
 
 
-def _phase_6b_web_crawling(tenant_id, project_id, scan_run_id, db, tenant_logger):
-    """Phase 6b: Web crawling with Katana.
+def _phase_6b_web_crawling(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier=1):
+    """Phase 6b: Web crawling with Katana. Timeout is tier-aware.
 
     Katana depends on live HTTP services discovered by Phase 4 (HTTPx).
-    Only crawls hostnames + standalone IPs (skip IPs already resolved from hostnames).
+    Only crawls hostnames + standalone IPs (skip IPs already resolved
+    from hostnames). Uses the same atomic LEFT JOIN pattern as phase 5
+    to avoid the race with parallel phases still writing resolves_to.
     """
     from app.tasks.enrichment import run_katana
     from app.models.database import Asset, AssetType
+    from app.services.resource_scaler import get_scan_params
+    from sqlalchemy.orm import aliased
+    from sqlalchemy import and_
 
     hostname_assets = (
         db.query(Asset)
@@ -48,22 +53,25 @@ def _phase_6b_web_crawling(tenant_id, project_id, scan_run_id, db, tenant_logger
         .all()
     )
 
-    covered_ip_ids = {
-        r.target_asset_id
-        for r in db.query(Relationship.target_asset_id)
-        .filter(
-            Relationship.tenant_id == tenant_id,
-            Relationship.rel_type == "resolves_to",
-        )
-        .all()
-    }
+    # Atomic LEFT JOIN ... IS NULL: standalone IPs are those with no
+    # resolves_to edge pointing at them (see _phase_5_port_scanning for
+    # the race condition that the previous two-query pattern had).
+    _R = aliased(Relationship)
     standalone_ips = (
         db.query(Asset)
+        .outerjoin(
+            _R,
+            and_(
+                _R.target_asset_id == Asset.id,
+                _R.tenant_id == tenant_id,
+                _R.rel_type == "resolves_to",
+            ),
+        )
         .filter(
             Asset.tenant_id == tenant_id,
             Asset.type == AssetType.IP,
             Asset.is_active == True,
-            ~Asset.id.in_(covered_ip_ids) if covered_ip_ids else True,
+            _R.id.is_(None),
         )
         .all()
     )
@@ -74,8 +82,11 @@ def _phase_6b_web_crawling(tenant_id, project_id, scan_run_id, db, tenant_logger
         return {"endpoints_discovered": 0}
 
     asset_ids = [a.id for a in assets]
-    tenant_logger.info(f"Katana: crawling {len(asset_ids)} assets (deduped IPs)")
-    result = run_katana(tenant_id, asset_ids)
+    params = get_scan_params(scan_tier)
+    tenant_logger.info(
+        f"Katana: crawling {len(asset_ids)} assets (deduped IPs, tier {scan_tier}, timeout {params.katana_timeout}s)"
+    )
+    result = run_katana(tenant_id, asset_ids, timeout=params.katana_timeout)
 
     return {
         "endpoints_discovered": result.get("endpoints_discovered", 0) if isinstance(result, dict) else 0,

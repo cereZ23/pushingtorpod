@@ -1251,7 +1251,7 @@ def parse_tlsx_result(result: Dict, tenant_logger) -> Optional[Dict]:
 
 
 @celery.task(name="app.tasks.enrichment.run_katana")
-def run_katana(tenant_id: int, asset_ids: List[int]):
+def run_katana(tenant_id: int, asset_ids: List[int], timeout: Optional[int] = None):
     """
     Run Katana for web crawling and endpoint discovery
 
@@ -1268,6 +1268,10 @@ def run_katana(tenant_id: int, asset_ids: List[int]):
     Args:
         tenant_id: Tenant ID
         asset_ids: List of asset IDs to crawl (must have live HTTP services)
+        timeout: Katana wall-clock timeout in seconds. If None, falls back
+            to settings.katana_timeout. The caller (typically
+            _phase_6b_web_crawling) passes a tier-aware value from the
+            resource scaler so T3 full scans get a longer budget than T1.
 
     Returns:
         Dict with crawl results
@@ -1342,7 +1346,13 @@ def run_katana(tenant_id: int, asset_ids: List[int]):
             urls_file = executor.create_input_file("katana_urls.txt", urls_content)
 
             max_depth = str(settings.katana_max_depth)
-            crawl_duration = str(settings.katana_timeout)  # seconds
+            # Tier-aware crawl wall-clock (falls back to config if caller
+            # didn't specify). We use effective_timeout as BOTH the katana
+            # `-ct` crawl-time argument AND as the base for the watchdog
+            # timeout, so katana stops cleanly on its own and has ~30s
+            # buffer before SecureToolExecutor SIGKILLs the process group.
+            effective_timeout = timeout or settings.katana_timeout
+            crawl_duration = str(effective_timeout)
 
             args = [
                 "-list",
@@ -1363,15 +1373,26 @@ def run_katana(tenant_id: int, asset_ids: List[int]):
             if not settings.katana_respect_robots:
                 args.append("-disable-redirects")
 
+            tenant_logger.info(
+                f"Katana: {len(urls)} URLs, crawl_duration={crawl_duration}s, watchdog={effective_timeout + 30}s"
+            )
             returncode, stdout, stderr = executor.execute(
                 "katana",
                 args,
-                timeout=settings.katana_timeout + 30,  # extra buffer beyond crawl duration
+                timeout=effective_timeout + 30,  # extra buffer beyond crawl duration
             )
 
             if returncode != 0:
                 tenant_logger.warning(f"Katana returned non-zero exit code: {returncode}")
                 tenant_logger.debug(f"Katana stderr: {stderr}")
+                # Even on non-zero exit (watchdog kill, crawl-time hit),
+                # try to parse whatever JSONL we already collected on
+                # stdout. Katana flushes lines as it finds endpoints, so
+                # a mid-run kill still yields usable partial data.
+                if stdout:
+                    tenant_logger.info(
+                        f"Katana: attempting to salvage {len(stdout)} bytes of partial stdout"
+                    )
 
             # Parse JSON output lines
             endpoints_data: List[Dict] = []

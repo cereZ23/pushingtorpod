@@ -121,8 +121,11 @@ def get_scan_params(scan_tier: int = 1) -> ScanParams:
         httpx_timeout={1: 300, 2: 600, 3: 600}.get(scan_tier, 600),
         # Fingerprintx: fixed short timeout — it's fast per target
         fingerprintx_timeout={1: 60, 2: 120, 3: 300}.get(scan_tier, 120),
-        # Katana: crawl depth/time based on tier
-        katana_timeout={1: 120, 2: 300, 3: 300}.get(scan_tier, 300),
+        # Katana: crawl wall-clock per tier. On timeout the subprocess is
+        # killed and any partial output is discarded, so T3 gets a generous
+        # budget (15 min) to actually finish crawling ~60+ live HTTP services
+        # on a large tenant rather than losing everything mid-run.
+        katana_timeout={1: 120, 2: 300, 3: 900}.get(scan_tier, 300),
         # Sensitive paths: limit count for Tier 1
         sensitive_paths_limit={1: 50, 2: 0, 3: 0}.get(scan_tier, 0),  # 0 = no limit
         cpu_count=cpu,

@@ -578,7 +578,7 @@ def _execute_phase(
     elif phase_id == "6":
         return _phase_6_fingerprinting(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == "6b":
-        return _phase_6b_web_crawling(tenant_id, project_id, scan_run_id, db, tenant_logger)
+        return _phase_6b_web_crawling(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier)
     elif phase_id == "6c":
         return _phase_6c_sensitive_paths(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier)
     elif phase_id == "7":
