@@ -268,7 +268,12 @@ services:
     deploy:
       resources:
         limits:
-          memory: 8G
+          # Tier 3 full-port scans run naabu + katana + chrome headless +
+          # sensitive-paths httpx in parallel; 8G was too tight and the
+          # cgroup OOM killer terminated the worker twice during scan 41,
+          # forcing Celery to redeliver the task mid-pipeline. Host has
+          # 16G RAM, so 12G leaves ~4G headroom for api/db/redis/minio.
+          memory: 12G
           cpus: '4.0'
         reservations:
           memory: 1G
