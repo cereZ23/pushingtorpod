@@ -489,12 +489,21 @@ def _phase_4b_tls_collection(tenant_id, project_id, scan_run_id, db, tenant_logg
 
 
 def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier=1):
-    """Phase 5: Port scanning with Naabu. Ports/rate depend on scan tier.
+    """Phase 5: Port scanning with Naabu. Ports/rate/policy depend on scan tier.
 
-    The scan_tier controls the full_scan parameter passed to run_naabu:
-    - Tier 1 (Safe):       top ports (default), full_scan=False
-    - Tier 2 (Moderate):   top ports (default), full_scan=False
-    - Tier 3 (Aggressive): all 65535 ports,     full_scan=True
+    The scan_tier controls port range, rate, timeout AND the sensitive-port
+    blocklist:
+
+    - Tier 1 (Safe):       top-100 ports, full_scan=False, full blocklist
+                           (SSH, SMB, RDP, MySQL, Postgres are skipped —
+                           safe defaults for unauthorized discovery).
+    - Tier 2 (Moderate):   top-1000 ports, full_scan=False, reduced blocklist
+                           (only SSH 22 + RDP 3389 skipped for legal safety;
+                           DB/SMB ports allowed so EASM can actually find
+                           exposed databases, which is the main value prop).
+    - Tier 3 (Aggressive): all 65535 ports, full_scan=True, NO blocklist
+                           (operator has explicit authorization for the
+                           target: scan everything, no exceptions).
     """
     from app.tasks.enrichment import run_naabu
     from app.models.database import Asset, AssetType
@@ -505,11 +514,22 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     params = get_scan_params(scan_tier)
     tier_ports = {1: "100", 2: "1000", 3: "full"}
     tier_full = {1: False, 2: False, 3: True}
+    # Tier-aware sensitive-port blocklist.
+    #   T1: full blocklist (SSH, SMB, RDP, MySQL, Postgres)
+    #   T2: reduced — keep only login-oriented services (legal risk) blocked
+    #   T3: empty  — operator has authorization, scan everything
+    tier_blocklist = {
+        1: [22, 445, 3389, 3306, 5432],
+        2: [22, 3389],
+        3: [],
+    }
+    blocked_ports = tier_blocklist.get(scan_tier, [22, 445, 3389, 3306, 5432])
     config = {
         "top_ports": tier_ports.get(scan_tier, "1000"),
         "rate": params.naabu_rate,
         "full_scan": tier_full.get(scan_tier, False),
         "timeout": params.naabu_timeout,
+        "blocked_ports": blocked_ports,
     }
 
     # Apply adaptive throttle if active
@@ -566,10 +586,12 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     assets, ip_dedup_skipped = dedup_by_resolved_ip(assets, tenant_id, db)
 
     asset_ids = [a.id for a in assets]
+    blocked_str = ",".join(map(str, config["blocked_ports"])) if config["blocked_ports"] else "none"
     tenant_logger.info(
         f"Naabu: top_ports={config['top_ports']}, rate={effective_rate} pkt/s "
         f"{'(throttled) ' if throttle.is_throttled else ''}"
         f"full_scan={config['full_scan']} (tier {scan_tier}), "
+        f"blocked_ports={blocked_str}, "
         f"targets={len(asset_ids)} ({len(hostname_assets)} hostnames, "
         f"{len(covered_ip_ids)} covered IPs skipped, {ip_dedup_skipped} same-IP hostnames deduped)"
     )
@@ -579,6 +601,7 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         full_scan=config["full_scan"],
         rate=effective_rate,
         timeout=config.get("timeout"),
+        blocked_ports=config["blocked_ports"],
     )
 
     return {

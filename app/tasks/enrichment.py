@@ -572,7 +572,12 @@ def sanitize_html(text: str) -> str:
 
 @celery.task(name="app.tasks.enrichment.run_naabu")
 def run_naabu(
-    tenant_id: int, asset_ids: List[int], full_scan: bool = False, rate: int = 0, timeout: Optional[int] = None
+    tenant_id: int,
+    asset_ids: List[int],
+    full_scan: bool = False,
+    rate: int = 0,
+    timeout: Optional[int] = None,
+    blocked_ports: Optional[List[int]] = None,
 ):
     """
     Run Naabu for port scanning
@@ -585,13 +590,16 @@ def run_naabu(
     Security Controls:
     - IP/domain validation
     - SSRF prevention (RFC1918, cloud metadata, loopback blocked)
-    - Port blocklist (22, 445, 3389, etc.)
+    - Port blocklist (22, 445, 3389, etc.) — tier-aware, see _phase_5_port_scanning
     - Rate limiting
     - Timeout limits
 
     Args:
         tenant_id: Tenant ID
         asset_ids: List of asset IDs to scan
+        blocked_ports: Override default blocklist. Pass an empty list to
+            disable blocking (e.g., T3 aggressive scans with authorization).
+            If None, falls back to settings.naabu_blocked_ports.
         full_scan: If True, scan all 65535 ports (slow). If False, scan top 1000.
 
     Returns:
@@ -661,10 +669,17 @@ def run_naabu(
                 top_ports = top_ports.replace("top-", "")
                 args.extend(["-tp", top_ports])
 
-            # Exclude blocked ports
-            if settings.naabu_blocked_ports:
-                exclude_ports = ",".join(map(str, settings.naabu_blocked_ports))
+            # Exclude blocked ports. Caller can override via `blocked_ports`
+            # (e.g., tier-aware policy in _phase_5_port_scanning). Pass an
+            # empty list to disable the blocklist entirely; pass None to keep
+            # the configured default.
+            effective_blocked = blocked_ports if blocked_ports is not None else settings.naabu_blocked_ports
+            if effective_blocked:
+                exclude_ports = ",".join(map(str, effective_blocked))
                 args.extend(["-exclude-ports", exclude_ports])
+                tenant_logger.info(f"Naabu blocked ports: {exclude_ports}")
+            else:
+                tenant_logger.info("Naabu blocked ports: none (all ports allowed)")
 
             # Execute Naabu with stdin
             returncode, stdout, stderr = executor.execute(
