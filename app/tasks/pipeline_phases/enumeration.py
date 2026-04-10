@@ -551,28 +551,48 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         .all()
     )
 
-    # Find IPs that are NOT covered by any hostname (standalone IPs from seeds/uncover)
-    from sqlalchemy import exists
+    # Find IPs that are NOT covered by any hostname (standalone IPs from
+    # seeds/uncover/ASN). Use a single LEFT JOIN ... IS NULL query so the
+    # "covered" check and the Asset filter read the same transactional
+    # snapshot — the previous two-query approach (set of IDs + NOT IN)
+    # suffered from a race with parallel phases (3/4) that were still
+    # writing resolves_to relationships, causing covered IPs to slip
+    # through as "standalone" and get scanned twice by naabu.
+    from sqlalchemy.orm import aliased
+    from sqlalchemy import and_
 
-    covered_ip_ids = {
-        r.target_asset_id
-        for r in db.query(Relationship.target_asset_id)
+    _R = aliased(Relationship)
+    standalone_ips = (
+        db.query(Asset)
+        .outerjoin(
+            _R,
+            and_(
+                _R.target_asset_id == Asset.id,
+                _R.tenant_id == tenant_id,
+                _R.rel_type == "resolves_to",
+            ),
+        )
         .filter(
-            Relationship.tenant_id == tenant_id,
-            Relationship.rel_type == "resolves_to",
+            Asset.tenant_id == tenant_id,
+            Asset.type == AssetType.IP,
+            Asset.is_active == True,
+            _R.id.is_(None),
         )
         .all()
-    }
-    standalone_ips = (
+    )
+
+    # For logging: count covered IPs (total active IPs minus standalone).
+    # Cheap indexed COUNT(*) — runs in the same session as the join above.
+    total_ip_count = (
         db.query(Asset)
         .filter(
             Asset.tenant_id == tenant_id,
             Asset.type == AssetType.IP,
             Asset.is_active == True,
-            ~Asset.id.in_(covered_ip_ids) if covered_ip_ids else True,
         )
-        .all()
+        .count()
     )
+    covered_ip_count = total_ip_count - len(standalone_ips)
 
     assets = hostname_assets + standalone_ips
 
@@ -593,7 +613,7 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         f"full_scan={config['full_scan']} (tier {scan_tier}), "
         f"blocked_ports={blocked_str}, "
         f"targets={len(asset_ids)} ({len(hostname_assets)} hostnames, "
-        f"{len(covered_ip_ids)} covered IPs skipped, {ip_dedup_skipped} same-IP hostnames deduped)"
+        f"{covered_ip_count} covered IPs skipped, {ip_dedup_skipped} same-IP hostnames deduped)"
     )
     result = run_naabu(
         tenant_id,
