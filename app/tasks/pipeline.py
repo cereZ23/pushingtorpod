@@ -226,8 +226,11 @@ def _run_single_phase(
     retry_jitter=True,
     acks_late=True,
     reject_on_worker_lost=True,
-    soft_time_limit=10800,
-    time_limit=11100,
+    # Upper bound for the full pipeline. Tier 3 full-port scans on large
+    # tenants can take up to ~2.5h for phase 5 (naabu) alone plus the rest
+    # of the pipeline, so budget 5h soft / 5h5m hard.
+    soft_time_limit=18000,
+    time_limit=18300,
 )
 def run_scan_pipeline(self, scan_run_id: int):
     """
@@ -393,9 +396,10 @@ def run_scan_pipeline(self, scan_run_id: int):
                     finally:
                         thread_db.close()
 
-                # Per-group wall-clock timeout: 30 min max for any parallel group.
-                # Prevents the entire pipeline from hanging if one phase is stuck.
-                group_timeout = 1800  # 30 min
+                # Per-group wall-clock timeout. Must accommodate the slowest
+                # phase in the group (phase 5 naabu on tier 3 full-port scans
+                # can take up to 2.5h on large tenants; see resource_scaler).
+                group_timeout = {1: 1800, 2: 3600, 3: 10800}.get(scan_tier, 3600)
 
                 with ThreadPoolExecutor(max_workers=len(phases_to_run)) as executor:
                     futures = {executor.submit(_run_parallel_phase, pid): pid for pid in phases_to_run}

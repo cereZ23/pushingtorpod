@@ -103,9 +103,16 @@ def get_scan_params(scan_tier: int = 1) -> ScanParams:
     combined = resource_factor * tier_mult
 
     params = ScanParams(
-        # Naabu: base 200 pkt/s, scale with CPU
-        naabu_rate=int(min(200 * cpu_mult * tier_mult, 5000)),
-        naabu_timeout={1: 120, 2: 300, 3: 1800}.get(scan_tier, 300),
+        # Naabu: base rate scales with CPU and tier. Tier 3 uses a higher base
+        # rate (1000 vs 200) because it must cover all 65535 ports per target,
+        # otherwise a full-port scan of a large tenant never finishes in time.
+        naabu_rate=int(min((1000 if scan_tier == 3 else 200) * cpu_mult * tier_mult, 10000)),
+        # Timeouts per tier:
+        #   T1 (top-100)  →  5 min (small hostnames list, ~15k probes)
+        #   T2 (top-1000) → 15 min (~150k probes)
+        #   T3 (full)     → 2.5 h  (up to ~10M probes; kept below pipeline group
+        #                           timeout & celery task time_limit)
+        naabu_timeout={1: 300, 2: 900, 3: 9000}.get(scan_tier, 900),
         # Nuclei: base 15 concurrent, scale with both CPU and RAM
         nuclei_concurrency=int(min(15 * combined, 100)),
         nuclei_rate_limit=int(min(100 * combined, 1000)),
