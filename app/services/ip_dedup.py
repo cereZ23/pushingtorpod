@@ -62,12 +62,19 @@ def dedup_by_resolved_ip(
     )
 
     # Map: asset_id → set of resolved IPs (via target_asset)
-    # Batch-load all target IP assets in one query to avoid N+1
+    # Batch-load all target IP assets in one query to avoid N+1.
+    # NOTE: use a distinct variable name (target_ip_rows) — reusing the
+    # outer `ip_assets` here previously shadowed the standalone-IP list
+    # with the target-IP identifier lookup rows, and the final `result`
+    # then concatenated those rows back as if they were standalone IPs,
+    # doubling the naabu target count (119 instead of 61 on IFO T3).
     target_ip_ids = list({rel.target_asset_id for rel in relationships})
     ip_identifier_by_id: dict[int, str] = {}
     if target_ip_ids:
-        ip_assets = db.query(Asset.id, Asset.identifier).filter(Asset.id.in_(target_ip_ids)).all()
-        ip_identifier_by_id = {row.id: row.identifier for row in ip_assets}
+        target_ip_rows = (
+            db.query(Asset.id, Asset.identifier).filter(Asset.id.in_(target_ip_ids)).all()
+        )
+        ip_identifier_by_id = {row.id: row.identifier for row in target_ip_rows}
 
     asset_to_ips: dict[int, set[str]] = {}
     for rel in relationships:
