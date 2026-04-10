@@ -40,17 +40,24 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # MaxMind GeoLite2 reader singletons (loaded once, reused across lookups)
+#
+# Each reader uses a (reader, tried) tuple so that a failed load is memoized
+# and we don't spam the warning log for every asset lookup when the .mmdb
+# files are missing or unreadable.
 # ---------------------------------------------------------------------------
 
 _city_reader = None
+_city_loaded = False
 _asn_reader = None
+_asn_loaded = False
 
 
 def _get_city_reader():
-    """Lazy-load GeoLite2-City reader."""
-    global _city_reader
-    if _city_reader is not None:
+    """Lazy-load GeoLite2-City reader. Memoizes failures to avoid log spam."""
+    global _city_reader, _city_loaded
+    if _city_loaded:
         return _city_reader
+    _city_loaded = True  # memoize regardless of outcome
     if _geoip2_db is None:
         logger.debug("geoip2 package not installed, GeoIP lookups disabled")
         return None
@@ -63,15 +70,21 @@ def _get_city_reader():
         logger.info("Loaded GeoLite2-City database from %s", path)
         return _city_reader
     except Exception as exc:
-        logger.warning("Failed to load GeoLite2-City database from %s: %s", path, exc)
+        logger.warning(
+            "GeoLite2-City database unavailable at %s: %s — city enrichment disabled "
+            "(download with scripts/download_geoip.sh)",
+            path,
+            exc,
+        )
         return None
 
 
 def _get_asn_reader():
-    """Lazy-load GeoLite2-ASN reader."""
-    global _asn_reader
-    if _asn_reader is not None:
+    """Lazy-load GeoLite2-ASN reader. Memoizes failures to avoid log spam."""
+    global _asn_reader, _asn_loaded
+    if _asn_loaded:
         return _asn_reader
+    _asn_loaded = True  # memoize regardless of outcome
     if _geoip2_db is None:
         return None
     path = settings.geoip_asn_db_path
@@ -83,7 +96,12 @@ def _get_asn_reader():
         logger.info("Loaded GeoLite2-ASN database from %s", path)
         return _asn_reader
     except Exception as exc:
-        logger.warning("Failed to load GeoLite2-ASN database from %s: %s", path, exc)
+        logger.warning(
+            "GeoLite2-ASN database unavailable at %s: %s — ASN enrichment disabled "
+            "(download with scripts/download_geoip.sh)",
+            path,
+            exc,
+        )
         return None
 
 
