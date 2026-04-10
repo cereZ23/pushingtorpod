@@ -51,9 +51,11 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Health check
+# Health check — use 127.0.0.1 explicitly. Busybox wget resolves "localhost"
+# via /etc/hosts which maps it to both 127.0.0.1 and ::1 and tries IPv6 first,
+# but nginx only listens on IPv4 → we'd get a spurious "Connection refused".
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget --quiet --tries=1 --spider http://localhost:80/ || exit 1
+    CMD wget --quiet --tries=1 --spider http://127.0.0.1:80/ || exit 1
 
 EXPOSE 80
 
