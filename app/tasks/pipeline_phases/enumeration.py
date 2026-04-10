@@ -319,6 +319,40 @@ def _phase_3_dns_resolution(tenant_id, project_id, scan_run_id, db, tenant_logge
     if relationships_created:
         db.commit()
 
+    # ------------------------------------------------------------------
+    # Stale host pruning
+    # ------------------------------------------------------------------
+    # Hosts that were submitted to dnsx but didn't come back with any
+    # resolved record are either broken, decommissioned, or have DNS
+    # outages. We don't kill them on the first miss — a legit host can
+    # have a transient glitch — but if their last_seen is older than
+    # STALE_HOST_DAYS days they're almost certainly dead and they only
+    # serve to make every downstream phase (httpx, naabu, nuclei) noisy
+    # and slow. Mark them is_active=False so they fall out of scans.
+    STALE_HOST_DAYS = 14
+    from datetime import timedelta
+
+    resolved_hosts = {record.get("host", "").lower() for record in resolved}
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(days=STALE_HOST_DAYS)
+    deactivated = 0
+    for asset in subdomains:
+        if asset.identifier.lower() in resolved_hosts:
+            continue
+        # Naive datetimes in DB vs aware cutoff: normalize both to aware
+        last_seen = asset.last_seen
+        if last_seen is not None and last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=timezone.utc)
+        if last_seen is None or last_seen < stale_cutoff:
+            asset.is_active = False
+            deactivated += 1
+
+    if deactivated:
+        db.commit()
+        tenant_logger.info(
+            f"Phase 3 pruning: deactivated {deactivated} stale hosts "
+            f"(no DNS resolution AND last_seen > {STALE_HOST_DAYS}d ago)"
+        )
+
     tenant_logger.info(
         f"Phase 3 relationships: {relationships_created} edges created (resolves_to, cname_to, parent_domain)"
     )
@@ -329,6 +363,7 @@ def _phase_3_dns_resolution(tenant_id, project_id, scan_run_id, db, tenant_logge
         "cnames_created": cnames_created,
         "hosts_resolved": len(subdomain_list),
         "relationships_created": relationships_created,
+        "stale_hosts_deactivated": deactivated,
     }
 
 
