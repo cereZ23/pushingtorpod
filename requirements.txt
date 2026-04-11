@@ -57,7 +57,13 @@ geoip2>=4.8.0  # MaxMind GeoLite2 local database lookups (City + ASN)
 dnstwist==20240116  # Domain permutation / typosquatting detection
 
 # Visual Recon
-playwright>=1.40.0
+# Pin to 1.56.0 (last release before the Chrome for Testing switch): v1.57
+# dropped open-source Chromium and switched to Chrome for Testing which
+# consumes up to ~20 GB RAM per instance (see playwright issue #38489).
+# We observed the worker OOM-killed at 12.4 GB RSS on every tier 3 scan
+# after bumping to 1.58.0. Downgrading restores the Chromium build and
+# drops the visual-recon phase peak to ~1 GB.
+playwright==1.56.0
 Pillow>=10.0.0
 
 # Report generation (PDF, DOCX, charts)

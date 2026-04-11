@@ -94,7 +94,13 @@ class Settings(BaseSettings):
     celery_result_backend: Optional[str] = None
     celery_task_always_eager: bool = False
     celery_worker_prefetch_multiplier: int = 4
-    celery_worker_max_tasks_per_child: int = 1000
+    # Recycle the prefork worker after every single task so any residual
+    # memory growth (chromium contexts, httpx SSL state, scan buffers, ...)
+    # is reclaimed between scans instead of accumulating until the cgroup
+    # OOM killer fires. Scan tasks are minutes-to-hours long, so the fork
+    # respawn overhead (~1s) is negligible. See the 12 GB OOM loop we hit
+    # during IFO tier-3 scans for the incident rationale.
+    celery_worker_max_tasks_per_child: int = 1
 
     @property
     def celery_broker(self) -> str:
