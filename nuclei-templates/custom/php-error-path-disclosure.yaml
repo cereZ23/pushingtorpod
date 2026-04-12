@@ -1,0 +1,48 @@
+id: php-error-path-disclosure
+
+info:
+  name: PHP Error with Full Path Disclosure
+  author: pushingtorpod
+  severity: high
+  description: |
+    The server returns PHP error messages containing full filesystem
+    paths, revealing the application's directory structure, framework,
+    and internal architecture.
+  impact: |
+    An attacker learns the absolute path to the web root, vendor
+    libraries, and framework version, which aids in crafting targeted
+    exploits (e.g., known CVEs for the specific framework version).
+  remediation: |
+    Set display_errors=Off in php.ini for production. Configure a
+    custom error handler that logs errors server-side without
+    exposing details to the client.
+  reference:
+    - https://owasp.org/Top10/A05_2021-Security_Misconfiguration/
+    - https://cwe.mitre.org/data/definitions/209.html
+  classification:
+    cvss-metrics: CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N
+    cvss-score: 7.5
+    cwe-id: CWE-209
+  tags: php,error,disclosure,misconfig
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}"
+      - "{{BaseURL}}/.git/config"
+      - "{{BaseURL}}/index.php"
+      - "{{BaseURL}}/test"
+
+    matchers-condition: and
+    matchers:
+      - type: regex
+        part: body
+        regex:
+          - "(?i)<b>(Fatal error|Warning|Notice|Parse error)</b>.*in <b>(/[a-z0-9_/.-]+\\.php)</b>"
+
+    extractors:
+      - type: regex
+        name: disclosed_path
+        group: 2
+        regex:
+          - "(?i)in <b>(/[a-z0-9_/.-]+\\.php)</b>"

@@ -1,0 +1,53 @@
+id: exposed-htaccess
+
+info:
+  name: .htaccess File Exposed
+  author: pushingtorpod
+  severity: medium
+  description: |
+    The .htaccess configuration file is publicly accessible, revealing
+    web server rewrite rules, authentication directives, and potentially
+    access control restrictions.
+  impact: |
+    An attacker can discover hidden paths, authentication mechanisms,
+    IP-based access controls, and application framework details.
+  remediation: |
+    Configure the web server to deny access to .htaccess files.
+    For Apache: <FilesMatch "^\.ht"> Require all denied </FilesMatch>
+  reference:
+    - https://owasp.org/Top10/A05_2021-Security_Misconfiguration/
+    - https://cwe.mitre.org/data/definitions/538.html
+  classification:
+    cvss-metrics: CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N
+    cvss-score: 5.3
+    cwe-id: CWE-538
+  tags: exposure,config,apache,misconfig
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/.htaccess"
+      - "{{BaseURL}}/.htpasswd"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+
+      - type: word
+        part: body
+        words:
+          - "RewriteEngine"
+          - "RewriteRule"
+          - "AuthType"
+          - "Require"
+          - "Deny from"
+        condition: or
+
+      - type: word
+        part: header
+        words:
+          - "text/"
+          - "application/octet-stream"
+        condition: or

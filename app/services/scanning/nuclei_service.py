@@ -322,6 +322,7 @@ class NucleiService:
                 "dns/",
                 "ssl/",
                 "network/",
+                "custom/",  # PushingTorPod custom templates (docker-compose creds, .htaccess, PHP path disclosure)
             ]:
                 args.extend(["-t", f"{nuclei_templates_dir}/{tpl_dir}"])
 
