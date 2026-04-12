@@ -290,7 +290,11 @@ class NucleiService:
             "-bs",
             "50",  # Bulk size per template (was 25)
             "-mhe",
-            "5",  # Max host errors before skipping (avoid stuck hosts)
+            "50",  # Max host errors before skipping. Was 5, but that caused
+            # nuclei to abandon hosts after a few timeouts and never reach
+            # the templates that actually match (wp-user-enum, composer-config,
+            # etc.). 50 gives enough room for mixed hosts where some paths
+            # error but others have real findings.
             "-no-httpx",  # Skip Nuclei's built-in httpx probe (Phase 4 already did it)
             "-response-size-read",
             "2097152",  # 2MB max response read (saves RAM)
