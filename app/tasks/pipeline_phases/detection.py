@@ -9,6 +9,7 @@ Phase 12: Diff, Alerting & Reporting
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -444,7 +445,14 @@ def _phase_11_risk_scoring(tenant_id, project_id, scan_run_id, db, tenant_logger
                 for finding in linked_findings:
                     if not finding.cve_id:
                         continue
-                    evidence = finding.evidence or {}
+                    raw_evidence = finding.evidence or {}
+                    if isinstance(raw_evidence, str):
+                        try:
+                            evidence = json.loads(raw_evidence)
+                        except (json.JSONDecodeError, TypeError):
+                            evidence = {}
+                    else:
+                        evidence = raw_evidence
                     cached = evidence.get("threat_intel", {})
                     if cached:
                         epss = float(cached.get("epss_score", 0.0))
