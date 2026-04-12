@@ -14,6 +14,7 @@ Tasks:
         feeds updated scores into the risk scoring engine.
 """
 
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -210,8 +211,16 @@ def enrich_findings_threat_intel(self, tenant_id: int) -> dict:
             if not enrichment:
                 continue
 
-            # Update finding evidence with threat intel data
-            evidence = finding.evidence or {}
+            # Update finding evidence with threat intel data.
+            # evidence may be a dict, a JSON string, or None.
+            raw_evidence = finding.evidence
+            if isinstance(raw_evidence, str):
+                try:
+                    evidence = json.loads(raw_evidence)
+                except (json.JSONDecodeError, TypeError):
+                    evidence = {}
+            else:
+                evidence = raw_evidence or {}
             evidence["threat_intel"] = {
                 "epss_score": enrichment["epss_score"],
                 "is_kev": enrichment["is_kev"],

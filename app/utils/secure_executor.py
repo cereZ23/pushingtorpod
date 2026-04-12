@@ -162,6 +162,7 @@ class SecureToolExecutor:
         timeout: Optional[int] = None,
         capture_output: bool = True,
         stdin_data: Optional[str] = None,
+        stdout_file: Optional[str] = None,
     ) -> Tuple[int, str, str]:
         """
         Execute tool with security controls.
@@ -176,6 +177,13 @@ class SecureToolExecutor:
             timeout: Execution timeout in seconds
             capture_output: Whether to capture stdout/stderr
             stdin_data: Optional data to pass to stdin
+            stdout_file: Optional file path to redirect stdout to. When
+                provided, stdout is written directly to this file by the OS
+                kernel (zero Python memory overhead), and the returned
+                stdout string will be empty. Useful for tools that produce
+                large JSONL output (e.g. katana) where buffering in Python
+                would cause OOM. Mutually exclusive with capture_output;
+                if both are set, stdout_file takes precedence.
 
         Returns:
             Tuple of (return_code, stdout, stderr)
@@ -200,14 +208,27 @@ class SecureToolExecutor:
 
         proc = None
         timed_out = False
+        stdout_fh = None
 
         try:
             preexec_fn = self._preexec_new_pgrp if os.name == "posix" else None
 
+            # Determine stdout destination:
+            # 1. stdout_file  -> OS-level redirect to file (zero Python memory)
+            # 2. capture_output -> subprocess.PIPE (buffered in Python)
+            # 3. neither -> /dev/null
+            if stdout_file:
+                stdout_fh = open(stdout_file, "w", encoding="utf-8")  # noqa: SIM115
+                stdout_dest = stdout_fh
+            elif capture_output:
+                stdout_dest = subprocess.PIPE
+            else:
+                stdout_dest = subprocess.DEVNULL
+
             proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE if stdin_data else subprocess.DEVNULL,
-                stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+                stdout=stdout_dest,
                 stderr=subprocess.PIPE if capture_output else subprocess.DEVNULL,
                 text=True,
                 env=env,
@@ -258,6 +279,13 @@ class SecureToolExecutor:
             raise ToolExecutionError(f"Unexpected error: {e}") from e
 
         finally:
+            # Close the stdout file handle if we opened one
+            if stdout_fh is not None:
+                try:
+                    stdout_fh.close()
+                except OSError:
+                    pass
+
             # Ensure the process and its group are dead
             if proc and proc.poll() is None:
                 try:

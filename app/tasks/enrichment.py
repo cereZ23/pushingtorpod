@@ -1354,11 +1354,18 @@ def run_katana(tenant_id: int, asset_ids: List[int], timeout: Optional[int] = No
             effective_timeout = timeout or settings.katana_timeout
             crawl_duration = str(effective_timeout)
 
-            # Write katana output to a FILE instead of capturing stdout.
-            # JS-crawl on large tenants can produce GB of JSONL output, and
-            # proc.communicate() buffers ALL of it in a single Python string,
-            # triggering the 12 GB OOM kill. Writing to disk and streaming
-            # the file line-by-line keeps Python memory flat.
+            # Redirect katana JSONL stdout to a FILE via the executor's
+            # stdout_file parameter. This avoids Python memory issues:
+            # proc.communicate() buffers ALL stdout in a single Python
+            # string, and JS-crawl on ~60 URLs can produce GB of JSONL,
+            # triggering the 12 GB OOM kill. The stdout_file parameter
+            # opens the file at the OS level so the kernel writes directly
+            # to disk with zero Python memory overhead.
+            #
+            # NOTE: katana's -o flag writes PLAIN URLs to the file, not
+            # JSONL. The -jsonl flag only controls the stdout format.
+            # Therefore we must NOT use -o; instead we redirect stdout
+            # itself to the file so the JSONL lines land there.
             import os
             output_file = os.path.join(executor.temp_dir, "katana_output.jsonl")
 
@@ -1374,8 +1381,6 @@ def run_katana(tenant_id: int, asset_ids: List[int], timeout: Optional[int] = No
                 f"{crawl_duration}s",  # crawl duration (not max pages)
                 "-rl",
                 "100",  # rate limit requests/sec
-                "-o",
-                output_file,  # write to file instead of stdout
             ]
 
             # Katana respects robots.txt by default.
@@ -1391,7 +1396,8 @@ def run_katana(tenant_id: int, asset_ids: List[int], timeout: Optional[int] = No
                 "katana",
                 args,
                 timeout=effective_timeout + 30,  # extra buffer beyond crawl duration
-                capture_output=False,  # don't buffer stdout — output goes to file
+                capture_output=False,  # stderr to /dev/null (not needed)
+                stdout_file=output_file,  # JSONL stdout -> file (zero memory)
             )
 
             if returncode != 0:
@@ -1417,13 +1423,23 @@ def run_katana(tenant_id: int, asset_ids: List[int], timeout: Optional[int] = No
                 try:
                     result = json.loads(line)
 
-                    # Katana JSON output fields:
-                    # - endpoint: the discovered URL
-                    # - source: the URL where it was found
-                    # - tag: type of finding (form, js, etc.)
-                    endpoint_url = result.get("endpoint", "")
-                    source_url = result.get("source", "")
-                    tag = result.get("tag", "")
+                    # Katana JSONL output (v1.0+) nests the URL under
+                    # "request.endpoint" and the source page under
+                    # "request.source". Fall back to top-level keys for
+                    # compatibility with older katana versions.
+                    request = result.get("request") or {}
+                    endpoint_url = (
+                        request.get("endpoint")
+                        or result.get("endpoint", "")
+                    )
+                    source_url = (
+                        request.get("source")
+                        or result.get("source", "")
+                    )
+                    tag = (
+                        request.get("tag")
+                        or result.get("tag", "")
+                    )
 
                     if not endpoint_url:
                         continue

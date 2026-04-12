@@ -174,11 +174,17 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     timeout = params.nuclei_timeout
 
     # Tier-aware exclude-tags: T1 is very conservative (no active payloads),
-    # T2 allows detection-based checks, T3 allows most checks except DoS.
+    # T2/T3 allow detection-based checks but still exclude intrusive templates.
+    # NOTE: we tried fully opening T3 (removing intrusive,sqli,xss,ssrf) but
+    # those templates send attack payloads that cause i/o timeouts on Azure
+    # hosts, which triggers nuclei's "permanently unresponsive" blacklist and
+    # prevents ALL subsequent templates (including simple detection checks
+    # like docker-compose, htaccess) from running on that host. Keeping
+    # intrusive excluded is essential for detection quality.
     tier_exclude_tags = {
         1: "dos,headless,fuzz,osint,token-spray,intrusive,sqli,xss,ssrf,ssti,rce,upload,bruteforce,credential-stuffing",
         2: "dos,headless,fuzz,osint,token-spray,intrusive,credential-stuffing,bruteforce,upload",
-        3: "dos,headless,fuzz,credential-stuffing",
+        3: "dos,headless,fuzz,osint,intrusive,credential-stuffing",
     }
     exclude_tags = tier_exclude_tags.get(scan_tier, tier_exclude_tags[1])
 
