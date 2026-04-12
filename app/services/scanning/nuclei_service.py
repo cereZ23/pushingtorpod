@@ -80,6 +80,7 @@ class NucleiService:
         concurrency: int = 50,
         timeout: int = 1800,
         interactsh_server: Optional[str] = None,
+        exclude_tags: Optional[str] = None,
     ) -> Dict:
         """
         Execute Nuclei scan on list of URLs
@@ -138,6 +139,7 @@ class NucleiService:
                 rate_limit=rate_limit,
                 concurrency=concurrency,
                 interactsh_server=interactsh_server,
+                exclude_tags=exclude_tags,
             )
 
             # Execute Nuclei
@@ -251,6 +253,7 @@ class NucleiService:
         rate_limit: int,
         concurrency: int,
         interactsh_server: Optional[str] = None,
+        exclude_tags: Optional[str] = None,
     ) -> List[str]:
         """
         Build Nuclei command arguments
@@ -330,13 +333,13 @@ class NucleiService:
             ]:
                 args.extend(["-t", f"{nuclei_templates_dir}/{tpl_dir}"])
 
-        # Exclude templates that are slow, destructive, or redundant with other phases
-        args.extend(
-            [
-                "-exclude-tags",
-                "dos,headless,fuzz,osint,token-spray,intrusive",
-            ]
+        # Exclude templates by tag. Caller passes tier-aware tags from
+        # detection.py; if not provided, use the most conservative set.
+        effective_exclude = exclude_tags or (
+            "dos,headless,fuzz,osint,token-spray,intrusive,"
+            "sqli,xss,ssrf,ssti,rce,upload,bruteforce,credential-stuffing"
         )
+        args.extend(["-exclude-tags", effective_exclude])
 
         # Interactsh OOB callback support (Tier 3 aggressive scans)
         if interactsh_server:

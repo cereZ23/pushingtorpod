@@ -173,6 +173,15 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     rate_limit = params.nuclei_rate_limit
     timeout = params.nuclei_timeout
 
+    # Tier-aware exclude-tags: T1 is very conservative (no active payloads),
+    # T2 allows detection-based checks, T3 allows most checks except DoS.
+    tier_exclude_tags = {
+        1: "dos,headless,fuzz,osint,token-spray,intrusive,sqli,xss,ssrf,ssti,rce,upload,bruteforce,credential-stuffing",
+        2: "dos,headless,fuzz,osint,token-spray,intrusive,credential-stuffing,bruteforce,upload",
+        3: "dos,headless,fuzz,credential-stuffing",
+    }
+    exclude_tags = tier_exclude_tags.get(scan_tier, tier_exclude_tags[1])
+
     # Apply adaptive throttle if active
     from app.services.adaptive_throttle import get_throttle
 
@@ -190,15 +199,28 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     total_scanned = 0
     total_urls = 0
 
-    # Tier 1 "fast" scan: only the highest-value template dirs (~2k templates).
-    # dns/ and network/ are slow (many socket-based checks) and low-yield for EASM.
-    # http/misconfiguration/ overlaps with Phase 8 misconfig.py (50 controls).
-    # Tier 2+ gets the full set for deeper analysis.
+    # Tier-aware template selection.
+    # See security-engineer agent analysis for full rationale per directory.
+    # Excluded everywhere: http/technologies/ (Phase 6 does it), http/osint/
+    # (Phase 1 does it), dast/ (payload injection risk), credential-stuffing/
+    # (legal), headless/ (Phase 7 does it), file/code/workflows/ (not HTTP).
     tier_templates = {
-        1: ["http/cves/", "http/exposed-panels/", "http/takeovers/", "http/default-logins/", "http/exposures/", "ssl/"],
-        # Tier 2/3: None = use nuclei_service default (all dirs including cloud/)
+        1: [
+            "http/cves/", "http/exposed-panels/", "http/takeovers/",
+            "http/default-logins/", "http/exposures/",
+            "http/honeypot/", "http/cnvd/",
+            "ssl/", "custom/",
+        ],
+        2: [
+            "http/cves/", "http/exposed-panels/", "http/misconfiguration/",
+            "http/default-logins/", "http/takeovers/", "http/exposures/",
+            "http/vulnerabilities/",
+            "http/iot/", "http/cnvd/", "http/miscellaneous/", "http/honeypot/",
+            "cloud/", "ssl/", "javascript/", "custom/",
+        ],
+        # T3: same dirs as T2 but with broader severity + fewer exclude-tags
     }
-    templates_for_scan = tier_templates.get(scan_tier)
+    templates_for_scan = tier_templates.get(scan_tier, tier_templates[2])
 
     # DNS/network template config (Pass 3)
     # Tier 1: dns/ only (SPF, DKIM, DMARC, DNSSEC, zone transfer) -- fast, ~1 min
@@ -233,6 +255,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             concurrency=concurrency,
             timeout=timeout,
             interactsh_server=interactsh_server if use_interactsh else None,
+            exclude_tags=exclude_tags,
         )
 
     def _run_pass_2():
@@ -248,6 +271,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             rate_limit=rate_limit,
             concurrency=concurrency,
             timeout=300,
+            exclude_tags=tier_exclude_tags[1],  # CDN pass always uses T1 (conservative)
         )
 
     def _run_pass_3():
@@ -265,6 +289,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             rate_limit=rate_limit,
             concurrency=concurrency,
             timeout=300,
+            exclude_tags=exclude_tags,
         )
 
     # Run passes in PARALLEL — pass 1 (HTTP) and pass 3 (DNS/network) target

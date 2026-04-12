@@ -37,6 +37,7 @@ def run_nuclei_scan(
     concurrency: int = 50,
     timeout: int = 1800,
     interactsh_server: Optional[str] = None,
+    exclude_tags: Optional[str] = None,
 ):
     """
     Execute Nuclei vulnerability scan on assets
@@ -159,6 +160,7 @@ def run_nuclei_scan(
                 concurrency=concurrency,
                 timeout=timeout,
                 interactsh_server=interactsh_server,
+                exclude_tags=exclude_tags,
             )
         )
 
