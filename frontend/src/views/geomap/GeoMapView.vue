@@ -364,7 +364,10 @@ async function loadGeoData(): Promise<void> {
       console.error("Failed to load geo summary:", summaryResp.reason);
     }
 
-    updateMarkers();
+    // NOTE: updateMarkers() is called AFTER isLoading=false below, not here.
+    // Calling fitBounds while the container is display:none (v-show="!isLoading")
+    // makes Leaflet unable to compute the viewport, so the map stays centered
+    // on the Atlantic Ocean at zoom 2 instead of fitting the markers.
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : "Failed to load geographic data";
@@ -372,13 +375,12 @@ async function loadGeoData(): Promise<void> {
     console.error("GeoMap load error:", message);
   } finally {
     isLoading.value = false;
-    // Leaflet needs invalidateSize AFTER the container becomes visible.
-    // v-show="!isLoading" makes the container visible only after isLoading=false,
-    // so we must wait for the DOM to update before telling Leaflet to recalculate.
     await nextTick();
     if (mapInstance) {
       mapInstance.invalidateSize();
     }
+    // Now the container is visible and sized — safe to fitBounds.
+    updateMarkers();
   }
 }
 
