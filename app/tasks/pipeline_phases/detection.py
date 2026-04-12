@@ -374,6 +374,7 @@ def _phase_11_risk_scoring(tenant_id, project_id, scan_run_id, db, tenant_logger
     )
     from app.services.risk_scoring import recalculate_asset_risk
     from app.models.database import Asset, Finding
+    from app.models.enrichment import Certificate  # noqa: F401 — register with mapper before any Asset query
     from app.models.issues import Issue, IssueFinding, IssueStatus
     from app.models.risk import RiskScore
 

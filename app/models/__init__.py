@@ -58,6 +58,11 @@ from app.models.ticketing import (
     Ticket,
 )
 
+from app.models.enrichment import (
+    Certificate,
+    Endpoint,
+)
+
 from app.models.report_schedule import (
     ReportSchedule,
 )
@@ -99,4 +104,6 @@ __all__ = [
     "TicketingConfig",
     "ReportSchedule",
     "UserInvitation",
+    "Certificate",
+    "Endpoint",
 ]
