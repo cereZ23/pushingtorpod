@@ -266,21 +266,27 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             timeout=300,
         )
 
-    # Run passes SEQUENTIALLY to avoid multiple Nuclei instances competing
-    # for bandwidth on the same hosts, which triggers 429s and inflates the
-    # error rate. Order: HTTP first (highest value), then CDN, then DNS.
-    passes = [
-        ("pass_1", _run_pass_1, bool(asset_ids)),
-        ("pass_2", _run_pass_2, bool(cdn_asset_ids)),
-        ("pass_3", _run_pass_3, bool(dns_net_asset_ids)),
-    ]
-    active_passes = [(name, fn) for name, fn, has_targets in passes if has_targets]
+    # Run passes in PARALLEL — pass 1 (HTTP) and pass 3 (DNS/network) target
+    # different protocols so they don't compete for bandwidth. The HTTP-live
+    # filter on pass 1 eliminated the 88% error rate that made parallel
+    # execution problematic before.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    tenant_logger.info(f"Nuclei: running {len(active_passes)} passes sequentially: {', '.join(n for n, _ in active_passes)}")
+    passes = {"pass_1": _run_pass_1, "pass_2": _run_pass_2, "pass_3": _run_pass_3}
+    active_passes = {
+        k: fn
+        for k, fn in passes.items()
+        if ((k == "pass_1" and asset_ids) or (k == "pass_2" and cdn_asset_ids) or (k == "pass_3" and dns_net_asset_ids))
+    }
 
-    for pass_name, fn in active_passes:
+    tenant_logger.info(f"Nuclei: running {len(active_passes)} passes concurrently: {', '.join(active_passes.keys())}")
+
+    with ThreadPoolExecutor(max_workers=len(active_passes) or 1) as executor:
+        futures = {executor.submit(fn): name for name, fn in active_passes.items()}
+        for future in as_completed(futures):
+            pass_name = futures[future]
             try:
-                result = fn()
+                result = future.result()
                 if isinstance(result, dict):
                     total_created += result.get("findings_created", 0)
                     total_updated += result.get("findings_updated", 0)
