@@ -58,34 +58,59 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     }
     severity = tier_severity.get(scan_tier, tier_severity[1])
 
-    # Only scan hostnames -- Nuclei resolves them internally via services.
-    # Skip IP assets that are already covered by a hostname's DNS resolution.
+    # Only scan assets that have at least one live HTTP service (discovered
+    # by phase 4 HTTPx). Sending ghost subdomains to Nuclei causes 80%+
+    # error rates and wastes scan time on unreachable hosts.
+    from app.models.database import Service
+    from sqlalchemy.orm import aliased
+    from sqlalchemy import and_, exists
+
+    live_asset_ids = {
+        row[0]
+        for row in db.query(Asset.id)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN, AssetType.IP]),
+            Asset.is_active == True,
+            exists().where(
+                and_(
+                    Service.asset_id == Asset.id,
+                    Service.http_status.isnot(None),
+                )
+            ),
+        )
+        .all()
+    }
+
     hostname_assets = (
         db.query(Asset)
         .filter(
             Asset.tenant_id == tenant_id,
             Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
             Asset.is_active == True,
+            Asset.id.in_(live_asset_ids),
         )
         .all()
     )
 
-    covered_ip_ids = {
-        r.target_asset_id
-        for r in db.query(Relationship.target_asset_id)
-        .filter(
-            Relationship.tenant_id == tenant_id,
-            Relationship.rel_type == "resolves_to",
-        )
-        .all()
-    }
+    # Standalone IPs not covered by any hostname (atomic LEFT JOIN, see phase 5)
+    _R = aliased(Relationship)
     standalone_ips = (
         db.query(Asset)
+        .outerjoin(
+            _R,
+            and_(
+                _R.target_asset_id == Asset.id,
+                _R.tenant_id == tenant_id,
+                _R.rel_type == "resolves_to",
+            ),
+        )
         .filter(
             Asset.tenant_id == tenant_id,
             Asset.type == AssetType.IP,
             Asset.is_active == True,
-            ~Asset.id.in_(covered_ip_ids) if covered_ip_ids else True,
+            Asset.id.in_(live_asset_ids),
+            _R.id.is_(None),
         )
         .all()
     )
@@ -95,6 +120,10 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
 
     all_assets = hostname_assets + standalone_ips
     all_assets, ip_dedup_skipped = dedup_by_resolved_ip(all_assets, tenant_id, db)
+    tenant_logger.info(
+        f"Nuclei: {len(live_asset_ids)} assets with live HTTP, "
+        f"{len(hostname_assets)} hostnames + {len(standalone_ips)} standalone IPs after filter"
+    )
 
     # Split assets: CDN-fronted hosts only get takeover/ssl checks (CVE scans
     # would hit the CDN edge, not the origin, producing false positives).
@@ -106,10 +135,24 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
 
     asset_ids = [a.id for a in direct_assets]
     cdn_asset_ids = [a.id for a in cdn_assets]
+
+    # DNS/network pass targets: ALL active domains (not just HTTP-live),
+    # because DNS checks (SPF, DKIM, DMARC, zone transfer, DNSSEC) don't
+    # need a web server.
+    all_active_domains = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
+            Asset.is_active == True,
+        )
+        .all()
+    )
+
     tenant_logger.info(
-        f"Nuclei targets: {len(all_assets)} total ({len(direct_assets)} direct + "
-        f"{len(cdn_assets)} CDN-fronted, {len(covered_ip_ids)} covered IPs skipped, "
-        f"{ip_dedup_skipped} same-IP hostnames deduped)"
+        f"Nuclei targets: {len(all_assets)} HTTP-live ({len(direct_assets)} direct + "
+        f"{len(cdn_assets)} CDN-fronted, {ip_dedup_skipped} deduped), "
+        f"{len(all_active_domains)} domains for DNS/network pass"
     )
 
     # Interactsh OOB callback support (Tier 3 only)
@@ -166,7 +209,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         3: ["dns/", "network/"],
     }
     dns_net_tpls = dns_network_templates.get(scan_tier, ["dns/"])
-    dns_net_asset_ids = [a.id for a in all_assets]
+    dns_net_asset_ids = [a.id for a in all_active_domains]
 
     # ---------------------------------------------------------------
     # Run all Nuclei passes concurrently using threads.
@@ -223,22 +266,21 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             timeout=300,
         )
 
-    passes = {"pass_1": _run_pass_1, "pass_2": _run_pass_2, "pass_3": _run_pass_3}
-    # Only submit passes that have targets
-    active_passes = {
-        k: fn
-        for k, fn in passes.items()
-        if ((k == "pass_1" and asset_ids) or (k == "pass_2" and cdn_asset_ids) or (k == "pass_3" and dns_net_asset_ids))
-    }
+    # Run passes SEQUENTIALLY to avoid multiple Nuclei instances competing
+    # for bandwidth on the same hosts, which triggers 429s and inflates the
+    # error rate. Order: HTTP first (highest value), then CDN, then DNS.
+    passes = [
+        ("pass_1", _run_pass_1, bool(asset_ids)),
+        ("pass_2", _run_pass_2, bool(cdn_asset_ids)),
+        ("pass_3", _run_pass_3, bool(dns_net_asset_ids)),
+    ]
+    active_passes = [(name, fn) for name, fn, has_targets in passes if has_targets]
 
-    tenant_logger.info(f"Nuclei: running {len(active_passes)} passes concurrently: {', '.join(active_passes.keys())}")
+    tenant_logger.info(f"Nuclei: running {len(active_passes)} passes sequentially: {', '.join(n for n, _ in active_passes)}")
 
-    with ThreadPoolExecutor(max_workers=len(active_passes) or 1) as executor:
-        futures = {executor.submit(fn): name for name, fn in active_passes.items()}
-        for future in as_completed(futures):
-            pass_name = futures[future]
+    for pass_name, fn in active_passes:
             try:
-                result = future.result()
+                result = fn()
                 if isinstance(result, dict):
                     total_created += result.get("findings_created", 0)
                     total_updated += result.get("findings_updated", 0)

@@ -114,9 +114,11 @@ def get_scan_params(scan_tier: int = 1) -> ScanParams:
         #   T3 (full)     → 2.5 h  (up to ~10M probes; kept below pipeline group
         #                           timeout & celery task time_limit)
         naabu_timeout={1: 300, 2: 900, 3: 9000}.get(scan_tier, 900),
-        # Nuclei: base 15 concurrent, scale with both CPU and RAM
+        # Nuclei: base 15 concurrent, scale with both CPU and RAM.
+        # T3 gets a higher rate now that passes run sequentially (no
+        # self-competition) and targets are filtered to HTTP-live only.
         nuclei_concurrency=int(min(15 * combined, 100)),
-        nuclei_rate_limit=int(min(100 * combined, 1000)),
+        nuclei_rate_limit=int(min((200 if scan_tier == 3 else 100) * combined, 2000)),
         nuclei_timeout={1: 300, 2: 600, 3: 1200}.get(scan_tier, 600),
         # HTTPx: timeout based on tier (not resource-dependent)
         httpx_timeout={1: 300, 2: 600, 3: 600}.get(scan_tier, 600),

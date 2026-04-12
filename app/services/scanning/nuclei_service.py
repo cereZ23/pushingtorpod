@@ -284,7 +284,7 @@ class NucleiService:
             "-c",
             str(concurrency),  # Concurrency
             "-timeout",
-            "7",  # Request timeout (seconds, was 10)
+            "10",  # Request timeout (seconds)
             "-retries",
             "0",  # No retries (saves ~15% time on fast pass)
             "-bs",
