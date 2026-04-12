@@ -71,9 +71,7 @@ def dedup_by_resolved_ip(
     target_ip_ids = list({rel.target_asset_id for rel in relationships})
     ip_identifier_by_id: dict[int, str] = {}
     if target_ip_ids:
-        target_ip_rows = (
-            db.query(Asset.id, Asset.identifier).filter(Asset.id.in_(target_ip_ids)).all()
-        )
+        target_ip_rows = db.query(Asset.id, Asset.identifier).filter(Asset.id.in_(target_ip_ids)).all()
         ip_identifier_by_id = {row.id: row.identifier for row in target_ip_rows}
 
     asset_to_ips: dict[int, set[str]] = {}

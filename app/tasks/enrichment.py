@@ -1367,6 +1367,7 @@ def run_katana(tenant_id: int, asset_ids: List[int], timeout: Optional[int] = No
             # Therefore we must NOT use -o; instead we redirect stdout
             # itself to the file so the JSONL lines land there.
             import os
+
             output_file = os.path.join(executor.temp_dir, "katana_output.jsonl")
 
             args = [
@@ -1428,18 +1429,9 @@ def run_katana(tenant_id: int, asset_ids: List[int], timeout: Optional[int] = No
                     # "request.source". Fall back to top-level keys for
                     # compatibility with older katana versions.
                     request = result.get("request") or {}
-                    endpoint_url = (
-                        request.get("endpoint")
-                        or result.get("endpoint", "")
-                    )
-                    source_url = (
-                        request.get("source")
-                        or result.get("source", "")
-                    )
-                    tag = (
-                        request.get("tag")
-                        or result.get("tag", "")
-                    )
+                    endpoint_url = request.get("endpoint") or result.get("endpoint", "")
+                    source_url = request.get("source") or result.get("source", "")
+                    tag = request.get("tag") or result.get("tag", "")
 
                     if not endpoint_url:
                         continue

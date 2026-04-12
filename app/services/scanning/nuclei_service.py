@@ -336,8 +336,7 @@ class NucleiService:
         # Exclude templates by tag. Caller passes tier-aware tags from
         # detection.py; if not provided, use the most conservative set.
         effective_exclude = exclude_tags or (
-            "dos,headless,fuzz,osint,token-spray,intrusive,"
-            "sqli,xss,ssrf,ssti,rce,upload,bruteforce,credential-stuffing"
+            "dos,headless,fuzz,osint,token-spray,intrusive,sqli,xss,ssrf,ssti,rce,upload,bruteforce,credential-stuffing"
         )
         args.extend(["-exclude-tags", effective_exclude])
 
