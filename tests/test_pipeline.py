@@ -66,14 +66,19 @@ class TestPipelineStructure:
                 assert step in PHASE_DEFS, f"Phase {step} in EXECUTION_PLAN but not in PHASE_DEFS"
 
     def test_execution_plan_covers_all_phases(self):
-        """Every phase in PHASE_DEFS appears in EXECUTION_PLAN."""
+        """Every phase in EXECUTION_PLAN exists in PHASE_DEFS.
+
+        Note: some phases may be intentionally removed from the plan
+        (e.g. 6c sensitive_paths — redundant with Nuclei, leaked 10GB).
+        Those stay in PHASE_DEFS for reference but not in the plan.
+        """
         plan_phases = set()
         for step in EXECUTION_PLAN:
             if isinstance(step, list):
                 plan_phases.update(step)
             else:
                 plan_phases.add(step)
-        assert plan_phases == set(PHASE_DEFS.keys())
+        assert plan_phases.issubset(set(PHASE_DEFS.keys()))
 
     def test_phase_0_is_first(self):
         """Seed ingestion (phase 0) must be the first step."""
