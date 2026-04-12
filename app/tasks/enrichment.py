@@ -1551,16 +1551,17 @@ def run_katana(tenant_id: int, asset_ids: List[int], timeout: Optional[int] = No
                 endpoints_by_asset.setdefault(aid, []).append(ep)
 
             for asset_id, asset_endpoints in endpoints_by_asset.items():
-                # Deduplicate by URL — katana often returns the same endpoint
-                # multiple times (via different crawl paths). PostgreSQL's
-                # ON CONFLICT DO UPDATE can't handle duplicate rows in the
-                # same INSERT batch → CardinalityViolation.
-                seen_urls = set()
+                # Deduplicate by (url, method) — matches the DB unique constraint
+                # idx_asset_url(asset_id, url, method). Katana returns the same
+                # endpoint multiple times via different crawl paths. PostgreSQL's
+                # ON CONFLICT DO UPDATE can't handle duplicate rows in the same
+                # INSERT batch → CardinalityViolation.
+                seen_keys = set()
                 unique_endpoints = []
                 for ep in asset_endpoints:
-                    url = ep.get("url", "")
-                    if url and url not in seen_urls:
-                        seen_urls.add(url)
+                    key = (ep.get("url", ""), ep.get("method", "GET"))
+                    if key[0] and key not in seen_keys:
+                        seen_keys.add(key)
                         unique_endpoints.append(ep)
                 result = endpoint_repo.bulk_upsert(asset_id, unique_endpoints)
                 total_created += result["created"]
