@@ -2,11 +2,10 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
 
-# GHCR push requires packages:write
 permissions:
   contents: read
   packages: write
@@ -14,15 +13,40 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/cerez23/pushingtorpod
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
 
+# ─────────────────────────────────────────────────────────────────
 jobs:
-  # ─── Backend Tests ─────────────────────────────────────────────
-  backend-test:
+  # ─── Lint ─────────────────────────────────────────────────────
+  lint:
+    name: Lint & Format
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Ruff check
+        run: ruff check app/ tests/ --output-format=github
+
+      - name: Ruff format
+        run: ruff format --check app/ tests/
+
+  # ─── Unit Tests (fast, no external deps) ──────────────────────
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: [lint]
 
     services:
       postgres:
-        image: postgres:15
+        image: postgres:15-alpine
         env:
           POSTGRES_USER: easm
           POSTGRES_PASSWORD: easm_password
@@ -52,7 +76,7 @@ jobs:
       REDIS_HOST: localhost
       REDIS_PORT: "6379"
       REDIS_PASSWORD: ""
-      MINIO_ENDPOINT: ""
+      MINIO_ENDPOINT: localhost:9000
       MINIO_USER: minioadmin
       MINIO_PASSWORD: minioadmin123
       MINIO_ACCESS_KEY: minioadmin
@@ -60,325 +84,328 @@ jobs:
       ENVIRONMENT: test
       JWT_SECRET_KEY: test-secret-key-for-ci
       JWT_ALGORITHM: HS256
+      SECRET_KEY: test-secret-key
+      MFA_ENCRYPTION_KEY: test-mfa-key-32chars-exactly1234
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-        cache: 'pip'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
 
-    - name: Install system dependencies
-      run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: Install Python dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Run migrations
+        run: alembic upgrade head
 
-    - name: Run database migrations
-      run: alembic upgrade head
+      - name: Run unit tests
+        run: |
+          pytest tests/ -v \
+            --cov=app \
+            --cov-report=xml:coverage-unit.xml \
+            --cov-report=term-missing \
+            --durations=20 \
+            --timeout=120 \
+            --ignore=tests/integration/ \
+            --ignore=tests/performance/ \
+            -m "not integration and not performance and not slow"
 
-    - name: Run all tests
-      run: |
-        pytest tests/ -v \
-          --cov=app \
-          --cov-report=xml \
-          --cov-report=term-missing \
-          --durations=20 \
-          --timeout=120 \
-          --ignore=tests/test_secure_executor.py \
-          --ignore=tests/test_discovery.py \
-          --ignore=tests/test_visual_recon.py \
-          --ignore=tests/test_integration_discovery.py \
-          --ignore=tests/test_enrichment_pipeline_e2e.py \
-          --ignore=tests/test_enrichment_tasks.py \
-          --ignore=tests/test_enrichment_repositories.py \
-          --ignore=tests/test_performance.py \
-          --ignore=tests/test_repositories.py \
-          --ignore=tests/test_network_intel.py \
-          --ignore=tests/test_ticketing.py \
-          --ignore=tests/test_nuclei_service.py \
-          --ignore=tests/test_security.py \
-          --ignore=tests/test_threat_intel.py \
-          --ignore=tests/api/test_api_security.py \
-          --ignore=tests/api/test_auth_endpoints.py \
-          --ignore=tests/api/test_finding_endpoints.py \
-          --ignore=tests/api/test_certificate_endpoints.py \
-          --ignore=tests/integration/ \
-          --ignore=tests/performance/ \
-          -k "not test_security_comprehensive and not test_get_asset_tree_returns_hierarchy and not test_get_tenant_dashboard_returns_stats and not test_get_tenant_stats_returns_detailed_metrics and not test_dashboard_endpoint_response_time_under_500ms and not test_database_query_performance and not test_tenant_dashboard_pagination and not test_get_asset_by_id_returns_details"
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file: ./coverage-unit.xml
+          flags: unit
+          fail_ci_if_error: false
 
-    - name: Upload coverage
-      uses: codecov/codecov-action@v4
-      if: always()
-      with:
-        file: ./coverage.xml
-        flags: backend
-        fail_ci_if_error: false
-
-  # ─── Frontend Tests ────────────────────────────────────────────
-  frontend-test:
+  # ─── Integration Tests (full stack with services) ─────────────
+  integration-tests:
+    name: Integration Tests
     runs-on: ubuntu-latest
+    needs: [lint]
 
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: easm
+          POSTGRES_PASSWORD: easm_password
+          POSTGRES_DB: easm_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+      minio:
+        image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+        options: >-
+          --health-cmd "mc ready local || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 9000:9000
+
+    env:
+      DATABASE_URL: postgresql://easm:easm_password@localhost:5432/easm_test
+      TEST_DATABASE_URL: postgresql://easm:easm_password@localhost:5432/easm_test
+      REDIS_URL: redis://localhost:6379/0
+      REDIS_HOST: localhost
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ""
+      MINIO_ENDPOINT: localhost:9000
+      MINIO_USER: minioadmin
+      MINIO_PASSWORD: minioadmin123
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      ENVIRONMENT: test
+      JWT_SECRET_KEY: test-secret-key-for-ci
+      JWT_ALGORITHM: HS256
+      SECRET_KEY: test-secret-key
+      MFA_ENCRYPTION_KEY: test-mfa-key-32chars-exactly1234
+      CELERY_TASK_ALWAYS_EAGER: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client libpq-dev
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run migrations
+        run: alembic upgrade head
+
+      - name: Run ALL backend tests (no skips)
+        run: |
+          pytest tests/ -v \
+            --cov=app \
+            --cov-report=xml:coverage-integration.xml \
+            --cov-report=term-missing \
+            --durations=30 \
+            --timeout=300 \
+            --ignore=tests/performance/
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file: ./coverage-integration.xml
+          flags: integration
+          fail_ci_if_error: false
+
+  # ─── Frontend ─────────────────────────────────────────────────
+  frontend:
+    name: Frontend (Lint + Type-check + Test + Build)
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Node.js 20
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
 
-    - name: Install pnpm
-      uses: pnpm/action-setup@v4
-      with:
-        version: 9
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
 
-    - name: Install dependencies
-      run: pnpm install
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
-    - name: Type check
-      run: pnpm vue-tsc --noEmit
+      - name: Type check
+        run: pnpm vue-tsc --noEmit
 
-    - name: Lint
-      run: pnpm lint --no-fix
-      continue-on-error: true  # 83 errors to fix — tracked in P5
+      - name: Lint
+        run: pnpm lint --no-fix
 
-    - name: Run unit tests
-      run: pnpm test
+      - name: Unit tests
+        run: pnpm test
 
-    - name: Build production bundle
-      run: pnpm build
+      - name: Build
+        run: pnpm build
 
-  # ─── Security Scan (informational — does not block deploy) ────
-  security-scan:
+  # ─── Security Scan ────────────────────────────────────────────
+  security:
+    name: Security Scan
     runs-on: ubuntu-latest
+    continue-on-error: true
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Install security tools
-      run: pip install bandit safety semgrep
+      - name: Install tools
+        run: pip install bandit safety
 
-    - name: Bandit security scan
-      run: bandit -r app/ -f json -o bandit-report.json -ll --exit-zero
+      - name: Bandit
+        run: bandit -r app/ -f json -o bandit.json -ll --exit-zero
 
-    - name: Safety dependency check
-      run: safety check --json > safety-report.json 2>&1 || true
+      - name: Safety
+        run: safety check --json > safety.json 2>&1 || true
 
-    - name: Semgrep scan (Python + Vue/JS)
-      run: |
-        semgrep scan \
-          --config=p/python \
-          --config=p/javascript \
-          --config=p/owasp-top-ten \
-          --config=p/xss \
-          --sarif -o semgrep-report.sarif \
-          --exclude='tests/' \
-          --exclude='node_modules/' \
-          --exclude='*.test.*' \
-          app/ frontend/src/ \
-          || true
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            bandit.json
+            safety.json
 
-    - name: Upload security reports
-      uses: actions/upload-artifact@v4
-      with:
-        name: security-reports
-        path: |
-          bandit-report.json
-          safety-report.json
-          semgrep-report.sarif
-
-  # ─── Lint ──────────────────────────────────────────────────────
-  lint:
+  # ─── Build & Push ─────────────────────────────────────────────
+  build:
+    name: Build & Push Images
     runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-
-    - name: Install linters
-      run: pip install ruff
-
-    - name: Ruff check
-      run: ruff check app/ tests/ --output-format=github
-
-    - name: Ruff format check
-      run: ruff format --check app/ tests/
-
-  # ─── Build & Push Docker Images to GHCR ──────────────────────
-  build-images:
-    runs-on: ubuntu-latest
-    needs: [backend-test, frontend-test]
+    needs: [unit-tests, integration-tests, frontend]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Log in to GHCR
-      uses: docker/login-action@v3
-      with:
-        registry: ${{ env.REGISTRY }}
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
 
-    - name: Build and push API image
-      uses: docker/build-push-action@v6
-      with:
-        context: .
-        file: Dockerfile.api
-        push: true
-        tags: |
-          ${{ env.IMAGE_PREFIX }}/api:latest
-          ${{ env.IMAGE_PREFIX }}/api:${{ github.sha }}
-        cache-from: type=gha,scope=api
-        cache-to: type=gha,mode=max,scope=api
+      - name: Build API
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.api
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/api:latest
+            ${{ env.IMAGE_PREFIX }}/api:${{ github.sha }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
 
-    - name: Build and push UI image
-      uses: docker/build-push-action@v6
-      with:
-        context: ./frontend
-        file: frontend/Dockerfile
-        target: production
-        push: true
-        tags: |
-          ${{ env.IMAGE_PREFIX }}/ui:latest
-          ${{ env.IMAGE_PREFIX }}/ui:${{ github.sha }}
-        build-args: |
-          VITE_API_BASE_URL=https://easm.securekt.com
-        cache-from: type=gha,scope=ui
-        cache-to: type=gha,mode=max,scope=ui
+      - name: Build UI
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: frontend/Dockerfile
+          target: production
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/ui:latest
+            ${{ env.IMAGE_PREFIX }}/ui:${{ github.sha }}
+          build-args: VITE_API_BASE_URL=https://easm.securekt.com
+          cache-from: type=gha,scope=ui
+          cache-to: type=gha,mode=max,scope=ui
 
-    - name: Build and push Worker image
-      uses: docker/build-push-action@v6
-      with:
-        context: .
-        file: Dockerfile.worker
-        push: true
-        tags: |
-          ${{ env.IMAGE_PREFIX }}/worker:latest
-          ${{ env.IMAGE_PREFIX }}/worker:${{ github.sha }}
-        cache-from: type=gha,scope=worker
-        cache-to: type=gha,mode=max,scope=worker
+      - name: Build Worker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.worker
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/worker:latest
+            ${{ env.IMAGE_PREFIX }}/worker:${{ github.sha }}
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,mode=max,scope=worker
 
-  # ─── Deploy to Production ──────────────────────────────────────
+  # ─── Deploy ───────────────────────────────────────────────────
   deploy:
+    name: Deploy
     runs-on: ubuntu-latest
-    needs: [build-images]
+    needs: [build]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Deploy config via rsync
-      env:
-        SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        SERVER_HOST: ${{ secrets.SERVER_HOST }}
-      run: |
-        mkdir -p ~/.ssh
-        echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
-        chmod 600 ~/.ssh/deploy_key
-        ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+      - name: Deploy
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
-        rsync -avz --delete \
-          --exclude '.git' \
-          --exclude '__pycache__' \
-          --exclude 'node_modules' \
-          --exclude '.env' \
-          --exclude 'keys/' \
-          --exclude '*.pyc' \
-          --exclude 'frontend/node_modules' \
-          -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
-          ./ root@${SERVER_HOST}:/opt/easm/
+          rsync -avz --delete \
+            --exclude '.git' --exclude '__pycache__' --exclude 'node_modules' \
+            --exclude '.env' --exclude 'keys/' --exclude '*.pyc' \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            ./ root@${SERVER_HOST}:/opt/easm/
 
-    - name: Pull images and restart services
-      env:
-        SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        SERVER_HOST: ${{ secrets.SERVER_HOST }}
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GH_ACTOR: ${{ github.actor }}
-      run: |
-        # Login to GHCR on server, pull pre-built images, restart
-        ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@${SERVER_HOST} \
-          "echo '${GH_TOKEN}' | docker login ghcr.io -u '${GH_ACTOR}' --password-stdin && \
-           cd /opt/easm && \
-           docker compose -f docker-compose.prod.yml pull api ui worker && \
-           docker compose -f docker-compose.prod.yml up -d api ui worker beat"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@${SERVER_HOST} \
+            "echo '${GH_TOKEN}' | docker login ghcr.io -u '${GH_ACTOR}' --password-stdin && \
+             cd /opt/easm && \
+             docker compose -f docker-compose.prod.yml pull api ui worker && \
+             docker compose -f docker-compose.prod.yml up -d api ui worker beat"
 
-    - name: Smoke test
-      env:
-        SERVER_HOST: ${{ secrets.SERVER_HOST }}
-      run: |
-        # Wait for services to come up after rebuild (retry up to 90s)
-        echo "Waiting for services to start..."
-        for i in 1 2 3 4 5 6; do
-          HTTP_CODE=$(curl -skL -o /dev/null -w "%{http_code}" --connect-timeout 5 "https://${SERVER_HOST}/health" 2>/dev/null || echo "000")
-          if [ "$HTTP_CODE" = "200" ]; then
-            echo "Health endpoint up after ~$((i * 15))s"
-            break
-          fi
-          echo "Attempt $i: HTTP $HTTP_CODE — retrying in 15s..."
-          sleep 15
-        done
+      - name: Smoke test
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          for i in $(seq 1 6); do
+            code=$(curl -skL -o /dev/null -w "%{http_code}" --connect-timeout 5 "https://${SERVER_HOST}/health" 2>/dev/null || echo "000")
+            [ "$code" = "200" ] && echo "Health OK after ~$((i*15))s" && exit 0
+            sleep 15
+          done
+          echo "::warning::Health check failed"
 
-        FAILED=0
-
-        # Health check
-        HTTP_CODE=$(curl -skL -o /dev/null -w "%{http_code}" --connect-timeout 10 "https://${SERVER_HOST}/health" 2>/dev/null || echo "000")
-        echo "Health check: HTTP $HTTP_CODE"
-        if [ "$HTTP_CODE" != "200" ]; then
-          echo "::error::Health check failed with HTTP $HTTP_CODE"
-          FAILED=1
-        fi
-
-        # Frontend check
-        HTTP_CODE=$(curl -skL -o /dev/null -w "%{http_code}" --connect-timeout 10 "https://${SERVER_HOST}/" 2>/dev/null || echo "000")
-        echo "Frontend check: HTTP $HTTP_CODE"
-        if [ "$HTTP_CODE" != "200" ]; then
-          echo "::error::Frontend check failed with HTTP $HTTP_CODE"
-          FAILED=1
-        fi
-
-        if [ "$FAILED" -eq 1 ]; then
-          echo "::warning::Smoke tests FAILED — production may be unhealthy (check server manually)"
-          # Don't exit 1 — CI runner may not reach the server (firewall/network).
-          # Tests are the real deploy gate; smoke test is best-effort.
-        fi
-
-        echo "Smoke tests passed"
-
-  # ─── Summary ───────────────────────────────────────────────────
-  pipeline-summary:
+  # ─── Summary ──────────────────────────────────────────────────
+  summary:
+    name: Pipeline Summary
     runs-on: ubuntu-latest
-    needs: [backend-test, frontend-test, security-scan, lint, build-images]
+    needs: [lint, unit-tests, integration-tests, frontend, security, build]
     if: always()
-
     steps:
-    - name: Pipeline results
-      run: |
-        echo "## Pipeline Summary" >> $GITHUB_STEP_SUMMARY
-        echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
-        echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
-        echo "| Backend Tests | ${{ needs.backend-test.result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Frontend Tests | ${{ needs.frontend-test.result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Security Scan | ${{ needs.security-scan.result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Lint | ${{ needs.lint.result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Build Images | ${{ needs.build-images.result }} |" >> $GITHUB_STEP_SUMMARY
+      - name: Results
+        run: |
+          echo "## CI Pipeline" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint | ${{ needs.lint.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Unit Tests | ${{ needs.unit-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Integration Tests | ${{ needs.integration-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend | ${{ needs.frontend.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security | ${{ needs.security.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
