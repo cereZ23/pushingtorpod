@@ -1354,6 +1354,14 @@ def run_katana(tenant_id: int, asset_ids: List[int], timeout: Optional[int] = No
             effective_timeout = timeout or settings.katana_timeout
             crawl_duration = str(effective_timeout)
 
+            # Write katana output to a FILE instead of capturing stdout.
+            # JS-crawl on large tenants can produce GB of JSONL output, and
+            # proc.communicate() buffers ALL of it in a single Python string,
+            # triggering the 12 GB OOM kill. Writing to disk and streaming
+            # the file line-by-line keeps Python memory flat.
+            import os
+            output_file = os.path.join(executor.temp_dir, "katana_output.jsonl")
+
             args = [
                 "-list",
                 urls_file,
@@ -1366,6 +1374,8 @@ def run_katana(tenant_id: int, asset_ids: List[int], timeout: Optional[int] = No
                 f"{crawl_duration}s",  # crawl duration (not max pages)
                 "-rl",
                 "100",  # rate limit requests/sec
+                "-o",
+                output_file,  # write to file instead of stdout
             ]
 
             # Katana respects robots.txt by default.
@@ -1374,29 +1384,33 @@ def run_katana(tenant_id: int, asset_ids: List[int], timeout: Optional[int] = No
                 args.append("-disable-redirects")
 
             tenant_logger.info(
-                f"Katana: {len(urls)} URLs, crawl_duration={crawl_duration}s, watchdog={effective_timeout + 30}s"
+                f"Katana: {len(urls)} URLs, crawl_duration={crawl_duration}s, "
+                f"watchdog={effective_timeout + 30}s, output={output_file}"
             )
-            returncode, stdout, stderr = executor.execute(
+            returncode, _, stderr = executor.execute(
                 "katana",
                 args,
                 timeout=effective_timeout + 30,  # extra buffer beyond crawl duration
+                capture_output=False,  # don't buffer stdout — output goes to file
             )
 
             if returncode != 0:
                 tenant_logger.warning(f"Katana returned non-zero exit code: {returncode}")
-                tenant_logger.debug(f"Katana stderr: {stderr}")
-                # Even on non-zero exit (watchdog kill, crawl-time hit),
-                # try to parse whatever JSONL we already collected on
-                # stdout. Katana flushes lines as it finds endpoints, so
-                # a mid-run kill still yields usable partial data.
-                if stdout:
-                    tenant_logger.info(
-                        f"Katana: attempting to salvage {len(stdout)} bytes of partial stdout"
-                    )
 
-            # Parse JSON output lines
+            # Read output from file (line-by-line, constant memory)
+            stdout_lines = []
+            if os.path.exists(output_file):
+                file_size = os.path.getsize(output_file)
+                tenant_logger.info(f"Katana output file: {file_size:,} bytes")
+                with open(output_file) as f:
+                    stdout_lines = f.readlines()
+            else:
+                tenant_logger.warning("Katana output file not found (timeout or no results)")
+
+            # Parse JSONL output lines
             endpoints_data: List[Dict] = []
-            for line in stdout.strip().split("\n"):
+            for line in stdout_lines:
+                line = line.strip()
                 if not line:
                     continue
 
