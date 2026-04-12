@@ -115,14 +115,15 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         .all()
     )
 
-    # Dedup hostnames resolving to the same IP before scanning
-    from app.services.ip_dedup import dedup_by_resolved_ip
-
+    # NOTE: do NOT dedup hostnames by resolved IP for Nuclei. Unlike naabu
+    # (port scanning, where same IP = same ports), Nuclei uses the Host
+    # header and each virtual host can serve different content. Deduping
+    # by IP caused www.ifo.it to be dropped (same Azure IP as cdn.ifo.it)
+    # and its docker-compose.yml + .htaccess findings were never found.
     all_assets = hostname_assets + standalone_ips
-    all_assets, ip_dedup_skipped = dedup_by_resolved_ip(all_assets, tenant_id, db)
     tenant_logger.info(
         f"Nuclei: {len(live_asset_ids)} assets with live HTTP, "
-        f"{len(hostname_assets)} hostnames + {len(standalone_ips)} standalone IPs after filter"
+        f"{len(all_assets)} targets ({len(hostname_assets)} hostnames + {len(standalone_ips)} standalone IPs)"
     )
 
     # Split assets: CDN-fronted hosts only get takeover/ssl checks (CVE scans
@@ -151,7 +152,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
 
     tenant_logger.info(
         f"Nuclei targets: {len(all_assets)} HTTP-live ({len(direct_assets)} direct + "
-        f"{len(cdn_assets)} CDN-fronted, {ip_dedup_skipped} deduped), "
+        f"{len(cdn_assets)} CDN-fronted, no IP dedup — virtual hosts need distinct scans), "
         f"{len(all_active_domains)} domains for DNS/network pass"
     )
 
