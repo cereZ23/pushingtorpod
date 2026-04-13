@@ -529,40 +529,60 @@ def sanitize_http_headers(headers: Dict[str, str]) -> Dict[str, str]:
 
 def sanitize_html(text: str) -> str:
     """
-    Sanitize HTML/JS to prevent XSS
+    Sanitize HTML/JS to prevent XSS.
 
-    Removes:
-    - <script> tags
-    - <iframe> tags
-    - javascript: URLs
-    - on* event handlers
+    Strips all HTML tags using stdlib HTMLParser (not regex) to avoid
+    incomplete tag-filter bypasses (CWE-116 / CodeQL py/bad-tag-filter).
+    Also removes javascript: URL schemes from the remaining text.
+
+    This is a defense-in-depth guard on httpx response metadata before DB
+    storage — not the primary XSS defense layer.
 
     Args:
         text: Text to sanitize
 
     Returns:
-        Sanitized text
+        Text with all HTML tags removed and javascript: schemes stripped.
     """
     if not text:
         return ""
 
-    # Remove script tags (defense-in-depth sanitization of httpx response
-    # metadata before DB storage — not the primary XSS defense layer).
-    text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)  # noqa: S603
+    from html.parser import HTMLParser
 
-    # Remove iframe tags
-    text = re.sub(r"<iframe[^>]*>.*?</iframe>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    class _TagStripper(HTMLParser):
+        """Collect visible text, suppressing script/style/noscript bodies."""
 
-    # Remove javascript: URLs
-    text = re.sub(r"javascript:", "", text, flags=re.IGNORECASE)
+        _SUPPRESS = frozenset({"script", "style", "noscript"})
 
-    # Remove event handlers (onclick, onerror, etc.) with their values
-    # Matches: on<event>="value" or on<event>='value'
-    text = re.sub(r'on\w+\s*=\s*["\'][^"\']*["\']', "", text, flags=re.IGNORECASE)
-    # Also handle unquoted values: on<event>=value
-    text = re.sub(r"on\w+\s*=\s*\S+", "", text, flags=re.IGNORECASE)
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=True)
+            self._parts: list[str] = []
+            # Depth counter for tags whose text content must also be dropped.
+            self._skip_depth: int = 0
 
-    return text.strip()
+        def handle_starttag(self, tag: str, attrs: list) -> None:
+            if tag.lower() in self._SUPPRESS:
+                self._skip_depth += 1
+
+        def handle_endtag(self, tag: str) -> None:
+            if tag.lower() in self._SUPPRESS and self._skip_depth > 0:
+                self._skip_depth -= 1
+
+        def handle_data(self, data: str) -> None:
+            if self._skip_depth == 0:
+                self._parts.append(data)
+
+        def get_text(self) -> str:
+            return "".join(self._parts)
+
+    stripper = _TagStripper()
+    stripper.feed(text)
+    stripped = stripper.get_text()
+
+    # Remove javascript: URL schemes that may appear in text nodes
+    stripped = re.sub(r"javascript:", "", stripped, flags=re.IGNORECASE)
+
+    return stripped.strip()
 
 
 # =============================================================================

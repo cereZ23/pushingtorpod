@@ -30,9 +30,11 @@ def fetch_certificate(host: str, port: int = 443, timeout: float = 10.0) -> Opti
     """
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
-    # Intentionally accept any certificate (including self-signed, expired,
-    # and misconfigured) — this is an EASM reconnaissance tool that needs
-    # to harvest certificates from arbitrary hosts for security analysis.
+    # Enforce TLS 1.2+ minimum even though we skip certificate verification.
+    # EASM reconnaissance must harvest certs from misconfigured hosts, so
+    # CERT_NONE is intentional — but we never negotiate a protocol older
+    # than TLS 1.2 to avoid plaintext downgrade attacks during the handshake.
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2  # CWE-326: enforce TLS 1.2+
     ctx.verify_mode = ssl.CERT_NONE  # noqa: S501 — intentional for cert harvesting
 
     try:

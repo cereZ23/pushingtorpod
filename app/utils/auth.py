@@ -6,8 +6,9 @@ Provides secure token generation, validation, and user authentication.
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
-import secrets
+import hmac
 import hashlib
+import secrets
 import jwt
 from jwt.exceptions import PyJWTError as JWTError
 from sqlalchemy.orm import Session
@@ -155,18 +156,25 @@ def generate_api_key() -> str:
 
 def hash_api_key(api_key: str) -> str:
     """
-    Hash API key for storage
+    Hash API key for storage using HMAC-SHA-256.
+
+    Uses a keyed hash (HMAC-SHA-256) rather than bare SHA-256 so that
+    an attacker who obtains the DB cannot mount a rainbow-table or
+    pre-image attack without also compromising the server secret key.
+    HMAC is appropriate here (not bcrypt/argon2) because API keys are
+    256-bit cryptographically random tokens, not user-chosen passwords.
 
     Args:
         api_key: Plain API key
 
     Returns:
-        Hashed API key
+        HMAC-SHA-256 hex digest of the key
     """
-    # SHA-256 is appropriate for API key lookup (high-entropy random tokens,
-    # not user-chosen passwords). bcrypt/argon2 would add latency on every
-    # API call without security benefit for 256-bit random keys.
-    return hashlib.sha256(api_key.encode()).hexdigest()  # noqa: S324
+    return hmac.new(
+        settings.jwt_secret_key.encode(),
+        api_key.encode(),
+        digestmod=hashlib.sha256,
+    ).hexdigest()
 
 
 def verify_api_key(db: Session, api_key: str) -> tuple[User, int]:
