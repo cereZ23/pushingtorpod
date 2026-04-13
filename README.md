@@ -459,4 +459,6 @@ docker compose build worker && docker compose up -d worker
 
 ## License
 
-Proprietary — All Rights Reserved.
+Copyright (c) 2026 Andrea Ceresoni. All Rights Reserved.
+
+This software is proprietary and confidential. Unauthorized copying, distribution, or modification is strictly prohibited.
