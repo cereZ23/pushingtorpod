@@ -115,11 +115,12 @@ EXECUTION_PLAN = [
     "5b",  # CDN/WAF detection (before probing — skip CDN IPs)
     ["4", "4b", "5"],  # Probing: httpx, tlsx, naabu in parallel (all need DNS)
     ["5c", "6"],  # Fingerprint, tech detect in parallel
-    ["6b", "7"],  # Crawl + screenshots in parallel (6c sensitive_paths removed:
-    # redundant with Nuclei http/exposures/ templates in phase 9, and its
-    # Python httpx async implementation leaked ~10 GB per scan causing
-    # repeated OOM kills. Nuclei covers the same paths as an external Go
-    # process with zero Python memory impact.)
+    "6b",  # Web crawling only. Phase 6c (sensitive_paths) and phase 7
+    # (visual recon / screenshots) removed:
+    # - 6c: leaked 10GB, redundant with Nuclei http/exposures/
+    # - 7: Playwright screenshots add no security findings, cost 2-3 min +
+    #   ~1GB RAM. HTTPx title + tech detection (phase 4) provides the same
+    #   metadata. Katana endpoints (6b) replace the "see what's there" value.
     ["8", "9"],  # Misconfig + Nuclei in parallel (misconfig is read-only)
     ["10", "11"],  # Correlation + Risk scoring in parallel
     "12",  # Diff & alerting
