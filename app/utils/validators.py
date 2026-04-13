@@ -360,7 +360,7 @@ class URLValidator:
         return True, None
 
 
-def validate_endpoint_url_ssrf(url: str, *, require_https: bool = True) -> None:
+def validate_endpoint_url_ssrf(url: str, *, require_https: bool = True) -> str:
     """Validate an outbound endpoint URL to prevent SSRF attacks.
 
     Performs the following checks:
@@ -369,14 +369,17 @@ def validate_endpoint_url_ssrf(url: str, *, require_https: bool = True) -> None:
     - Hostname must resolve via DNS, and **all** resolved IPs must be
       public (not RFC 1918, loopback, link-local, or other reserved ranges)
 
-    This is the single, canonical SSRF-gate for any user-supplied URL that
-    the platform will issue outbound HTTP requests to (SIEM push, ticketing
-    provider base URLs, webhook callbacks, etc.).
+    Returns the first validated IP address so the caller can connect to it
+    directly (via Host header) instead of re-resolving DNS — this prevents
+    DNS rebinding attacks (TOCTOU: hostname resolves to safe IP at validation
+    time, then flips to 169.254.169.254 at connection time).
 
     Args:
         url: The URL to validate.
         require_https: When True (default) only ``https`` is accepted.
-            Set to False to also allow plain ``http``.
+
+    Returns:
+        The first validated public IP address as a string.
 
     Raises:
         ValueError: If the URL fails any SSRF check.
@@ -408,8 +411,11 @@ def validate_endpoint_url_ssrf(url: str, *, require_https: bool = True) -> None:
     except socket.gaierror:
         raise ValueError(f"Cannot resolve endpoint hostname: {hostname}")
 
+    first_ip = None
     for _family, _type, _proto, _canonname, sockaddr in addrinfos:
         ip = ipaddress.ip_address(sockaddr[0])
+        if first_ip is None:
+            first_ip = str(ip)
         for network in DomainValidator.RESERVED_NETWORKS:
             if ip in network:
                 logger.warning(
@@ -419,6 +425,8 @@ def validate_endpoint_url_ssrf(url: str, *, require_https: bool = True) -> None:
                     network,
                 )
                 raise ValueError("Endpoint URL resolves to a private/reserved IP address")
+
+    return first_ip or ""
 
 
 class InputSanitizer:

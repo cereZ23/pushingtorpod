@@ -35,17 +35,17 @@ router = APIRouter(
 )
 
 
-def _validate_siem_endpoint_url(url: str) -> None:
+def _validate_siem_endpoint_url(url: str) -> str:
     """Validate SIEM endpoint URL to prevent SSRF attacks.
 
-    Delegates to the shared ``validate_endpoint_url_ssrf`` utility and
-    converts any ``ValueError`` into an HTTP 422 response.
+    Returns the validated resolved IP so callers can connect directly
+    (preventing DNS rebinding / TOCTOU attacks).
 
     Raises:
         HTTPException 422 if URL is invalid or targets internal resources.
     """
     try:
-        validate_endpoint_url_ssrf(url, require_https=True)
+        return validate_endpoint_url_ssrf(url, require_https=True)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -122,8 +122,10 @@ def push_findings(
     The ``auth_token`` is sent as an ``Authorization`` header
     (``Splunk <token>`` for HEC, ``Bearer <token>`` for CEF endpoints).
     """
-    # SSRF protection: validate endpoint URL before making any outbound request
-    _validate_siem_endpoint_url(body.endpoint_url)
+    # SSRF protection: validate endpoint URL and get the resolved IP.
+    # The IP is passed to the helper so it connects directly (no second
+    # DNS lookup) — this prevents DNS rebinding attacks.
+    resolved_ip = _validate_siem_endpoint_url(body.endpoint_url)
 
     events = export_findings_for_tenant(
         db=db,
@@ -143,9 +145,9 @@ def push_findings(
 
     try:
         if body.format == "splunk_hec":
-            _push_splunk_hec(events, body.endpoint_url, body.auth_token)
+            _push_splunk_hec(events, body.endpoint_url, body.auth_token, resolved_ip)
         else:
-            _push_cef(events, body.endpoint_url, body.auth_token)
+            _push_cef(events, body.endpoint_url, body.auth_token, resolved_ip)
     except httpx.HTTPStatusError as exc:
         logger.error(
             "SIEM push failed: tenant_id=%s endpoint=%s status=%s body=%s",
@@ -195,47 +197,55 @@ def push_findings(
 _PUSH_TIMEOUT = 30.0  # seconds
 
 
-def _push_splunk_hec(events: list[dict], endpoint_url: str, token: str) -> None:
-    """
-    POST events to Splunk HEC.
+def _build_ip_url(endpoint_url: str, resolved_ip: str) -> tuple[str, str]:
+    """Rewrite URL to use the validated IP, return (ip_url, hostname).
 
-    Splunk HEC accepts multiple events in a single request when they are
-    concatenated without a separator (NDJSON-style, no array wrapper).
-    The auth header format is ``Splunk <token>``.
+    This prevents DNS rebinding: the caller already validated the hostname
+    resolved to a safe public IP. By connecting to the IP directly and
+    setting the Host header, we avoid a second DNS lookup that an attacker
+    could flip to an internal address.
     """
+    from urllib.parse import urlparse, urlunparse
+
+    parsed = urlparse(endpoint_url)
+    hostname = parsed.hostname or ""
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    ip_netloc = f"{resolved_ip}:{port}" if port not in (80, 443) else resolved_ip
+    ip_url = urlunparse(parsed._replace(netloc=ip_netloc))
+    return ip_url, hostname
+
+
+def _push_splunk_hec(events: list[dict], endpoint_url: str, token: str, resolved_ip: str) -> None:
+    """POST events to Splunk HEC using the pre-validated IP (anti-rebinding)."""
     payload = "\n".join(json.dumps(evt) for evt in events)
+    ip_url, hostname = _build_ip_url(endpoint_url, resolved_ip)
 
     with httpx.Client(timeout=_PUSH_TIMEOUT, verify=True) as client:
-        # endpoint_url is admin-configured and validated via validate_endpoint_url_ssrf()
-        # before reaching this helper. See _validate_siem_endpoint() and push_to_siem().
-        response = client.post(  # nosec: SSRF validated upstream
-            endpoint_url,
+        response = client.post(
+            ip_url,
             content=payload,
             headers={
                 "Authorization": f"Splunk {token}",
                 "Content-Type": "application/json",
+                "Host": hostname,
             },
         )
         response.raise_for_status()
 
 
-def _push_cef(events: list[str], endpoint_url: str, token: str) -> None:
-    """
-    POST CEF lines to a generic SIEM / Azure Sentinel HTTP Data Collector.
-
-    Lines are newline-delimited.  Auth header uses ``Bearer <token>``.
-    """
+def _push_cef(events: list[str], endpoint_url: str, token: str, resolved_ip: str) -> None:
+    """POST CEF lines to SIEM using the pre-validated IP (anti-rebinding)."""
     payload = "\n".join(events)
+    ip_url, hostname = _build_ip_url(endpoint_url, resolved_ip)
 
     with httpx.Client(timeout=_PUSH_TIMEOUT, verify=True) as client:
-        # endpoint_url is admin-configured and validated via validate_endpoint_url_ssrf()
-        # before reaching this helper. See _validate_siem_endpoint() and push_to_siem().
-        response = client.post(  # nosec: SSRF validated upstream
-            endpoint_url,
+        response = client.post(
+            ip_url,
             content=payload,
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "text/plain",
+                "Host": hostname,
             },
         )
         response.raise_for_status()
