@@ -123,16 +123,16 @@ docker compose ps
 
 All 6 services should be `healthy` or `running`:
 
-| Service | Port | Description |
-|---------|------|-------------|
-| `easm-api` | `localhost:18000` | FastAPI backend |
-| `easm-ui` | `localhost:13000` | Vue.js frontend |
-| `easm-postgres` | `localhost:15432` | PostgreSQL 15 |
-| `easm-redis` | `localhost:16379` | Redis 7 |
-| `easm-minio` | `localhost:9000` | MinIO (S3-compatible storage) |
-| `easm-minio` | `localhost:9001` | MinIO web console |
-| `easm-worker` | — | Celery worker (scan pipeline) |
-| `easm-beat` | — | Celery Beat (scheduler) |
+| Service         | Port              | Description                   |
+| --------------- | ----------------- | ----------------------------- |
+| `easm-api`      | `localhost:18000` | FastAPI backend               |
+| `easm-ui`       | `localhost:13000` | Vue.js frontend               |
+| `easm-postgres` | `localhost:15432` | PostgreSQL 15                 |
+| `easm-redis`    | `localhost:16379` | Redis 7                       |
+| `easm-minio`    | `localhost:9000`  | MinIO (S3-compatible storage) |
+| `easm-minio`    | `localhost:9001`  | MinIO web console             |
+| `easm-worker`   | —                 | Celery worker (scan pipeline) |
+| `easm-beat`     | —                 | Celery Beat (scheduler)       |
 
 ### 6. Create admin user
 
@@ -211,17 +211,17 @@ Interactive Swagger docs are available at: http://localhost:18000/docs
 
 Key endpoints:
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/v1/auth/login` | Login (returns JWT) |
-| `GET` | `/api/v1/tenants/{id}/assets` | List assets (paginated, filterable) |
-| `GET` | `/api/v1/tenants/{id}/findings` | List findings |
-| `GET` | `/api/v1/tenants/{id}/issues` | List correlated issues |
-| `GET` | `/api/v1/tenants/{id}/dashboard/summary` | Dashboard KPIs |
-| `POST` | `/api/v1/tenants/{id}/scans` | Trigger scan |
-| `GET` | `/api/v1/tenants/{id}/reports/export/pdf` | Generate PDF report |
-| `GET` | `/api/v1/tenants/{id}/reports/export/docx` | Generate DOCX report |
-| `GET` | `/api/v1/tenants/{id}/exposure/changes` | Scan diff / delta |
+| Method | Endpoint                                   | Description                         |
+| ------ | ------------------------------------------ | ----------------------------------- |
+| `POST` | `/api/v1/auth/login`                       | Login (returns JWT)                 |
+| `GET`  | `/api/v1/tenants/{id}/assets`              | List assets (paginated, filterable) |
+| `GET`  | `/api/v1/tenants/{id}/findings`            | List findings                       |
+| `GET`  | `/api/v1/tenants/{id}/issues`              | List correlated issues              |
+| `GET`  | `/api/v1/tenants/{id}/dashboard/summary`   | Dashboard KPIs                      |
+| `POST` | `/api/v1/tenants/{id}/scans`               | Trigger scan                        |
+| `GET`  | `/api/v1/tenants/{id}/reports/export/pdf`  | Generate PDF report                 |
+| `GET`  | `/api/v1/tenants/{id}/reports/export/docx` | Generate DOCX report                |
+| `GET`  | `/api/v1/tenants/{id}/exposure/changes`    | Scan diff / delta                   |
 
 ## Configuration
 
@@ -229,11 +229,11 @@ Key endpoints:
 
 The pipeline uses a 3-tier system for scan intensity:
 
-| Tier | Description | Use case |
-|------|-------------|----------|
-| 1 | Conservative | Default — safe for most targets |
-| 2 | Moderate | More aggressive port scanning and enumeration |
-| 3 | Aggressive | Full scan with fuzzing, OOB testing |
+| Tier | Description  | Use case                                      |
+| ---- | ------------ | --------------------------------------------- |
+| 1    | Conservative | Default — safe for most targets               |
+| 2    | Moderate     | More aggressive port scanning and enumeration |
+| 3    | Aggressive   | Full scan with fuzzing, OOB testing           |
 
 ### Adaptive throttling
 
@@ -242,6 +242,7 @@ The pipeline automatically detects HTTP 429 (Too Many Requests) responses and re
 ### Scheduled scans
 
 Celery Beat runs scans on a schedule (configurable). Default:
+
 - **Full discovery**: Daily at 2 AM UTC
 - **Critical asset watch**: Every 30 minutes
 
@@ -249,15 +250,15 @@ Celery Beat runs scans on a schedule (configurable). Default:
 
 See `.env.example` for the full list. Key variables:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `JWT_SECRET_KEY` | `change-this-...` | JWT signing key (MUST change in prod) |
-| `DB_PASSWORD` | `easm_password` | PostgreSQL password |
-| `REDIS_PASSWORD` | `easm_redis_dev` | Redis password |
-| `MINIO_USER` / `MINIO_PASSWORD` | `minioadmin` / `minioadmin123` | MinIO credentials |
-| `API_WORKERS` | `1` | Uvicorn worker count |
-| `LOG_LEVEL` | `info` | Logging level |
-| `CORS_ORIGINS` | `localhost:3000,13000` | Allowed CORS origins |
+| Variable                        | Default                        | Description                           |
+| ------------------------------- | ------------------------------ | ------------------------------------- |
+| `JWT_SECRET_KEY`                | `change-this-...`              | JWT signing key (MUST change in prod) |
+| `DB_PASSWORD`                   | `easm_password`                | PostgreSQL password                   |
+| `REDIS_PASSWORD`                | `easm_redis_dev`               | Redis password                        |
+| `MINIO_USER` / `MINIO_PASSWORD` | `minioadmin` / `minioadmin123` | MinIO credentials                     |
+| `API_WORKERS`                   | `1`                            | Uvicorn worker count                  |
+| `LOG_LEVEL`                     | `info`                         | Logging level                         |
+| `CORS_ORIGINS`                  | `localhost:3000,13000`         | Allowed CORS origins                  |
 
 ## Development
 
@@ -332,11 +333,34 @@ docker compose exec api alembic downgrade -1
 docker compose exec api pytest tests/
 
 # Frontend unit tests
-cd frontend && npm run test
+cd frontend && pnpm test
 
 # Frontend E2E tests (requires Playwright)
 cd frontend && npx playwright test
 ```
+
+### Debugging a single scan phase (CLI)
+
+Instead of re-running the full 30-40 min scan pipeline to validate a fix, use `run_single_phase` to execute just one phase on an existing scan run:
+
+```bash
+# Syntax: run_single_phase.delay(scan_run_id, phase_id)
+docker exec easm-worker-1 python -c "
+from app.tasks.pipeline import run_single_phase
+run_single_phase.delay(61, '9')    # re-run Nuclei only (~5 min)
+"
+
+# Common examples:
+run_single_phase.delay(61, '9')    # Nuclei vuln scanning
+run_single_phase.delay(61, '11')   # Risk scoring (~10s)
+run_single_phase.delay(61, '12')   # Diff + snapshot (~5s)
+run_single_phase.delay(61, '6b')   # Katana web crawl
+run_single_phase.delay(61, '5')    # Naabu port scan
+```
+
+The scan_run must already exist with completed earlier phases. All DB state (assets, services, findings) is reused as-is. Results are stored in `phase_results`.
+
+**Phase IDs:** 0=seeds, 1=passive discovery, 2=DNS brute, 3=DNS resolve, 4=HTTPx, 4b=TLSx, 5=Naabu, 5b=CDN, 5c=fingerprintx, 6=tech detect, 6b=Katana, 8=misconfig, 9=Nuclei, 10=correlation, 11=risk scoring, 12=diff+alerting
 
 ### Rebuilding after dependency changes
 
@@ -354,6 +378,7 @@ docker compose build --no-cache
 ## Tech Stack
 
 **Backend:**
+
 - Python 3.11, FastAPI, SQLAlchemy, Pydantic v2
 - Celery + Redis (task queue and scheduling)
 - PostgreSQL 15 (data store)
@@ -361,6 +386,7 @@ docker compose build --no-cache
 - WeasyPrint (PDF generation), python-docx (DOCX), Matplotlib (charts)
 
 **Frontend:**
+
 - Vue 3 (Composition API) + TypeScript
 - Pinia (state management)
 - Tailwind CSS
@@ -369,6 +395,7 @@ docker compose build --no-cache
 - Axios (HTTP client)
 
 **Security tools (in worker container):**
+
 - Subfinder, Amass — subdomain enumeration
 - DNSX — DNS resolution and records
 - HTTPX — HTTP probing and tech detection
@@ -394,7 +421,7 @@ worker:
   deploy:
     resources:
       limits:
-        memory: 8G  # Increase as needed
+        memory: 8G # Increase as needed
 ```
 
 ### Scans returning 0 results
