@@ -56,5 +56,11 @@
     "vite": "^6.3.0",
     "vitest": "^2.1.0",
     "vue-tsc": "^2.0.6"
+  },
+  "pnpm": {
+    "overrides": {
+      "lodash": ">=4.17.22",
+      "picomatch": ">=4.0.2"
+    }
   }
 }
