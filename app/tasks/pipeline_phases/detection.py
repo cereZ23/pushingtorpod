@@ -519,6 +519,13 @@ def _phase_11_risk_scoring(tenant_id, project_id, scan_run_id, db, tenant_logger
     for asset in assets:
         try:
             result = recalculate_asset_risk(asset.id, db)
+            if not isinstance(result, dict):
+                tenant_logger.warning(
+                    "Risk scoring returned non-dict for asset %d: %s",
+                    asset.id,
+                    type(result).__name__,
+                )
+                continue
             score = result.get("risk_score", 0.0)
             if "error" not in result:
                 asset_scores.append(score)
@@ -528,6 +535,7 @@ def _phase_11_risk_scoring(tenant_id, project_id, scan_run_id, db, tenant_logger
                 "Risk scoring failed for asset %d: %s",
                 asset.id,
                 exc,
+                exc_info=True,
             )
 
     db.flush()
