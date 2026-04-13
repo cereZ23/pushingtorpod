@@ -282,7 +282,6 @@ class TestHTTPx:
         )
 
         mock_executor.execute.return_value = (0, httpx_output, "")
-        mock_executor.create_input_file.return_value = "/tmp/urls.txt"
 
         # Run HTTPx
         result = run_httpx(
@@ -290,8 +289,8 @@ class TestHTTPx:
             asset_ids=[mock_assets[0].id],  # critical.example.com
         )
 
-        # Verify executor was called correctly
-        mock_executor.create_input_file.assert_called_once()
+        # run_httpx passes URLs via stdin_data (not -l file), so create_input_file
+        # is never called. Verify execute() was invoked.
         mock_executor.execute.assert_called_once()
 
         # Verify httpx command arguments
@@ -540,37 +539,35 @@ class TestEnrichmentIntegration:
     """Test end-to-end enrichment workflows"""
 
     @patch("app.database.SessionLocal")
-    @patch("app.tasks.enrichment.chain")
-    @patch("app.tasks.enrichment.group")
+    @patch("app.tasks.enrichment.settings")
+    @patch("celery.chord")
     def test_run_enrichment_pipeline_orchestration(
-        self, mock_group, mock_chain, mock_session_local, db_session, mock_tenant, mock_assets
+        self, mock_chord_class, mock_settings, mock_session_local, db_session, mock_tenant, mock_assets
     ):
         """Test that enrichment pipeline orchestrates tools correctly"""
         # Patch SessionLocal to return our test session
         mock_session_local.return_value = db_session
 
-        # Set assets as stale
+        # Disable nuclei so the simpler chord(parallel)(katana) path is taken,
+        # avoiding the import of app.tasks.scanning in this unit test.
+        mock_settings.feature_nuclei_enabled = False
+        mock_settings.enrichment_batch_size = 1000
+
+        # Set assets as stale so they are picked up as candidates
         for asset in mock_assets:
             asset.last_enriched_at = datetime.now(timezone.utc) - timedelta(days=10)
         db_session.commit()
 
-        # Mock Celery primitives
-        mock_parallel = Mock()
-        mock_group.return_value = mock_parallel
-        mock_sequential = Mock()
-        mock_chain.return_value = mock_sequential
-        mock_sequential.apply_async.return_value = Mock(id="task-123")
+        # chord(tasks)(callback) returns an AsyncResult -- wire up the mock so
+        # result.id resolves to a predictable value.
+        mock_task_result = Mock()
+        mock_task_result.id = "task-123"
+        mock_chord_class.return_value.return_value = mock_task_result
 
         result = run_enrichment_pipeline(tenant_id=mock_tenant.id, asset_ids=None, priority=None, force_refresh=False)
 
-        # Verify parallel group was created with HTTPx, Naabu, TLSx
-        mock_group.assert_called_once()
-
-        # Verify chain was created (parallel group → Katana)
-        mock_chain.assert_called_once()
-
-        # Verify pipeline was queued
-        mock_sequential.apply_async.assert_called_once()
+        # Verify chord was called to orchestrate parallel enrichment tasks
+        mock_chord_class.assert_called_once()
 
         assert result["status"] == "started"
         assert result["task_id"] == "task-123"
@@ -637,7 +634,6 @@ class TestErrorHandling:
         # Setup mock executor to raise exception
         mock_executor = MagicMock()
         mock_executor_class.return_value.__enter__.return_value = mock_executor
-        mock_executor.create_input_file.return_value = "/tmp/urls.txt"
 
         from app.utils.secure_executor import ToolExecutionError
 

@@ -542,12 +542,68 @@ class TestRiskScoringIntegration:
 
         engine = RiskScoringEngine(db_session)
 
-        # Patch threat intel service to avoid Redis/API calls
-        with patch("app.services.risk_scoring.ThreatIntelService", side_effect=Exception("no redis")):
-            result = engine._score_findings(asset)
+        # Evidence has threat_intel key, so no live service call is needed.
+        # SEVERITY_FALLBACK_SCORE["critical"] = 75 + EPSS>0.5 bonus (15) + KEV bonus (20) = 110 → capped at 100
+        with patch("app.services.risk_scoring._build_threat_intel_service", return_value=None):
+            result = engine._score_all_findings(asset)
 
-        # Base critical weight (15) + KEV boost (15) + EPSS high boost (10) = 40
-        assert result["score"] == pytest.approx(40.0)
+        assert result["max_finding_score"] == pytest.approx(100.0)
+        assert result["kev_count"] == 1
+        assert result["high_epss_count"] == 1
+
+    def test_score_findings_evidence_as_string(self, db_session):
+        """Regression: evidence stored as JSON string must not raise TypeError.
+
+        Bug: when finding.evidence is a JSON string instead of a dict,
+        _get_finding_threat_intel() raised TypeError: 'str' object does not
+        support item assignment.  The fix parses it with json.loads first.
+        """
+        import json as json_mod
+
+        from app.models.database import Asset, AssetType, Finding, FindingSeverity, FindingStatus, Tenant
+        from app.services.risk_scoring import RiskScoringEngine
+
+        tenant = Tenant(name="Test", slug="test-risk-str-evidence")
+        db_session.add(tenant)
+        db_session.flush()
+
+        asset = Asset(
+            tenant_id=tenant.id,
+            type=AssetType.SUBDOMAIN,
+            identifier="str-evidence.example.com",
+        )
+        db_session.add(asset)
+        db_session.flush()
+
+        # Simulate the bug condition: evidence is a JSON-encoded string
+        evidence_as_string = json_mod.dumps(
+            {
+                "threat_intel": {
+                    "epss_score": 0.85,
+                    "is_kev": True,
+                    "enriched_at": "2026-02-25T00:00:00",
+                }
+            }
+        )
+        finding = Finding(
+            asset_id=asset.id,
+            name="Vuln With String Evidence",
+            severity=FindingSeverity.HIGH,
+            status=FindingStatus.OPEN,
+            cve_id="CVE-2024-9876",
+            evidence=evidence_as_string,  # string, not dict
+        )
+        db_session.add(finding)
+        db_session.flush()
+
+        engine = RiskScoringEngine(db_session)
+
+        # Must not raise TypeError — should read threat_intel from the parsed string
+        with patch("app.services.risk_scoring._build_threat_intel_service", return_value=None):
+            result = engine._score_all_findings(asset)
+
+        # SEVERITY_FALLBACK_SCORE["high"]=50 + EPSS>0.5(15) + KEV(20) = 85.0
+        assert result["max_finding_score"] == pytest.approx(85.0)
         assert result["kev_count"] == 1
         assert result["high_epss_count"] == 1
 
@@ -581,11 +637,12 @@ class TestRiskScoringIntegration:
 
         engine = RiskScoringEngine(db_session)
 
-        with patch("app.services.risk_scoring.ThreatIntelService", side_effect=Exception("no redis")):
-            result = engine._score_findings(asset)
+        # cve_id=None → no threat intel lookup at all
+        # SEVERITY_FALLBACK_SCORE["medium"] = 25.0
+        with patch("app.services.risk_scoring._build_threat_intel_service", return_value=None):
+            result = engine._score_all_findings(asset)
 
-        # Only base medium weight (5.0), no EPSS/KEV boosts
-        assert result["score"] == pytest.approx(5.0)
+        assert result["max_finding_score"] == pytest.approx(25.0)
         assert result["kev_count"] == 0
         assert result["high_epss_count"] == 0
 
@@ -625,16 +682,17 @@ class TestRiskScoringIntegration:
 
         engine = RiskScoringEngine(db_session)
 
-        with patch("app.services.risk_scoring.ThreatIntelService", side_effect=Exception("no redis")):
-            result = engine._score_findings(asset)
+        # Evidence has threat_intel key; EPSS=0.55 (>0.5 → +15 bonus)
+        # SEVERITY_FALLBACK_SCORE["high"] = 50 + 15 = 65.0
+        with patch("app.services.risk_scoring._build_threat_intel_service", return_value=None):
+            result = engine._score_all_findings(asset)
 
-        # Base high weight (10) + EPSS medium boost (5) = 15
-        assert result["score"] == pytest.approx(15.0)
+        assert result["max_finding_score"] == pytest.approx(65.0)
         assert result["kev_count"] == 0
         assert result["high_epss_count"] == 1
 
-    def test_score_findings_capped_at_50(self, db_session):
-        """Findings score is capped at 50.0 even with many boosted findings."""
+    def test_score_findings_capped_at_100(self, db_session):
+        """Each individual finding score is capped at 100.0; max_finding_score reports the cap."""
         from app.models.database import Asset, AssetType, Finding, FindingSeverity, FindingStatus, Tenant
         from app.services.risk_scoring import RiskScoringEngine
 
@@ -671,11 +729,12 @@ class TestRiskScoringIntegration:
 
         engine = RiskScoringEngine(db_session)
 
-        with patch("app.services.risk_scoring.ThreatIntelService", side_effect=Exception("no redis")):
-            result = engine._score_findings(asset)
+        # Each finding: SEVERITY_FALLBACK_SCORE["critical"]=75 + EPSS>0.5(15) + KEV(20) = 110 → capped at 100
+        # max_finding_score = 100.0 (highest single finding, already at the per-finding cap)
+        with patch("app.services.risk_scoring._build_threat_intel_service", return_value=None):
+            result = engine._score_all_findings(asset)
 
-        # 5 * (15 + 15 + 10) = 200, but capped at 50
-        assert result["score"] == 50.0
+        assert result["max_finding_score"] == 100.0
 
     def test_calculate_asset_risk_includes_threat_intel_metadata(self, db_session):
         """Full asset risk calculation includes threat_intel in components."""
@@ -713,7 +772,7 @@ class TestRiskScoringIntegration:
 
         engine = RiskScoringEngine(db_session)
 
-        with patch("app.services.risk_scoring.ThreatIntelService", side_effect=Exception("no redis")):
+        with patch("app.services.risk_scoring._build_threat_intel_service", return_value=None):
             result = engine.calculate_asset_risk(asset.id)
 
         assert "threat_intel" in result["components"]
@@ -993,14 +1052,11 @@ class TestResilience:
 
         engine = RiskScoringEngine(db_session)
 
-        # ThreatIntelService fails to initialize
-        with patch(
-            "app.services.risk_scoring.ThreatIntelService",
-            side_effect=Exception("no redis"),
-        ):
-            result = engine._score_findings(asset)
+        # _build_threat_intel_service returns None → no live lookups; evidence={} → no cached TI
+        with patch("app.services.risk_scoring._build_threat_intel_service", return_value=None):
+            result = engine._score_all_findings(asset)
 
-        # Only base severity weight, no EPSS/KEV boost
-        assert result["score"] == pytest.approx(10.0)  # HIGH weight
+        # SEVERITY_FALLBACK_SCORE["high"] = 50.0; EPSS=0.0, not KEV → no bonus
+        assert result["max_finding_score"] == pytest.approx(50.0)
         assert result["kev_count"] == 0
         assert result["high_epss_count"] == 0
