@@ -602,6 +602,59 @@ def _execute_phase(
     return {"error": f"Unknown phase: {phase_id}"}
 
 
+@celery.task(name="app.tasks.pipeline.run_single_phase", bind=True)
+def run_single_phase(self, scan_run_id: int, phase_id: str):
+    """Execute a single pipeline phase on an existing scan run.
+
+    Use this for debugging / fast iteration instead of re-running the
+    full 30+ minute pipeline. The scan_run must already exist (from a
+    previous full or partial scan). The phase's DB state and assets
+    are reused as-is.
+
+    Usage (from worker container):
+        from app.tasks.pipeline import run_single_phase
+        run_single_phase.delay(61, "9")   # re-run nuclei on scan 61
+        run_single_phase.delay(61, "11")  # re-run risk scoring
+        run_single_phase.delay(61, "12")  # re-run diff + alerting
+
+    The result is stored in phase_results and returned.
+    """
+    db = SessionLocal()
+    try:
+        scan_run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
+        if not scan_run:
+            return {"error": "ScanRun not found"}
+
+        tenant_id = scan_run.tenant_id
+        project_id = scan_run.project_id
+        tenant_logger = TenantLoggerAdapter(logger, {"tenant_id": tenant_id})
+
+        # Determine scan tier from profile
+        scan_tier = 1
+        if scan_run.profile_id:
+            profile = db.query(ScanProfile).filter(ScanProfile.id == scan_run.profile_id).first()
+            if profile:
+                scan_tier = profile.scan_tier or 1
+
+        tenant_logger.info(f"Running single phase {phase_id} on scan_run {scan_run_id} (tier {scan_tier})")
+
+        _update_phase(db, scan_run_id, phase_id, PhaseStatus.RUNNING)
+
+        try:
+            result = _execute_phase(phase_id, tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier)
+            _update_phase(db, scan_run_id, phase_id, PhaseStatus.COMPLETED, stats=result)
+            db.commit()
+            tenant_logger.info(f"Phase {phase_id} completed: {result}")
+            return result
+        except Exception as exc:
+            _update_phase(db, scan_run_id, phase_id, PhaseStatus.FAILED, error=str(exc))
+            db.commit()
+            tenant_logger.error(f"Phase {phase_id} failed: {exc}", exc_info=True)
+            return {"error": str(exc)}
+    finally:
+        db.close()
+
+
 @celery.task(
     name="app.tasks.pipeline.cancel_scan",
     bind=True,
