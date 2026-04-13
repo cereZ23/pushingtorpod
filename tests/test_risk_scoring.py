@@ -761,3 +761,147 @@ class TestTenantScorecard:
         # high_risk_assets threshold is >= 70.0, so 80.0 qualifies
         assert len(result["high_risk_assets"]) == 1
         assert result["high_risk_assets"][0]["risk_score"] == 80.0
+
+
+class TestEvidenceAsString:
+    """Regression: evidence stored as JSON string instead of dict.
+
+    The Finding.evidence column is declared as JSON but some code paths
+    write it as a serialized string. Every function that reads evidence
+    must handle both str and dict without crashing.
+    """
+
+    def test_calculate_asset_risk_evidence_str(self, db_session, tenant):
+        """calculate_asset_risk must not crash on string evidence."""
+        import json
+
+        asset = Asset(
+            tenant_id=tenant.id,
+            identifier="str-evidence.example.com",
+            type=AssetType.SUBDOMAIN,
+            is_active=True,
+            first_seen=datetime.now(timezone.utc) - timedelta(days=30),
+        )
+        db_session.add(asset)
+        db_session.flush()
+
+        # Evidence stored as JSON STRING (the bug scenario)
+        evidence_dict = {
+            "threat_intel": {"epss_score": 0.6, "is_kev": True},
+            "url": "https://str-evidence.example.com/test",
+        }
+        finding = Finding(
+            asset_id=asset.id,
+            name="CVE-2024-9999",
+            severity=FindingSeverity.CRITICAL,
+            cvss_score=9.0,
+            cve_id="CVE-2024-9999",
+            status=FindingStatus.OPEN,
+            source="nuclei",
+            evidence=json.dumps(evidence_dict),  # STRING, not dict
+        )
+        db_session.add(finding)
+        db_session.flush()
+
+        engine = RiskScoringEngine(db_session)
+        # Must NOT raise TypeError: 'str' object has no attribute 'get'
+        result = engine.calculate_asset_risk(asset.id)
+
+        assert isinstance(result, dict)
+        assert "risk_score" in result
+        assert result["risk_score"] > 0
+
+    def test_calculate_asset_risk_evidence_empty_str(self, db_session, tenant):
+        """Empty string evidence should not crash."""
+        asset = Asset(
+            tenant_id=tenant.id,
+            identifier="empty-evidence.example.com",
+            type=AssetType.SUBDOMAIN,
+            is_active=True,
+            first_seen=datetime.now(timezone.utc) - timedelta(days=30),
+        )
+        db_session.add(asset)
+        db_session.flush()
+
+        finding = Finding(
+            asset_id=asset.id,
+            name="Test finding",
+            severity=FindingSeverity.MEDIUM,
+            status=FindingStatus.OPEN,
+            source="misconfig",
+            evidence="",  # empty string
+        )
+        db_session.add(finding)
+        db_session.flush()
+
+        engine = RiskScoringEngine(db_session)
+        result = engine.calculate_asset_risk(asset.id)
+
+        assert isinstance(result, dict)
+        assert "error" not in result
+
+    def test_calculate_asset_risk_evidence_malformed_json(self, db_session, tenant):
+        """Malformed JSON string evidence should not crash."""
+        asset = Asset(
+            tenant_id=tenant.id,
+            identifier="malformed-evidence.example.com",
+            type=AssetType.SUBDOMAIN,
+            is_active=True,
+            first_seen=datetime.now(timezone.utc) - timedelta(days=30),
+        )
+        db_session.add(asset)
+        db_session.flush()
+
+        finding = Finding(
+            asset_id=asset.id,
+            name="Test finding",
+            severity=FindingSeverity.HIGH,
+            cvss_score=7.5,
+            status=FindingStatus.OPEN,
+            source="nuclei",
+            evidence="{invalid json}}}",  # malformed
+        )
+        db_session.add(finding)
+        db_session.flush()
+
+        engine = RiskScoringEngine(db_session)
+        result = engine.calculate_asset_risk(asset.id)
+
+        assert isinstance(result, dict)
+        assert result["risk_score"] >= 0
+
+    def test_recalculate_asset_risk_evidence_str(self, db_session, tenant):
+        """recalculate_asset_risk (the pipeline entry point) handles str evidence."""
+        import json
+
+        asset = Asset(
+            tenant_id=tenant.id,
+            identifier="recalc-str.example.com",
+            type=AssetType.SUBDOMAIN,
+            is_active=True,
+            first_seen=datetime.now(timezone.utc) - timedelta(days=30),
+        )
+        db_session.add(asset)
+        db_session.flush()
+
+        finding = Finding(
+            asset_id=asset.id,
+            name="CVE-2024-5678",
+            severity=FindingSeverity.HIGH,
+            cvss_score=8.0,
+            cve_id="CVE-2024-5678",
+            status=FindingStatus.OPEN,
+            source="nuclei",
+            evidence=json.dumps({"url": "https://test.com", "matched_at": "https://test.com/admin"}),
+        )
+        db_session.add(finding)
+        db_session.flush()
+
+        result = recalculate_asset_risk(asset.id, db_session)
+
+        assert isinstance(result, dict)
+        assert "risk_score" in result
+        assert result["risk_score"] > 0
+        # Score should be persisted on asset
+        db_session.refresh(asset)
+        assert asset.risk_score == result["risk_score"]
