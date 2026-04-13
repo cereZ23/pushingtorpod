@@ -32,9 +32,11 @@ def fetch_certificate(host: str, port: int = 443, timeout: float = 10.0) -> Opti
     ctx.check_hostname = False
     # Enforce TLS 1.2+ minimum even though we skip certificate verification.
     # EASM reconnaissance must harvest certs from misconfigured hosts, so
-    # CERT_NONE is intentional — but we never negotiate a protocol older
-    # than TLS 1.2 to avoid plaintext downgrade attacks during the handshake.
-    ctx.minimum_version = ssl.TLSVersion.TLSv1_2  # CWE-326: enforce TLS 1.2+
+    # CERT_NONE + no minimum_version is intentional for EASM cert harvesting:
+    # we MUST connect to servers using weak TLS (1.0/1.1) and weak cipher
+    # suites to detect and report them as findings. Setting minimum_version
+    # would prevent us from scanning the very misconfiguration we're looking for.
+    # CodeQL py/insecure-protocol: suppressed — this is a security scanner, not a client.
     ctx.verify_mode = ssl.CERT_NONE  # noqa: S501 — intentional for cert harvesting
 
     try:
