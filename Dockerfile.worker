@@ -171,6 +171,10 @@ RUN groupadd --gid 1000 appuser && \
 RUN cp -r /root/nuclei-templates /home/appuser/nuclei-templates && \
     chown -R appuser:appuser /home/appuser
 
+# Copy PushingTorPod custom Nuclei templates (docker-compose creds, .htaccess, PHP path disclosure).
+COPY nuclei-templates/custom/ /home/appuser/nuclei-templates/custom/
+RUN chown -R appuser:appuser /home/appuser/nuclei-templates/custom/
+
 # Copy application code.
 COPY app /app/app
 
