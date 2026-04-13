@@ -30,7 +30,7 @@ qrcode[pil]>=7.4  # QR code generation for MFA setup
 
 # HTTP client
 httpx==0.26.0
-requests==2.32.3
+requests==2.32.4
 
 # YAML for configuration
 pyyaml==6.0.1
@@ -51,7 +51,7 @@ coverage[toml]==7.4.0
 # Utilities
 python-dateutil==2.8.2
 tldextract==5.1.1  # Domain validation (Sprint 2 security fix)
-cryptography==44.0.2  # Secret encryption (Sprint 2 security fix)
+cryptography>=44.0.3  # Secret encryption — bumped for DNS constraint enforcement fix
 python-whois==0.9.4  # WHOIS/RDAP lookups for hidden asset discovery
 geoip2>=4.8.0  # MaxMind GeoLite2 local database lookups (City + ASN)
 dnstwist==20240116  # Domain permutation / typosquatting detection
