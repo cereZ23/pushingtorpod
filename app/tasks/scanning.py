@@ -145,7 +145,89 @@ def run_nuclei_scan(
         # NOTE: Katana crawling is already done in Phase 6b of the pipeline.
         # Running it again here per-URL was causing O(N*300s) timeouts that
         # stalled the entire pipeline.  We scan the base URLs directly.
-        scan_targets = all_urls
+        scan_targets = list(all_urls)
+
+        # Enrich scan targets with high-value endpoints discovered by Katana
+        # (Phase 6b). Only include endpoints that are likely to have vulns:
+        # admin panels, login pages, APIs, forms, and URLs with parameters.
+        # Exclude static assets (css/js/images/fonts) that waste scan time.
+        try:
+            from app.models.enrichment import Endpoint
+
+            STATIC_EXTENSIONS = {
+                ".css",
+                ".js",
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".gif",
+                ".svg",
+                ".ico",
+                ".woff",
+                ".woff2",
+                ".ttf",
+                ".eot",
+                ".map",
+                ".mp4",
+                ".mp3",
+                ".pdf",
+                ".zip",
+            }
+            INTERESTING_PATHS = {
+                "/admin",
+                "/login",
+                "/signin",
+                "/api/",
+                "/graphql",
+                "/upload",
+                "/config",
+                "/dashboard",
+                "/manager",
+                "/console",
+                "/debug",
+                "/actuator",
+                "/swagger",
+                "/openapi",
+                "/wp-admin",
+                "/wp-login",
+                "/phpmyadmin",
+                "/xmlrpc",
+            }
+
+            endpoint_urls = set()
+            endpoints = (
+                db.query(Endpoint.url, Endpoint.endpoint_type)
+                .join(Asset, Asset.id == Endpoint.asset_id)
+                .filter(
+                    Asset.tenant_id == tenant_id,
+                    Asset.is_active == True,
+                    Asset.id.in_(list(urls_by_asset.keys())),
+                )
+                .all()
+            )
+
+            for ep_url, ep_type in endpoints:
+                if not ep_url:
+                    continue
+                url_lower = ep_url.lower()
+
+                # Skip static assets
+                if any(url_lower.endswith(ext) for ext in STATIC_EXTENSIONS):
+                    continue
+
+                # Include if: api/form type, interesting path, or has query params
+                include = ep_type in ("api", "form") or any(p in url_lower for p in INTERESTING_PATHS) or "?" in ep_url
+                if include and ep_url not in url_to_asset:
+                    endpoint_urls.add(ep_url)
+
+            if endpoint_urls:
+                scan_targets.extend(endpoint_urls)
+                tenant_logger.info(
+                    f"Added {len(endpoint_urls)} high-value Katana endpoints to Nuclei targets "
+                    f"(from {len(endpoints)} total endpoints, filtered by type/path/params)"
+                )
+        except Exception as exc:
+            tenant_logger.warning(f"Failed to load Katana endpoints for Nuclei: {exc}")
 
         # Execute Nuclei scan
         nuclei_service = NucleiService(tenant_id)
