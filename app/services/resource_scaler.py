@@ -119,7 +119,10 @@ def get_scan_params(scan_tier: int = 1) -> ScanParams:
         # self-competition) and targets are filtered to HTTP-live only.
         nuclei_concurrency=int(min(15 * combined, 100)),
         nuclei_rate_limit=int(min((200 if scan_tier == 3 else 100) * combined, 2000)),
-        nuclei_timeout={1: 300, 2: 600, 3: 1200}.get(scan_tier, 600),
+        # T3 bumped to 2400s (40 min) because tier-aware templates + katana
+        # endpoints expand the target list to 300+ URLs × 5000+ templates.
+        # 1200s was not enough to run all templates on all hosts.
+        nuclei_timeout={1: 300, 2: 600, 3: 2400}.get(scan_tier, 600),
         # HTTPx: timeout based on tier (not resource-dependent)
         httpx_timeout={1: 300, 2: 600, 3: 600}.get(scan_tier, 600),
         # Fingerprintx: fixed short timeout — it's fast per target
