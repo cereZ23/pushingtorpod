@@ -155,9 +155,16 @@ class TestArgumentSanitization:
         result = executor.sanitize_args(["  example.com  ", "\tdomain.org\t"])
         assert result == ["example.com", "domain.org"]
 
-    def test_newline_in_arg_drops_arg(self):
+    def test_newline_at_end_stripped(self):
+        """Trailing newline is stripped by .strip(), arg is kept."""
         executor = SecureToolExecutor(tenant_id=1)
         result = executor.sanitize_args(["domain.org\n"])
+        assert result == ["domain.org"]
+
+    def test_newline_in_middle_drops_arg(self):
+        """Embedded newline (injection attempt) drops the arg."""
+        executor = SecureToolExecutor(tenant_id=1)
+        result = executor.sanitize_args(["domain.org\nmalicious"])
         assert result == []
 
     def test_none_converted_to_string(self):
@@ -493,10 +500,10 @@ class TestStdoutFile:
             executor.allowed_tools = original | {"echo"}
             out_path = str(executor.temp_dir / "echo_out.txt")
             rc, stdout, _ = executor.execute("echo", ["hello_easm"], stdout_file=out_path)
-
-        assert rc == 0
-        assert stdout == ""
-        assert Path(out_path).read_text().strip() == "hello_easm"
+            # Read inside the with block — temp_dir is cleaned on exit
+            assert rc == 0
+            assert stdout == ""
+            assert Path(out_path).read_text().strip() == "hello_easm"
 
     def test_file_handle_closed_after_execution(self):
         """The file handle opened for stdout_file must be closed in finally."""
