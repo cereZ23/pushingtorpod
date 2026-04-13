@@ -190,9 +190,12 @@ def _get_finding_threat_intel(
         try:
             import json
 
-            evidence = json.loads(evidence)
+            parsed = json.loads(evidence)
+            evidence = parsed if isinstance(parsed, dict) else {}
         except (json.JSONDecodeError, TypeError):
             evidence = {}
+    elif not isinstance(evidence, dict):
+        evidence = {}
     cached = evidence.get("threat_intel", {})
     if cached:
         return float(cached.get("epss_score", 0.0)), bool(cached.get("is_kev", False))

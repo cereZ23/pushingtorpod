@@ -463,11 +463,14 @@ def _phase_11_risk_scoring(tenant_id, project_id, scan_run_id, db, tenant_logger
                     raw_evidence = finding.evidence or {}
                     if isinstance(raw_evidence, str):
                         try:
-                            evidence = json.loads(raw_evidence)
+                            parsed = json.loads(raw_evidence)
+                            evidence = parsed if isinstance(parsed, dict) else {}
                         except (json.JSONDecodeError, TypeError):
                             evidence = {}
-                    else:
+                    elif isinstance(raw_evidence, dict):
                         evidence = raw_evidence
+                    else:
+                        evidence = {}
                     cached = evidence.get("threat_intel", {})
                     if cached:
                         epss = float(cached.get("epss_score", 0.0))

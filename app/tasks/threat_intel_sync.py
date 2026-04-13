@@ -213,14 +213,19 @@ def enrich_findings_threat_intel(self, tenant_id: int) -> dict:
 
             # Update finding evidence with threat intel data.
             # evidence may be a dict, a JSON string, or None.
+            # IMPORTANT: json.loads on a JSON-encoded string like '"text"'
+            # returns a Python str, not a dict. Always verify the result.
             raw_evidence = finding.evidence
             if isinstance(raw_evidence, str):
                 try:
-                    evidence = json.loads(raw_evidence)
+                    parsed = json.loads(raw_evidence)
+                    evidence = parsed if isinstance(parsed, dict) else {}
                 except (json.JSONDecodeError, TypeError):
                     evidence = {}
+            elif isinstance(raw_evidence, dict):
+                evidence = raw_evidence
             else:
-                evidence = raw_evidence or {}
+                evidence = {}
             evidence["threat_intel"] = {
                 "epss_score": enrichment["epss_score"],
                 "is_kev": enrichment["is_kev"],

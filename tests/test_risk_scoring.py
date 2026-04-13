@@ -870,6 +870,40 @@ class TestEvidenceAsString:
         assert isinstance(result, dict)
         assert result["risk_score"] >= 0
 
+    def test_calculate_asset_risk_evidence_json_encoded_string(self, db_session, tenant):
+        """evidence that is a JSON string decoding to a Python string (not dict).
+
+        This is the EXACT bug: json.loads('"some text"') returns "some text"
+        (a Python str), not a dict. The code must handle this case.
+        """
+        asset = Asset(
+            tenant_id=tenant.id,
+            identifier="json-str-evidence.example.com",
+            type=AssetType.SUBDOMAIN,
+            is_active=True,
+            first_seen=datetime.now(timezone.utc) - timedelta(days=30),
+        )
+        db_session.add(asset)
+        db_session.flush()
+
+        finding = Finding(
+            asset_id=asset.id,
+            name="Test finding",
+            severity=FindingSeverity.HIGH,
+            cvss_score=7.0,
+            status=FindingStatus.OPEN,
+            source="nuclei",
+            evidence='"just a plain string encoded as JSON"',  # json.loads → str, not dict!
+        )
+        db_session.add(finding)
+        db_session.flush()
+
+        engine = RiskScoringEngine(db_session)
+        result = engine.calculate_asset_risk(asset.id)
+
+        assert isinstance(result, dict)
+        assert result["risk_score"] >= 0
+
     def test_recalculate_asset_risk_evidence_str(self, db_session, tenant):
         """recalculate_asset_risk (the pipeline entry point) handles str evidence."""
         import json
