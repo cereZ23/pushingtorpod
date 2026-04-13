@@ -95,9 +95,18 @@ def run_nuclei_scan(
                 web_services = service_repo.get_web_services(asset.id, only_live=False)
 
             for service in web_services:
-                # Build URL from service
-                scheme = service.protocol or ("https" if service.has_tls else "http")
+                # Build URL from service. The protocol field often stores
+                # the transport ("tcp") not the application scheme ("https").
+                # Derive scheme from TLS flag and port, not from protocol.
                 port = service.port
+                if service.has_tls or port in (443, 8443):
+                    scheme = "https"
+                elif port in (80, 8080):
+                    scheme = "http"
+                elif service.protocol in ("http", "https"):
+                    scheme = service.protocol
+                else:
+                    scheme = "https" if port == 443 else "http"
 
                 # Construct URL
                 if port in [80, 443]:

@@ -209,14 +209,21 @@ def run_diff_and_alert(self, tenant_id: int, scan_run_id: int):
 
             evaluate_alert_policies.delay(tenant_id, events[: settings.alert_max_per_run])
 
-        # Store snapshot in scan run stats
-        current_run.stats = current_run.stats or {}
-        current_run.stats["snapshot"] = {
+        # Store snapshot in scan run stats.
+        # IMPORTANT: SQLAlchemy doesn't detect in-place dict mutations on
+        # JSON columns. We must reassign the entire dict (or use flag_modified)
+        # for the change to be persisted on commit.
+        from sqlalchemy.orm.attributes import flag_modified
+
+        updated_stats = dict(current_run.stats or {})
+        updated_stats["snapshot"] = {
             "asset_keys": list(current.asset_keys),
             "service_keys": list(current.service_keys),
             "finding_keys": list(current.finding_keys),
         }
-        current_run.stats["change_events"] = [{"type": e["type"], "count": 1} for e in events[:100]]
+        updated_stats["change_events"] = [{"type": e["type"], "count": 1} for e in events[:100]]
+        current_run.stats = updated_stats
+        flag_modified(current_run, "stats")
         db.commit()
 
         result = {
