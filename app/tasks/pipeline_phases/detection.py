@@ -314,7 +314,35 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             exclude_tags=exclude_tags,
         )
 
-    # Run passes in PARALLEL — pass 1 (HTTP) and pass 3 (DNS/network) target
+    # Pass 0: custom templates FIRST (sequential, fast ~10s).
+    # Custom templates get buried in the 5000+ stock template queue and
+    # never execute before timeout. Running them as a dedicated pass
+    # guarantees they always run on every host.
+    if asset_ids:
+        tenant_logger.info(f"Nuclei custom pass: {len(asset_ids)} direct assets, templates=['custom/']")
+        try:
+            custom_result = run_nuclei_scan(
+                tenant_id,
+                asset_ids,
+                severity=["critical", "high", "medium", "low"],
+                templates=["custom/"],
+                rate_limit=rate_limit,
+                concurrency=concurrency,
+                timeout=120,  # 2 min max — only 3 templates
+                exclude_tags=None,  # no exclusions for our own templates
+            )
+            if isinstance(custom_result, dict):
+                total_created += custom_result.get("findings_created", 0)
+                total_updated += custom_result.get("findings_updated", 0)
+                total_scanned += custom_result.get("assets_scanned", 0)
+                total_urls += custom_result.get("urls_scanned", 0)
+                tenant_logger.info(
+                    f"Nuclei custom pass complete: {custom_result.get('findings_created', 0)} new findings"
+                )
+        except Exception as exc:
+            tenant_logger.error(f"Nuclei custom pass failed: {exc}")
+
+    # Run stock passes in PARALLEL — pass 1 (HTTP) and pass 3 (DNS/network) target
     # different protocols so they don't compete for bandwidth. The HTTP-live
     # filter on pass 1 eliminated the 88% error rate that made parallel
     # execution problematic before.
