@@ -33,9 +33,7 @@ class TestAPISecurity:
         tampered_token = valid_token[:-1] + ("A" if valid_token[-1] != "A" else "B")
 
         # Try to use tampered token
-        response = api_client.get(
-            "/api/v1/auth/me", headers={"Authorization": f"Bearer {tampered_token}"}
-        )
+        response = api_client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {tampered_token}"})
 
         assert response.status_code == 401
         data = response.json()
@@ -51,9 +49,7 @@ class TestAPISecurity:
         }
         expired_token = jwt.encode(payload, settings.jwt_secret_key, algorithm="HS256")
 
-        response = api_client.get(
-            "/api/v1/auth/me", headers={"Authorization": f"Bearer {expired_token}"}
-        )
+        response = api_client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {expired_token}"})
 
         assert response.status_code == 401
 

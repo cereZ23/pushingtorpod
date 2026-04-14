@@ -20,9 +20,7 @@ class TestAuthEndpoints:
 
     def test_login_success_returns_jwt_token(self, api_client, test_user):
         """Test successful login returns valid JWT token"""
-        response = api_client.post(
-            "/api/v1/auth/login", json={"email": test_user.email, "password": "password123"}
-        )
+        response = api_client.post("/api/v1/auth/login", json={"email": test_user.email, "password": "password123"})
 
         assert response.status_code == 200
         data = response.json()
@@ -35,9 +33,7 @@ class TestAuthEndpoints:
 
     def test_login_invalid_credentials_returns_401(self, api_client, test_user):
         """Test login with invalid credentials returns 401"""
-        response = api_client.post(
-            "/api/v1/auth/login", json={"email": test_user.email, "password": "wrongpassword1"}
-        )
+        response = api_client.post("/api/v1/auth/login", json={"email": test_user.email, "password": "wrongpassword1"})
 
         assert response.status_code == 401
         data = response.json()
@@ -93,15 +89,11 @@ class TestAuthEndpoints:
         token = login_response.json()["access_token"]
 
         # Logout
-        response = api_client.post(
-            "/api/v1/auth/logout", headers={"Authorization": f"Bearer {token}"}
-        )
+        response = api_client.post("/api/v1/auth/logout", headers={"Authorization": f"Bearer {token}"})
         assert response.status_code == 200
 
         # Try to use the token after logout
-        response = api_client.get(
-            "/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"}
-        )
+        response = api_client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
         assert response.status_code == 401
 
     def test_expired_token_rejected(self, api_client):
@@ -118,9 +110,7 @@ class TestAuthEndpoints:
         }
         expired_token = jwt.encode(payload, settings.jwt_secret_key, algorithm="HS256")
 
-        response = api_client.get(
-            "/api/v1/auth/me", headers={"Authorization": f"Bearer {expired_token}"}
-        )
+        response = api_client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {expired_token}"})
         assert response.status_code == 401
 
     @pytest.mark.security
