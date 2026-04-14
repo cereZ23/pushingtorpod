@@ -57,7 +57,7 @@ def _normalize_evidence(conn: sa.engine.Connection) -> int:
         # problematic case (double-encoded dicts, or plain strings).
         rows = conn.execute(
             sa.text("""
-                SELECT id, evidence #>> '{}' AS evidence_text
+                SELECT id, evidence::text AS evidence_text
                 FROM findings
                 WHERE evidence IS NOT NULL
                   AND json_typeof(evidence) = 'string'
