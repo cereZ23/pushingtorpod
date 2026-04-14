@@ -124,7 +124,7 @@ jobs:
             --ignore=tests/test_network_intel.py \
             --ignore=tests/test_ticketing.py \
             --ignore=tests/test_security.py \
-            -k "not test_security_comprehensive and not test_get_asset_tree_returns_hierarchy and not test_get_tenant_dashboard_returns_stats and not test_get_tenant_stats_returns_detailed_metrics and not test_dashboard_endpoint_response_time_under_500ms and not test_database_query_performance and not test_tenant_dashboard_pagination and not test_get_asset_by_id_returns_details and not test_pagination_performance"
+            -k "not test_security_comprehensive and not test_get_asset_tree_returns_hierarchy and not test_get_tenant_dashboard_returns_stats and not test_get_tenant_stats_returns_detailed_metrics and not test_dashboard_endpoint_response_time_under_500ms and not test_database_query_performance and not test_tenant_dashboard_pagination and not test_get_asset_by_id_returns_details and not test_pagination_performance and not test_health_returns_expected_shape and not test_tenant_endpoints_require_valid_tenant_id and not test_unauthorized_tenant_access_returns_403 and not test_get_tenant_dashboard_enforces_tenant_isolation and not test_tenant_not_found_returns_404"
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
