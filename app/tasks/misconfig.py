@@ -493,7 +493,7 @@ def check_tls_009(
     control_id="TLS-010",
     name="Certificate transparency log missing",
     severity="info",
-    confidence=0.50,
+    confidence=0.20,  # Low confidence — most CAs embed SCT; absence is often a parsing gap
     category="TLS Certificate Intelligence",
     asset_types=["domain", "subdomain"],
 )
