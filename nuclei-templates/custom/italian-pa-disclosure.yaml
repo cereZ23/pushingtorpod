@@ -1,0 +1,43 @@
+id: italian-pa-disclosure
+
+info:
+  name: Italian PA Information Disclosure
+  author: pushingtorpod
+  severity: medium
+  description: |
+    Detects common information disclosure patterns on Italian Public
+    Administration (PA) websites: exposed Albo Pretorio APIs, protocol
+    number search without auth, and admin panel paths specific to
+    Italian PA CMS platforms (Joomla PA, WordPress PA, OpenCity).
+  tags: custom,exposure,italian,pa,government
+  metadata:
+    target: italian-pa
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/administrator/"
+      - "{{BaseURL}}/wp-admin/"
+      - "{{BaseURL}}/admin/"
+      - "{{BaseURL}}/api/albo-pretorio"
+      - "{{BaseURL}}/servizi/protocollo"
+      - "{{BaseURL}}/opencity/admin"
+
+    stop-at-first-match: true
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        words:
+          - "Joomla"
+          - "WordPress"
+          - "albo pretorio"
+          - "protocollo informatico"
+          - "OpenCity"
+          - "amministrazione trasparente"
+        condition: or
+
+      - type: status
+        status:
+          - 200
+          - 302

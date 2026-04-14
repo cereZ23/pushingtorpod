@@ -425,8 +425,41 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
 
 
 def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger):
-    """Phase 10: Correlation & deduplication."""
+    """Phase 10: Correlation & deduplication.
+
+    Also auto-closes stale nuclei findings not seen in the last 2 scans.
+    """
     from app.tasks.correlation import run_correlation
+    from app.models.database import Finding, FindingStatus, Asset
+    from datetime import timedelta
+
+    # Auto-close stale nuclei findings: open findings whose last_seen is
+    # older than the current scan's started_at are no longer detected.
+    # Grace period: 2 scan cycles (findings must be absent for 2 consecutive scans).
+    from app.models.scanning import ScanRun
+
+    current_run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
+    if current_run and current_run.started_at:
+        grace = timedelta(hours=48)
+        cutoff = current_run.started_at - grace
+        stale_nuclei = (
+            db.query(Finding)
+            .join(Asset)
+            .filter(
+                Asset.tenant_id == tenant_id,
+                Finding.source == "nuclei",
+                Finding.status == FindingStatus.OPEN,
+                Finding.last_seen < cutoff,
+            )
+            .all()
+        )
+        auto_closed = 0
+        for f in stale_nuclei:
+            f.status = FindingStatus.FIXED
+            auto_closed += 1
+        if auto_closed:
+            db.commit()
+            tenant_logger.info(f"Auto-closed {auto_closed} stale nuclei findings (not seen since {cutoff})")
 
     result = run_correlation(tenant_id, scan_run_id=scan_run_id)
 
@@ -435,6 +468,7 @@ def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
             "issues_created": result.get("issues_created", 0),
             "issues_updated": result.get("issues_updated", 0),
             "findings_processed": result.get("findings_processed", 0),
+            "nuclei_auto_closed": auto_closed if current_run else 0,
         }
     return {"issues_created": 0}
 

@@ -1,0 +1,46 @@
+id: exposed-debug-endpoint
+
+info:
+  name: Exposed Debug/Status Endpoint
+  author: pushingtorpod
+  severity: high
+  description: |
+    Application debug or status endpoints are publicly accessible, exposing
+    internal configuration, routes, database connections, and environment
+    variables. Common on Django, Laravel, Spring Boot, and Node.js apps.
+  tags: custom,exposure,debug,misconfiguration
+  metadata:
+    target: web-applications
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/__debug__/"
+      - "{{BaseURL}}/debug/vars"
+      - "{{BaseURL}}/actuator/env"
+      - "{{BaseURL}}/actuator/health"
+      - "{{BaseURL}}/_debugbar/open"
+      - "{{BaseURL}}/telescope/requests"
+      - "{{BaseURL}}/elmah.axd"
+      - "{{BaseURL}}/server-status"
+      - "{{BaseURL}}/server-info"
+
+    stop-at-first-match: true
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        words:
+          - "DEBUG"
+          - "DATABASES"
+          - "propertySources"
+          - "debugbar"
+          - "telescope"
+          - "Server Status"
+          - "server-info"
+          - "elmah"
+        condition: or
+
+      - type: status
+        status:
+          - 200

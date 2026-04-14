@@ -16,17 +16,63 @@ logger = logging.getLogger(__name__)
 
 
 def _phase_6_fingerprinting(tenant_id, project_id, scan_run_id, db, tenant_logger):
-    """Phase 6: Technology fingerprinting."""
+    """Phase 6: Technology fingerprinting + tech-to-CVE mapping."""
     from app.tasks.fingerprint import run_fingerprinting
+    from app.services.tech_cve_map import get_cves_for_asset_technologies
+    from app.models.database import Asset, AssetType
+    from app.repositories.enrichment_repository import ServiceRepository
 
     result = run_fingerprinting(tenant_id, scan_run_id=scan_run_id)
+
+    # Tech-to-CVE: match detected technologies against known CVE map
+    tech_cve_matches = 0
+    try:
+        assets = db.query(Asset).filter(Asset.tenant_id == tenant_id, Asset.is_active == True).all()
+        svc_repo = ServiceRepository(db)
+        for asset in assets:
+            services = svc_repo.get_by_asset(asset.id)
+            techs = []
+            for svc in services:
+                if svc.technologies:
+                    techs.extend(svc.technologies if isinstance(svc.technologies, list) else [svc.technologies])
+                if svc.web_server:
+                    techs.append(svc.web_server)
+                if svc.product and svc.version:
+                    techs.append(f"{svc.product}/{svc.version}")
+            if techs:
+                cves = get_cves_for_asset_technologies(techs)
+                if cves:
+                    tech_cve_matches += len(cves)
+                    # Store tech-CVE matches in asset metadata for risk scoring
+                    import json
+
+                    meta = {}
+                    if asset.raw_metadata:
+                        try:
+                            meta = (
+                                json.loads(asset.raw_metadata)
+                                if isinstance(asset.raw_metadata, str)
+                                else (asset.raw_metadata or {})
+                            )
+                        except (ValueError, TypeError):
+                            pass
+                    meta["tech_cves"] = [
+                        {"cve": c["cve"], "severity": c["severity"], "tech": c.get("matched_tech", "")} for c in cves
+                    ]
+                    asset.raw_metadata = json.dumps(meta) if isinstance(meta, dict) else meta
+        if tech_cve_matches:
+            db.commit()
+            tenant_logger.info(f"Tech-to-CVE: {tech_cve_matches} CVE matches across {len(assets)} assets")
+    except Exception as exc:
+        tenant_logger.warning(f"Tech-to-CVE mapping failed: {exc}")
 
     if isinstance(result, dict):
         return {
             "technologies_detected": result.get("technologies_detected", 0),
             "services_fingerprinted": result.get("services_analyzed", 0),
+            "tech_cve_matches": tech_cve_matches,
         }
-    return {"technologies_detected": 0}
+    return {"technologies_detected": 0, "tech_cve_matches": tech_cve_matches}
 
 
 def _phase_6b_web_crawling(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier=1):

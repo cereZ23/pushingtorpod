@@ -1,0 +1,38 @@
+id: exposed-env-file
+
+info:
+  name: Exposed .env Configuration File
+  author: pushingtorpod
+  severity: critical
+  description: |
+    The .env file is publicly accessible, exposing API keys, database
+    credentials, and secret tokens. Extremely common on Laravel/Node.js
+    deployments on Italian hosting providers.
+  tags: custom,exposure,env,credentials
+  metadata:
+    target: italian-hosting
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/.env"
+      - "{{BaseURL}}/.env.production"
+      - "{{BaseURL}}/.env.local"
+      - "{{BaseURL}}/.env.backup"
+
+    matchers-condition: and
+    matchers:
+      - type: regex
+        regex:
+          - "(DB_PASSWORD|APP_KEY|SECRET_KEY|API_KEY|AWS_SECRET|MAIL_PASSWORD)\\s*="
+        condition: or
+
+      - type: status
+        status:
+          - 200
+
+      - type: word
+        part: header
+        words:
+          - "text/html"
+        negative: true

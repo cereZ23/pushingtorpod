@@ -1,0 +1,36 @@
+id: exposed-phpinfo
+
+info:
+  name: Exposed phpinfo() Page
+  author: pushingtorpod
+  severity: medium
+  description: |
+    A phpinfo() page is publicly accessible, exposing PHP version, loaded
+    modules, environment variables, and server configuration. Common on
+    Italian shared hosting where test files are left in production.
+  tags: custom,exposure,php,information-disclosure
+  metadata:
+    target: italian-hosting
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/phpinfo.php"
+      - "{{BaseURL}}/info.php"
+      - "{{BaseURL}}/test.php"
+      - "{{BaseURL}}/i.php"
+      - "{{BaseURL}}/php_info.php"
+
+    stop-at-first-match: true
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        words:
+          - "PHP Version"
+          - "phpinfo()"
+        condition: and
+
+      - type: status
+        status:
+          - 200

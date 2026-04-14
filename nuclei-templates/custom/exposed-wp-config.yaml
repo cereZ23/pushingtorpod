@@ -1,0 +1,34 @@
+id: exposed-wp-config
+
+info:
+  name: Exposed WordPress Configuration
+  author: pushingtorpod
+  severity: critical
+  description: |
+    WordPress wp-config.php backup or exposed configuration file containing
+    database credentials, auth keys, and table prefix.
+  tags: custom,exposure,wordpress,config
+  metadata:
+    target: italian-hosting
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/wp-config.php.bak"
+      - "{{BaseURL}}/wp-config.php.old"
+      - "{{BaseURL}}/wp-config.php.save"
+      - "{{BaseURL}}/wp-config.php~"
+      - "{{BaseURL}}/wp-config.php.txt"
+      - "{{BaseURL}}/wp-config.bak"
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        words:
+          - "DB_NAME"
+          - "DB_PASSWORD"
+        condition: and
+
+      - type: status
+        status:
+          - 200

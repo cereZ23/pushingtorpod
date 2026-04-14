@@ -162,8 +162,8 @@ class Settings(BaseSettings):
     cdncheck_timeout: int = 120  # 2 min
     cloudlist_timeout: int = 300  # 5 min
     fingerprintx_timeout: int = 300  # 5 min
-    interactsh_enabled: bool = False  # Opt-in, requires interactsh server URL
-    interactsh_server: str = ""  # e.g. 'oast.pro' or self-hosted
+    interactsh_enabled: bool = True  # OOB callback detection for T3 scans
+    interactsh_server: str = "oast.pro"  # Public interactsh server
     puredns_resolvers_path: str = "/app/data/resolvers.txt"
     puredns_wordlist_path: str = "/app/data/dns-wordlist.txt"
 

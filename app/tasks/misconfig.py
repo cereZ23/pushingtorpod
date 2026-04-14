@@ -553,10 +553,20 @@ def check_hdr_004(
     certificates: list[Certificate],
     db: Any,
 ) -> list[dict]:
-    """HSTS max-age validation -- Nuclei only checks presence, this validates the value."""
+    """HSTS max-age validation -- Nuclei only checks presence, this validates the value.
+
+    Dedup: one finding per asset (not per port). If any TLS service on
+    the asset has a valid HSTS header, the asset is considered covered.
+    """
     if _is_hsts_preloaded(asset.identifier):
         return []
-    findings: list[dict] = []
+
+    # Collect HSTS status across all TLS services on this asset
+    has_valid_hsts = False
+    weakest_max_age = None
+    weakest_hsts_value = None
+    checked_ports: list[int] = []
+
     for svc in services:
         if not svc.has_tls or not _is_web_service(svc) or _is_default_vhost(svc):
             continue
@@ -564,43 +574,54 @@ def check_hdr_004(
             continue
         headers = _get_http_headers(svc)
         if not headers:
-            continue  # No header data collected -- can't assert missing
+            continue
+        checked_ports.append(svc.port)
         hsts = headers.get("strict-transport-security", "")
-        if not hsts:
-            findings.append(
-                {
-                    "name": "Missing HSTS header (Security Headers check)",
-                    "severity": "medium",
-                    "confidence": 0.85,
-                    "evidence": {"port": svc.port},
-                    "control_id": "HDR-004",
-                    "finding_key": f"HDR-004:{asset.identifier}:{svc.port}",
-                    "remediation": (
-                        "Set Strict-Transport-Security with max-age >= 31536000 and includeSubDomains where applicable."
-                    ),
-                }
-            )
-        elif hsts:
-            # Check for weak max-age (< 6 months)
+        if hsts:
             match = re.search(r"max-age=(\d+)", hsts, re.IGNORECASE)
-            if match and int(match.group(1)) < 15768000:
-                findings.append(
-                    {
-                        "name": f"HSTS max-age too short ({match.group(1)} seconds)",
-                        "severity": "low",
-                        "confidence": 0.75,
-                        "evidence": {
-                            "port": svc.port,
-                            "hsts_value": hsts,
-                            "max_age_seconds": int(match.group(1)),
-                        },
-                        "control_id": "HDR-004",
-                        "finding_key": f"HDR-004-weak:{asset.identifier}:{svc.port}",
-                        "remediation": (
-                            "Increase the HSTS max-age to at least 31536000 seconds (1 year) for adequate protection."
-                        ),
-                    }
-                )
+            if match:
+                max_age = int(match.group(1))
+                if max_age >= 15768000:
+                    has_valid_hsts = True
+                elif weakest_max_age is None or max_age < weakest_max_age:
+                    weakest_max_age = max_age
+                    weakest_hsts_value = hsts
+
+    if has_valid_hsts or not checked_ports:
+        return []
+
+    findings: list[dict] = []
+
+    if weakest_max_age is not None:
+        # At least one service has HSTS but with weak max-age
+        findings.append(
+            {
+                "name": f"HSTS max-age too short ({weakest_max_age}s)",
+                "severity": "low",
+                "confidence": 0.75,
+                "evidence": {
+                    "ports": checked_ports,
+                    "hsts_value": weakest_hsts_value,
+                    "max_age_seconds": weakest_max_age,
+                },
+                "control_id": "HDR-004",
+                "finding_key": f"HDR-004-weak:{asset.identifier}",
+                "remediation": "Increase the HSTS max-age to at least 31536000 seconds (1 year).",
+            }
+        )
+    else:
+        # No HSTS header on any TLS service
+        findings.append(
+            {
+                "name": "Missing HSTS header (Security Headers check)",
+                "severity": "medium",
+                "confidence": 0.85,
+                "evidence": {"ports": checked_ports},
+                "control_id": "HDR-004",
+                "finding_key": f"HDR-004:{asset.identifier}",
+                "remediation": "Set Strict-Transport-Security with max-age >= 31536000 and includeSubDomains.",
+            }
+        )
     return findings
 
 
@@ -1324,6 +1345,84 @@ def check_exp_006(
                 }
             )
     return findings
+
+
+@_register_control(
+    control_id="DOM-001",
+    name="Domain registration expiring soon",
+    severity="high",
+    confidence=0.90,
+    category="Domain Health",
+    asset_types=["domain"],
+)
+def check_dom_001(
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
+) -> list[dict]:
+    """Alert when a domain registration expires within 30 days.
+
+    Uses WHOIS expiry date stored in asset.raw_metadata by phase 1c.
+    """
+    import json as _json
+    from datetime import timedelta
+
+    if asset.type.value != "domain":
+        return []
+
+    metadata = {}
+    if asset.raw_metadata:
+        try:
+            metadata = _json.loads(asset.raw_metadata) if isinstance(asset.raw_metadata, str) else asset.raw_metadata
+        except (ValueError, TypeError):
+            pass
+
+    whois_data = metadata.get("whois", metadata.get("network", {}))
+    expires_str = whois_data.get("expires") or whois_data.get("expiration_date")
+    if not expires_str:
+        return []
+
+    from dateutil.parser import parse as _parse_date
+
+    try:
+        expires_dt = _parse_date(str(expires_str))
+        if expires_dt.tzinfo:
+            expires_dt = expires_dt.replace(tzinfo=None)
+    except (ValueError, TypeError):
+        return []
+
+    now = datetime.now()
+    days_left = (expires_dt - now).days
+
+    if days_left > 30:
+        return []
+
+    if days_left <= 0:
+        sev = "critical"
+        name = f"Domain registration EXPIRED ({abs(days_left)} days ago)"
+    elif days_left <= 7:
+        sev = "critical"
+        name = f"Domain expires in {days_left} days"
+    else:
+        sev = "high"
+        name = f"Domain expires in {days_left} days"
+
+    return [
+        {
+            "name": name,
+            "severity": sev,
+            "confidence": 0.90,
+            "evidence": {
+                "expires": str(expires_str),
+                "days_left": days_left,
+                "registrar": whois_data.get("registrar"),
+            },
+            "control_id": "DOM-001",
+            "finding_key": f"DOM-001:{asset.identifier}",
+            "remediation": "Renew domain registration immediately to prevent hijacking.",
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------

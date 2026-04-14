@@ -1,0 +1,47 @@
+id: exposed-backup-files
+
+info:
+  name: Exposed Backup/Archive Files
+  author: pushingtorpod
+  severity: high
+  description: |
+    Database dumps, site backups, or archive files are publicly accessible.
+    These often contain full database exports with user credentials,
+    PII, and application secrets. Extremely common on Italian shared hosting.
+  tags: custom,exposure,backup,credentials
+  metadata:
+    target: italian-hosting
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/backup.sql"
+      - "{{BaseURL}}/dump.sql"
+      - "{{BaseURL}}/database.sql"
+      - "{{BaseURL}}/db.sql"
+      - "{{BaseURL}}/backup.zip"
+      - "{{BaseURL}}/backup.tar.gz"
+      - "{{BaseURL}}/site.zip"
+      - "{{BaseURL}}/www.zip"
+      - "{{BaseURL}}/public_html.zip"
+
+    stop-at-first-match: true
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        words:
+          - "CREATE TABLE"
+          - "INSERT INTO"
+          - "mysqldump"
+          - "pg_dump"
+          - "PK"
+        condition: or
+
+      - type: status
+        status:
+          - 200
+
+      - type: dsl
+        dsl:
+          - "content_length > 1000"
