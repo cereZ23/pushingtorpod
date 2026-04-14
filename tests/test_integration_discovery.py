@@ -18,28 +18,9 @@ import tempfile
 import os
 import json
 from unittest.mock import patch, MagicMock
-from datetime import datetime
-
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
-from app.models.database import Base, Tenant, Asset, Seed, Event, AssetType, EventKind
+from app.models.database import Tenant, Asset, Seed, Event, AssetType, EventKind
 from app.repositories.asset_repository import AssetRepository, EventRepository
 from app.tasks.discovery import collect_seeds, run_subfinder, run_dnsx, process_discovery_results
-
-
-@pytest.fixture(scope="function")
-def test_db():
-    """Create in-memory SQLite database for testing"""
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    SessionLocal = sessionmaker(bind=engine)
-    db = SessionLocal()
-
-    yield db
-
-    db.close()
-    engine.dispose()
 
 
 @pytest.fixture

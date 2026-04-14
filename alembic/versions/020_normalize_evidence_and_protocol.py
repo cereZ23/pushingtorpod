@@ -51,16 +51,18 @@ def _normalize_evidence(conn: sa.engine.Connection) -> int:
     """
     total_updated = 0
 
+    # The evidence column is type TEXT (not JSON/JSONB). We find rows
+    # where the text content is a double-encoded JSON string (e.g., the
+    # text starts with '"' meaning it's a JSON string scalar that wraps
+    # the actual dict). We parse and re-serialize these.
     while True:
-        # Fetch a batch of findings whose evidence is a JSON text scalar.
-        # json_typeof returns 'string' for JSON text scalars, which is the
-        # problematic case (double-encoded dicts, or plain strings).
         rows = conn.execute(
             sa.text("""
-                SELECT id, evidence::text AS evidence_text
+                SELECT id, evidence
                 FROM findings
                 WHERE evidence IS NOT NULL
-                  AND json_typeof(evidence) = 'string'
+                  AND evidence != ''
+                  AND evidence != '{}'
                 LIMIT :batch_size
             """),
             {"batch_size": BATCH_SIZE},
@@ -69,30 +71,63 @@ def _normalize_evidence(conn: sa.engine.Connection) -> int:
         if not rows:
             break
 
+        batch_had_updates = False
         for row in rows:
             fid = row[0]
-            raw_text = row[1]  # The unwrapped Python string
+            raw_text = row[1]
 
-            # Try to parse the string as JSON — it might be a
-            # double-encoded dict like '{"key": "val"}'.
+            if not isinstance(raw_text, str) or not raw_text.strip():
+                continue
+
+            # Try to parse the evidence text as JSON
             try:
                 parsed = json.loads(raw_text)
             except (json.JSONDecodeError, TypeError):
-                # Not valid JSON at all — wrap it.
-                parsed = {"raw": raw_text}
+                # Not valid JSON — wrap it
+                new_val = json.dumps({"raw": raw_text})
+                conn.execute(
+                    sa.text("UPDATE findings SET evidence = :ev WHERE id = :fid"),
+                    {"ev": new_val, "fid": fid},
+                )
+                total_updated += 1
+                batch_had_updates = True
+                continue
 
-            # If the parsed result is a dict or list, use it directly.
-            # Otherwise (str, int, float, bool, None) wrap in {"raw": ...}.
-            if not isinstance(parsed, (dict, list)):
-                parsed = {"raw": parsed}
+            # If parsed is already a dict, it's fine — skip
+            if isinstance(parsed, dict):
+                continue
 
-            conn.execute(
-                sa.text(
-                    "UPDATE findings SET evidence = :evidence::json WHERE id = :fid"
-                ),
-                {"evidence": json.dumps(parsed), "fid": fid},
-            )
-            total_updated += 1
+            # If parsed is a string (double-encoded), try to parse again
+            if isinstance(parsed, str):
+                try:
+                    inner = json.loads(parsed)
+                    if isinstance(inner, dict):
+                        new_val = json.dumps(inner)
+                    else:
+                        new_val = json.dumps({"raw": inner})
+                except (json.JSONDecodeError, TypeError):
+                    new_val = json.dumps({"raw": parsed})
+
+                conn.execute(
+                    sa.text("UPDATE findings SET evidence = :ev WHERE id = :fid"),
+                    {"ev": new_val, "fid": fid},
+                )
+                total_updated += 1
+                batch_had_updates = True
+                continue
+
+            # If parsed is a list or other type, wrap
+            if not isinstance(parsed, dict):
+                new_val = json.dumps({"raw": parsed})
+                conn.execute(
+                    sa.text("UPDATE findings SET evidence = :ev WHERE id = :fid"),
+                    {"ev": new_val, "fid": fid},
+                )
+                total_updated += 1
+                batch_had_updates = True
+
+        if not batch_had_updates:
+            break
 
     return total_updated
 
