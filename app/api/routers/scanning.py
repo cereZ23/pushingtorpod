@@ -11,6 +11,7 @@ import logging
 
 from app.api.dependencies import get_db, verify_tenant_access
 from app.api.schemas.common import TaskResponse
+from app.models.scanning import ScanRun
 from app.tasks.scanning import run_nuclei_scan
 
 logger = logging.getLogger(__name__)
@@ -77,3 +78,36 @@ def update_nuclei_templates(tenant_id: int, membership=Depends(verify_tenant_acc
     task = update_task.delay()
 
     return TaskResponse(task_id=task.id, status="queued", message="Nuclei template update queued")
+
+
+@router.post("/runs/{scan_run_id}/phases/{phase_id}/rerun", response_model=TaskResponse)
+def rerun_phase(
+    tenant_id: int,
+    scan_run_id: int,
+    phase_id: str,
+    db: Session = Depends(get_db),
+    membership=Depends(verify_tenant_access),
+):
+    """
+    Re-run a single pipeline phase on an existing scan run.
+
+    Useful for debugging or retrying a failed phase without re-running
+    the full 15+ minute pipeline.
+    """
+    from app.tasks.pipeline import run_single_phase
+
+    scan_run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
+    if not scan_run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan run not found")
+
+    if scan_run.tenant_id != tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan run not found")
+
+    task = run_single_phase.delay(scan_run_id, phase_id)
+
+    return TaskResponse(
+        task_id=task.id,
+        status="queued",
+        message=f"Phase {phase_id} rerun queued for scan {scan_run_id}",
+        data={"scan_run_id": scan_run_id, "phase_id": phase_id},
+    )

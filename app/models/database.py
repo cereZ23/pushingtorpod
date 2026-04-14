@@ -1,7 +1,8 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum, Float, Boolean, Index, JSON
-from sqlalchemy.orm import relationship, declarative_base
+from sqlalchemy.orm import relationship, validates, declarative_base
 from datetime import datetime, timezone
 import enum
+import json
 
 Base = declarative_base()
 
@@ -170,6 +171,38 @@ class Finding(Base):
     occurrence_count = Column(Integer, default=1, server_default="1")
 
     asset = relationship("Asset", back_populates="findings")
+
+    @validates("evidence")
+    def _normalize_evidence(self, _key: str, value):
+        """Ensure evidence is always a dict (or None).
+
+        Catches the double-encoded string bug at write time so it never
+        reaches the database in a bad format.
+        """
+        if value is None:
+            return value
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, list):
+            return {"raw": value}
+        if isinstance(value, str):
+            if not value.strip():
+                return None
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, dict):
+                    return parsed
+                if isinstance(parsed, str):
+                    # Double-encoded — try once more
+                    try:
+                        inner = json.loads(parsed)
+                        return inner if isinstance(inner, dict) else {"raw": inner}
+                    except (json.JSONDecodeError, TypeError):
+                        return {"raw": parsed}
+                return {"raw": parsed}
+            except (json.JSONDecodeError, TypeError):
+                return {"raw": value}
+        return {"raw": value}
 
     __table_args__ = (
         Index("idx_asset_severity", "asset_id", "severity"),

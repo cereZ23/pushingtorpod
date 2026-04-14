@@ -46,6 +46,10 @@ class JSONFormatter(logging.Formatter):
             log_data["task_id"] = record.task_id
         if hasattr(record, "request_id"):
             log_data["request_id"] = record.request_id
+        if hasattr(record, "scan_run_id"):
+            log_data["scan_run_id"] = record.scan_run_id
+        if hasattr(record, "phase"):
+            log_data["phase"] = record.phase
 
         return json.dumps(log_data)
 
