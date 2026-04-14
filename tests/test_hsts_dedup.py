@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from app.models.database import Asset, AssetType
-from app.models.enrichment import Service, Certificate
+from app.models.database import Asset, AssetType, Service
 
 
 def _make_asset(identifier="test.example.com"):
