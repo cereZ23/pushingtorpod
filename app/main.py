@@ -76,6 +76,7 @@ from app.api.routers import (
     dnstwist_router,
     remediation_router,
 )
+from app.api.routers.risk_summary import router as risk_summary_router
 
 logger = logging.getLogger(__name__)
 
@@ -404,6 +405,7 @@ app.include_router(geomap_router)
 app.include_router(retest_router)
 app.include_router(dnstwist_router)
 app.include_router(remediation_router)
+app.include_router(risk_summary_router)
 
 
 # Startup and shutdown events

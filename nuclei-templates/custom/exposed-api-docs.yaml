@@ -1,0 +1,51 @@
+id: exposed-api-docs
+
+info:
+  name: Exposed API Documentation (Swagger/OpenAPI)
+  author: pushingtorpod
+  severity: medium
+  description: |
+    Publicly accessible API documentation (Swagger UI, OpenAPI spec, GraphQL
+    Playground) exposes internal API structure, endpoints, parameters, and
+    authentication schemes. Attackers use this to map the API attack surface.
+  tags: custom,exposure,api,swagger,openapi,graphql
+  metadata:
+    target: web-applications
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/swagger-ui.html"
+      - "{{BaseURL}}/swagger-ui/"
+      - "{{BaseURL}}/api-docs"
+      - "{{BaseURL}}/api/docs"
+      - "{{BaseURL}}/api/swagger"
+      - "{{BaseURL}}/v1/api-docs"
+      - "{{BaseURL}}/v2/api-docs"
+      - "{{BaseURL}}/v3/api-docs"
+      - "{{BaseURL}}/openapi.json"
+      - "{{BaseURL}}/openapi.yaml"
+      - "{{BaseURL}}/graphql"
+      - "{{BaseURL}}/graphiql"
+      - "{{BaseURL}}/playground"
+      - "{{BaseURL}}/__graphql"
+      - "{{BaseURL}}/redoc"
+
+    stop-at-first-match: true
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        words:
+          - "swagger"
+          - "openapi"
+          - "GraphQL"
+          - "graphiql"
+          - "Swagger UI"
+          - "api-docs"
+          - "ReDoc"
+        condition: or
+
+      - type: status
+        status:
+          - 200
