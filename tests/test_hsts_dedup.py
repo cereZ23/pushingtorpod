@@ -2,28 +2,27 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
-from app.models.database import Asset, AssetType, Service
+import json
+from types import SimpleNamespace
 
 
 def _make_asset(identifier="test.example.com"):
-    a = MagicMock(spec=Asset)
-    a.identifier = identifier
-    a.type = AssetType.SUBDOMAIN
-    return a
+    return SimpleNamespace(identifier=identifier, type=SimpleNamespace(value="subdomain"))
 
 
-def _make_tls_service(port, hsts_value=None, http_headers=None):
-    svc = MagicMock(spec=Service)
-    svc.port = port
-    svc.has_tls = True
-    svc.http_status = 200
-    svc.http_title = "Test"
-    svc.http_headers = http_headers or ({"strict-transport-security": hsts_value} if hsts_value else {})
-    svc.product = None
-    svc.protocol = "https"
-    return svc
+def _make_tls_service(port, hsts_value=None):
+    headers = {}
+    if hsts_value is not None:
+        headers["strict-transport-security"] = hsts_value
+    return SimpleNamespace(
+        port=port,
+        has_tls=True,
+        http_status=200,
+        http_title="My Site",
+        http_headers=json.dumps(headers) if headers else json.dumps({}),
+        product=None,
+        protocol="https",
+    )
 
 
 class TestHSTSDedup:
