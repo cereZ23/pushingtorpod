@@ -574,7 +574,7 @@ def check_hdr_004(
             continue
         headers = _get_http_headers(svc)
         if not headers:
-            continue
+            continue  # No header data collected — can't assert missing
         checked_ports.append(svc.port)
         hsts = headers.get("strict-transport-security", "")
         if hsts:

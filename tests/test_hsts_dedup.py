@@ -11,7 +11,9 @@ def _make_asset(identifier="test.example.com"):
 
 
 def _make_tls_service(port, hsts_value=None):
-    headers = {}
+    # Always include at least one header so _get_http_headers returns non-empty
+    # (empty dict means "no headers collected" and gets skipped)
+    headers = {"content-type": "text/html"}
     if hsts_value is not None:
         headers["strict-transport-security"] = hsts_value
     return SimpleNamespace(
@@ -19,7 +21,7 @@ def _make_tls_service(port, hsts_value=None):
         has_tls=True,
         http_status=200,
         http_title="My Site",
-        http_headers=json.dumps(headers) if headers else json.dumps({}),
+        http_headers=json.dumps(headers),
         product=None,
         protocol="https",
     )
