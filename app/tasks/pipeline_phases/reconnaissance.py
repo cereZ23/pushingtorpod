@@ -20,7 +20,7 @@ def _phase_6_fingerprinting(tenant_id, project_id, scan_run_id, db, tenant_logge
     from app.tasks.fingerprint import run_fingerprinting
     from app.services.tech_cve_map import get_cves_for_asset_technologies
     from app.models.database import Asset, AssetType
-    from app.repositories.enrichment_repository import ServiceRepository
+    from app.repositories.service_repository import ServiceRepository
 
     result = run_fingerprinting(tenant_id, scan_run_id=scan_run_id)
 
