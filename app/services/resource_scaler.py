@@ -117,8 +117,8 @@ def get_scan_params(scan_tier: int = 1) -> ScanParams:
         # Nuclei: base 15 concurrent, scale with both CPU and RAM.
         # T3 gets a higher rate now that passes run sequentially (no
         # self-competition) and targets are filtered to HTTP-live only.
-        nuclei_concurrency=int(min(15 * combined, 100)),
-        nuclei_rate_limit=int(min((200 if scan_tier == 3 else 100) * combined, 2000)),
+        nuclei_concurrency=int(min(25 * combined, 150)),
+        nuclei_rate_limit=int(min((300 if scan_tier == 3 else 200) * combined, 3000)),
         # T3 bumped to 2400s (40 min) because tier-aware templates + katana
         # endpoints expand the target list to 300+ URLs × 5000+ templates.
         # 1200s was not enough to run all templates on all hosts.
