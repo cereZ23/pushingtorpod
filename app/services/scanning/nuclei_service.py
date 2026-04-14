@@ -329,9 +329,11 @@ class NucleiService:
                 "dns/",
                 "ssl/",
                 "network/",
-                "custom/",  # PushingTorPod custom templates (docker-compose creds, .htaccess, PHP path disclosure)
             ]:
                 args.extend(["-t", f"{nuclei_templates_dir}/{tpl_dir}"])
+            # Always include custom templates from the separate directory
+            # (survives nuclei -update-templates which wipes nuclei_templates_dir)
+            args.extend(["-t", "/app/custom-nuclei-templates/"])
 
         # Exclude templates by tag. Caller passes tier-aware tags from
         # detection.py; if not provided, use the most conservative set.
