@@ -1347,7 +1347,7 @@ def check_exp_006(
     return findings
 
 
-@_register_control(
+@register(
     control_id="DOM-001",
     name="Domain registration expiring soon",
     severity="high",

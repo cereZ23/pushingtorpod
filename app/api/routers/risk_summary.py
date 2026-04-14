@@ -19,7 +19,8 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db, verify_tenant_access
 from app.models.database import Asset, AssetType, Finding, FindingSeverity, FindingStatus
-from app.models.enrichment import Certificate, Service
+from app.models.database import Service
+from app.models.enrichment import Certificate
 from app.models.risk import RiskScore
 
 logger = logging.getLogger(__name__)

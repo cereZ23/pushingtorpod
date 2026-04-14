@@ -43,7 +43,7 @@ class TestAutoCloseStaleFindings:
 
         tenant_logger = TenantLoggerAdapter(logging.getLogger("test"), {"tenant_id": test_tenant.id})
 
-        with patch("app.tasks.pipeline_phases.detection.run_correlation", return_value={"issues_created": 0}):
+        with patch("app.tasks.correlation.run_correlation", return_value={"issues_created": 0}):
             result = _phase_10_correlation(test_tenant.id, None, scan_run.id, db_session, tenant_logger)
 
         db_session.refresh(old_finding)
@@ -80,7 +80,7 @@ class TestAutoCloseStaleFindings:
 
         tenant_logger = TenantLoggerAdapter(logging.getLogger("test"), {"tenant_id": test_tenant.id})
 
-        with patch("app.tasks.pipeline_phases.detection.run_correlation", return_value={"issues_created": 0}):
+        with patch("app.tasks.correlation.run_correlation", return_value={"issues_created": 0}):
             _phase_10_correlation(test_tenant.id, None, scan_run.id, db_session, tenant_logger)
 
         db_session.refresh(recent_finding)
@@ -119,7 +119,7 @@ class TestAutoCloseStaleFindings:
 
         tenant_logger = TenantLoggerAdapter(logging.getLogger("test"), {"tenant_id": test_tenant.id})
 
-        with patch("app.tasks.pipeline_phases.detection.run_correlation", return_value={"issues_created": 0}):
+        with patch("app.tasks.correlation.run_correlation", return_value={"issues_created": 0}):
             _phase_10_correlation(test_tenant.id, None, scan_run.id, db_session, tenant_logger)
 
         db_session.refresh(misconfig_finding)
