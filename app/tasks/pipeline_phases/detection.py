@@ -282,6 +282,13 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     dns_net_tpls = dns_network_templates.get(scan_tier, ["dns/"])
     dns_net_asset_ids = [a.id for a in all_active_domains]
 
+    # Memory profiling: log RSS before/after Nuclei passes
+    import psutil
+
+    proc = psutil.Process()
+    mem_before = proc.memory_info().rss / (1024 * 1024)
+    tenant_logger.info(f"Nuclei memory: {mem_before:.0f} MB RSS before scan")
+
     # ---------------------------------------------------------------
     # Run all Nuclei passes concurrently using threads.
     # Each pass targets different assets/templates so they don't
@@ -398,6 +405,9 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             except Exception as exc:
                 tenant_logger.error(f"Nuclei {pass_name} failed: {exc}")
 
+    mem_after = proc.memory_info().rss / (1024 * 1024)
+    tenant_logger.info(f"Nuclei memory: {mem_after:.0f} MB RSS after scan (delta: +{mem_after - mem_before:.0f} MB)")
+
     return {
         "findings_created": total_created,
         "findings_updated": total_updated,
@@ -408,6 +418,9 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         "interactsh_enabled": use_interactsh,
         "cdn_assets_scanned": len(cdn_asset_ids),
         "dns_network_templates": dns_net_tpls,
+        "memory_before_mb": round(mem_before),
+        "memory_after_mb": round(mem_after),
+        "memory_delta_mb": round(mem_after - mem_before),
     }
 
 
