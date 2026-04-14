@@ -100,7 +100,7 @@ class TestAPISecurity:
 
         for payload in xss_payloads:
             response = api_client.post(
-                f"/api/v1/tenants/{test_tenant.id}/seeds",
+                f"/api/v1/tenants/{test_tenant.id}/assets/seeds",
                 json={"type": "domain", "value": payload},
                 headers=headers,
             )

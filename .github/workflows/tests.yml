@@ -76,6 +76,11 @@ jobs:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin123
       ENVIRONMENT: test
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: easm_test
+      POSTGRES_USER: easm
+      POSTGRES_PASSWORD: easm_password
       JWT_SECRET_KEY: test-secret-key-for-ci
       JWT_ALGORITHM: HS256
       SECRET_KEY: test-secret-key
