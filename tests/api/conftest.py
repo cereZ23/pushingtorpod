@@ -18,6 +18,7 @@ def api_client(db_session):
 
     Overrides both get_db locations (app.database and app.api.dependencies)
     so every router uses the transactional test session.
+    Disables rate limiting to prevent cross-test 429 interference.
     No authentication override — callers get 401 on protected endpoints,
     which is the correct behaviour for unauthenticated tests.
     """
@@ -34,7 +35,14 @@ def api_client(db_session):
     app.dependency_overrides[deps_get_db] = override_get_db
     app.dependency_overrides[db_get_db] = override_get_db
 
+    # Disable rate limiter for test isolation
+    if hasattr(app.state, "limiter"):
+        app.state.limiter.enabled = False
+
     test_client = TestClient(app)
     yield test_client
 
     app.dependency_overrides.clear()
+    # Re-enable rate limiter
+    if hasattr(app.state, "limiter"):
+        app.state.limiter.enabled = True

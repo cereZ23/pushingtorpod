@@ -657,10 +657,16 @@ def client(db_session):
     app.dependency_overrides[deps_get_db] = override_get_db
     app.dependency_overrides[db_get_db] = override_get_db
 
+    # Disable rate limiter for test isolation
+    if hasattr(app.state, "limiter"):
+        app.state.limiter.enabled = False
+
     test_client = TestClient(app)
     yield test_client
 
     app.dependency_overrides.clear()
+    if hasattr(app.state, "limiter"):
+        app.state.limiter.enabled = True
 
 
 @pytest.fixture
@@ -1007,10 +1013,16 @@ def authenticated_client(db_session, test_user, test_tenant):
     app.dependency_overrides[db_get_db] = override_get_db
     app.dependency_overrides[get_current_user] = override_get_current_user
 
+    # Disable rate limiter for test isolation
+    if hasattr(app.state, "limiter"):
+        app.state.limiter.enabled = False
+
     test_client = TestClient(app)
     yield test_client
 
     app.dependency_overrides.clear()
+    if hasattr(app.state, "limiter"):
+        app.state.limiter.enabled = True
 
 
 @pytest.fixture

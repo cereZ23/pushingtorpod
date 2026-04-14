@@ -166,7 +166,8 @@ class TestAPISecurity:
 
         for endpoint in protected_endpoints:
             response = api_client.get(endpoint)
-            assert response.status_code == 401
+            # HTTPBearer returns 403 when no Authorization header is present
+            assert response.status_code in [401, 403]
             data = response.json()
             assert "detail" in data
 

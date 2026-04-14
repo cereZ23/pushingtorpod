@@ -68,7 +68,8 @@ def list_certificates(
         query = query.filter(Certificate.is_expired == is_expired)
 
     if is_expiring_soon:
-        thirty_days = datetime.now(timezone.utc) + timedelta(days=30)
+        # not_after is TIMESTAMP WITHOUT TIME ZONE — strip tzinfo for comparison
+        thirty_days = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30)
         query = query.filter(and_(Certificate.is_expired == False, Certificate.not_after <= thirty_days))
 
     if is_self_signed is not None:
@@ -159,7 +160,8 @@ def get_expiring_certificates(
     Returns:
         Certificates expiring within specified days, sorted by expiry date
     """
-    expiry_threshold = datetime.now(timezone.utc) + timedelta(days=days)
+    # not_after is TIMESTAMP WITHOUT TIME ZONE — strip tzinfo for comparison
+    expiry_threshold = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=days)
 
     certificates = (
         db.query(Certificate)
@@ -196,8 +198,8 @@ def get_certificate_health(tenant_id: int, db: Session = Depends(get_db), member
         db.query(Certificate).join(Asset).filter(Asset.tenant_id == tenant_id, Certificate.is_expired == True).count()
     )
 
-    # Expiring soon (30 days)
-    thirty_days = datetime.now(timezone.utc) + timedelta(days=30)
+    # Expiring soon (30 days) — not_after is TIMESTAMP WITHOUT TIME ZONE
+    thirty_days = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30)
     expiring_soon = (
         db.query(Certificate)
         .join(Asset)

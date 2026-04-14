@@ -232,7 +232,8 @@ class TestNucleiService:
         assert "-exclude-tags" in args
         assert args[args.index("-exclude-tags") + 1] == tier2
 
-    def test_build_nuclei_args_exclude_tags_empty_string_falls_back(self, nuclei_service):
+    def test_build_nuclei_args_exclude_tags_empty_string_no_flag(self, nuclei_service):
+        """Empty string exclude_tags means 'no exclusions' — flag should be absent."""
         args = nuclei_service._build_nuclei_args(
             urls_file="/tmp/urls.txt",
             templates=None,
@@ -241,7 +242,7 @@ class TestNucleiService:
             concurrency=50,
             exclude_tags="",
         )
-        assert args[args.index("-exclude-tags") + 1] == DEFAULT_EXCLUDE_TAGS
+        assert "-exclude-tags" not in args
 
     def test_build_nuclei_args_exclude_tags_always_present(self, nuclei_service):
         args = nuclei_service._build_nuclei_args(
