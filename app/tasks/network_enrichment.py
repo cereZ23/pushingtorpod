@@ -220,7 +220,15 @@ def run_network_enrichment(
                     enrichment = results[asset.id]
                     metadata = _parse_raw_metadata(asset)
                     metadata["whois"] = enrichment.get("whois", {})
-                    metadata["network"] = enrichment.get("network", {})
+                    # Merge network data: preserve existing GeoIP fields
+                    # (lat, lon, country, city, asn, asn_org, etc.) and only
+                    # add/update WHOIS-specific fields from this enrichment run.
+                    existing_network = metadata.get("network", {})
+                    if isinstance(existing_network, dict):
+                        existing_network.update(enrichment.get("network", {}))
+                        metadata["network"] = existing_network
+                    else:
+                        metadata["network"] = enrichment.get("network", {})
                     metadata["cdn"] = enrichment.get("cdn")
                     metadata["waf"] = enrichment.get("waf")
                     metadata["cloud_provider"] = enrichment.get("cloud_provider")
@@ -409,7 +417,15 @@ def phase_1c_network_enrichment(
             else:
                 metadata = asset_metadata[asset_id]
                 metadata["whois"] = enrichment.get("whois", {})
-                metadata["network"] = enrichment.get("network", {})
+                # Merge network data: preserve existing GeoIP fields
+                # (lat, lon, country, city, asn, asn_org, etc.) and only
+                # add/update WHOIS-specific fields from this enrichment run.
+                existing_network = metadata.get("network", {})
+                if isinstance(existing_network, dict):
+                    existing_network.update(enrichment.get("network", {}))
+                    metadata["network"] = existing_network
+                else:
+                    metadata["network"] = enrichment.get("network", {})
                 metadata["cdn"] = enrichment.get("cdn")
                 metadata["waf"] = enrichment.get("waf")
                 metadata["cloud_provider"] = enrichment.get("cloud_provider")

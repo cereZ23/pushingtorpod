@@ -134,18 +134,38 @@ def run_nuclei_scan(
         # Flatten URLs for scanning
         all_urls = []
         url_to_asset = {}
-        # Also build a hostname→asset_id map for robust fallback matching
+        # Also build a hostname→asset_id map for robust fallback matching.
+        # Keys are lowercased so that a Nuclei finding whose host was
+        # normalised (urlparse always lowercases) still matches even when
+        # the DB identifier uses a different casing.
         host_to_asset = {}
+        from urllib.parse import urlparse
+
         for asset_id, urls in urls_by_asset.items():
             for url in urls:
                 all_urls.append(url)
                 url_to_asset[url] = asset_id
+                # Also store a lowercased version so that the base-URL
+                # rebuilding step (which goes through urlparse and therefore
+                # lowercases the host part) can still match.
+                url_lower = url.lower()
+                if url_lower != url:
+                    url_to_asset[url_lower] = asset_id
                 try:
-                    from urllib.parse import urlparse
-
                     parsed = urlparse(url)
                     if parsed.hostname:
-                        host_to_asset[parsed.hostname] = asset_id
+                        host_to_asset[parsed.hostname.lower()] = asset_id
+                        # Store both scheme variants so that a scheme
+                        # switch (http↔https redirect) during the scan
+                        # still resolves to the correct asset.
+                        for alt_scheme in ("http", "https"):
+                            port = parsed.port
+                            if port and port not in (80, 443):
+                                alt_url = f"{alt_scheme}://{parsed.hostname}:{port}"
+                            else:
+                                alt_url = f"{alt_scheme}://{parsed.hostname}"
+                            if alt_url not in url_to_asset:
+                                url_to_asset[alt_url] = asset_id
                 except Exception:
                     pass
 
@@ -231,6 +251,22 @@ def run_nuclei_scan(
 
             if endpoint_urls:
                 scan_targets.extend(endpoint_urls)
+                # Register Katana endpoint hostnames in host_to_asset so
+                # that findings matched on these URLs can still be mapped
+                # back to the correct asset via the hostname fallback.
+                for ep_url in endpoint_urls:
+                    try:
+                        ep_parsed = urlparse(ep_url)
+                        if ep_parsed.hostname:
+                            ep_host = ep_parsed.hostname.lower()
+                            if ep_host not in host_to_asset:
+                                # Look up by identifier in the current asset set
+                                for a in assets:
+                                    if a.identifier.lower() == ep_host:
+                                        host_to_asset[ep_host] = a.id
+                                        break
+                    except Exception:
+                        pass
                 tenant_logger.info(
                     f"Added {len(endpoint_urls)} high-value Katana endpoints to Nuclei targets "
                     f"(from {len(endpoints)} total endpoints, filtered by type/path/params)"
@@ -265,12 +301,11 @@ def run_nuclei_scan(
             tenant_logger.warning(f"Scan had {len(errors)} validation errors")
 
         # Map findings to assets using multi-level matching:
-        # 1. Exact URL match
-        # 2. Base URL match (strip path/query/fragment)
-        # 3. Hostname match against url_to_asset keys
-        # 4. Hostname match against host_to_asset map
-        # 5. DB lookup by hostname
-        from urllib.parse import urlparse
+        # 1. Exact URL match (case-sensitive, then lowercased)
+        # 2. Base URL match (strip path/query/fragment, both scheme variants)
+        # 3. Hostname match against host_to_asset map
+        # 4. DB lookup by hostname (case-insensitive via func.lower)
+        from sqlalchemy import func as sa_func
 
         for finding in findings:
             matched_url = finding.get("matched_at")
@@ -279,43 +314,61 @@ def run_nuclei_scan(
             if matched_url and matched_url in url_to_asset:
                 finding["asset_id"] = url_to_asset[matched_url]
                 continue
+            # Try lowercased URL (covers case mismatches between asset
+            # identifier casing and Nuclei output normalisation)
+            if matched_url and matched_url.lower() in url_to_asset:
+                finding["asset_id"] = url_to_asset[matched_url.lower()]
+                continue
 
             # 2-4. Parse hostname from matched_at and try various matches
             finding_host = finding.get("host")
+            if finding_host:
+                finding_host = finding_host.lower()
             if matched_url:
                 try:
                     # SSL/network templates output "hostname:port" without scheme.
                     # urlparse treats that as scheme:path, giving hostname=None.
                     if "://" not in matched_url:
-                        finding_host = matched_url.split(":")[0] or finding_host
+                        finding_host = (matched_url.split(":")[0] or finding_host or "").lower() or None
                     else:
                         parsed = urlparse(matched_url)
-                        finding_host = parsed.hostname or finding_host
+                        finding_host = (parsed.hostname or finding_host or "").lower() or None
 
-                        # 2. Rebuild base URL and try match
+                        # 2. Rebuild base URL and try match (both schemes)
                         if parsed.hostname:
-                            scheme = parsed.scheme or "https"
+                            hostname_lc = parsed.hostname.lower()
                             port = parsed.port
-                            if port and port not in (80, 443):
-                                base_url = f"{scheme}://{parsed.hostname}:{port}"
-                            else:
-                                base_url = f"{scheme}://{parsed.hostname}"
-                            if base_url in url_to_asset:
-                                finding["asset_id"] = url_to_asset[base_url]
+                            for try_scheme in (parsed.scheme or "https", "http", "https"):
+                                if port and port not in (80, 443):
+                                    base_url = f"{try_scheme}://{hostname_lc}:{port}"
+                                else:
+                                    base_url = f"{try_scheme}://{hostname_lc}"
+                                if base_url in url_to_asset:
+                                    finding["asset_id"] = url_to_asset[base_url]
+                                    break
+                            if "asset_id" in finding:
                                 continue
                 except Exception:
                     pass
 
-            # 3. Match hostname against url_to_asset keys
+            # 3. Hostname match against host_to_asset map
             if finding_host and finding_host in host_to_asset:
                 finding["asset_id"] = host_to_asset[finding_host]
                 continue
 
             # 4. DB lookup by hostname (catches assets not in current scan)
             if finding_host:
-                asset = db.query(Asset).filter(Asset.tenant_id == tenant_id, Asset.identifier == finding_host).first()
+                asset = (
+                    db.query(Asset)
+                    .filter(
+                        Asset.tenant_id == tenant_id,
+                        sa_func.lower(Asset.identifier) == finding_host,
+                    )
+                    .first()
+                )
                 if asset:
                     finding["asset_id"] = asset.id
+                    host_to_asset[finding_host] = asset.id  # cache for next lookup
                     continue
 
             # Could not map — log details for debugging

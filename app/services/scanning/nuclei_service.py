@@ -335,10 +335,15 @@ class NucleiService:
 
         # Exclude templates by tag. Caller passes tier-aware tags from
         # detection.py; if not provided, use the most conservative set.
-        effective_exclude = exclude_tags or (
-            "dos,headless,fuzz,osint,token-spray,intrusive,sqli,xss,ssrf,ssti,rce,upload,bruteforce,credential-stuffing"
-        )
-        args.extend(["-exclude-tags", effective_exclude])
+        # An empty string "" means "no exclusions" (used for custom-only
+        # passes where we control the templates and don't want any
+        # tag-based filtering).  None means "use the default".
+        if exclude_tags is None:
+            effective_exclude = "dos,headless,fuzz,osint,token-spray,intrusive,sqli,xss,ssrf,ssti,rce,upload,bruteforce,credential-stuffing"
+        else:
+            effective_exclude = exclude_tags
+        if effective_exclude:
+            args.extend(["-exclude-tags", effective_exclude])
 
         # Interactsh OOB callback support (Tier 3 aggressive scans)
         if interactsh_server:

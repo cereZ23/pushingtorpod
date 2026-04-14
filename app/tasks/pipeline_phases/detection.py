@@ -329,7 +329,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
                 rate_limit=rate_limit,
                 concurrency=concurrency,
                 timeout=120,  # 2 min max — only 3 templates
-                exclude_tags=None,  # no exclusions for our own templates
+                exclude_tags="",  # empty string = no exclusions for our own templates
             )
             if isinstance(custom_result, dict):
                 total_created += custom_result.get("findings_created", 0)

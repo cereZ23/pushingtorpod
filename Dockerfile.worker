@@ -175,6 +175,10 @@ RUN cp -r /root/nuclei-templates /home/appuser/nuclei-templates && \
 COPY nuclei-templates/custom/ /home/appuser/nuclei-templates/custom/
 RUN chown -R appuser:appuser /home/appuser/nuclei-templates/custom/
 
+# Download GeoLite2 databases (GeoIP City + ASN) at build time.
+COPY scripts/download_geoip.sh /tmp/download_geoip.sh
+RUN bash /tmp/download_geoip.sh /app/data/geoip && rm /tmp/download_geoip.sh
+
 # Copy application code.
 COPY app /app/app
 
