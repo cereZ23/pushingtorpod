@@ -122,6 +122,32 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     # by IP caused www.ifo.it to be dropped (same Azure IP as cdn.ifo.it)
     # and its docker-compose.yml + .htaccess findings were never found.
     all_assets = hostname_assets + standalone_ips
+
+    # Soft-404 detection: probe each host with a random URL to find hosts
+    # that return 200 for non-existent paths. These produce false positives
+    # in Nuclei (every path looks "found"). Filter them from scan targets
+    # but still run DNS/SSL checks on them.
+    from app.utils.soft404 import detect_soft404_hosts
+
+    probe_urls = {}
+    for a in all_assets:
+        url = f"https://{a.identifier}"
+        probe_urls[url] = a.id
+        # Also try http for non-TLS hosts
+        http_url = f"http://{a.identifier}"
+        probe_urls[http_url] = a.id
+
+    soft404_urls = detect_soft404_hosts(list(probe_urls.keys()), timeout=5.0, max_workers=30)
+    soft404_asset_ids = {probe_urls[u] for u in soft404_urls}
+
+    if soft404_asset_ids:
+        before_count = len(all_assets)
+        all_assets = [a for a in all_assets if a.id not in soft404_asset_ids]
+        tenant_logger.info(
+            f"Soft-404: filtered {before_count - len(all_assets)} hosts "
+            f"(custom error pages), {len(all_assets)} remain for Nuclei HTTP scan"
+        )
+
     tenant_logger.info(
         f"Nuclei: {len(live_asset_ids)} assets with live HTTP, "
         f"{len(all_assets)} targets ({len(hostname_assets)} hostnames + {len(standalone_ips)} standalone IPs)"

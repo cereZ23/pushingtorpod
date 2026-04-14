@@ -75,6 +75,41 @@ from app.tasks.pipeline_phases.detection import (
 
 logger = logging.getLogger(__name__)
 
+
+def _send_scan_notification(scan_run_id: int, status: str, stats: dict, tenant_id: int) -> None:
+    """Send scan completion/failure notification via Slack webhook.
+
+    Non-blocking: errors are logged but never propagated.
+    """
+    from app.config import settings as _settings
+
+    webhook_url = _settings.slack_webhook_url or _settings.webhook_url
+    if not webhook_url:
+        return
+
+    try:
+        import httpx
+
+        findings = stats.get("findings_created", 0) + stats.get("findings_updated", 0)
+        duration = stats.get("duration_seconds", "?")
+        emoji = ":white_check_mark:" if status == "completed" else ":x:"
+
+        text = (
+            f"{emoji} *Scan #{scan_run_id}* {status} "
+            f"(tenant {tenant_id}, {duration}s)\n"
+            f"Findings: {findings} | "
+            f"Phases: {stats.get('phases_completed', '?')}/{stats.get('phases_total', '?')}"
+        )
+
+        httpx.post(
+            webhook_url,
+            json={"text": text},
+            timeout=5.0,
+        )
+    except Exception as exc:
+        logger.warning("Scan notification failed: %s", exc)
+
+
 # Phase definitions (metadata lookup)
 PHASE_DEFS = {
     "0": {"name": "Seed Ingestion", "required": True},
@@ -470,6 +505,9 @@ def run_scan_pipeline(self, scan_run_id: int):
         _update_scan_run(db, scan_run_id, ScanRunStatus.COMPLETED, stats=pipeline_stats)
         tenant_logger.info(f"Scan pipeline completed for run {scan_run_id}: {pipeline_stats}")
 
+        # Send completion notification (non-blocking)
+        _send_scan_notification(scan_run_id, "completed", pipeline_stats, tenant_id)
+
         return pipeline_stats
 
     except SoftTimeLimitExceeded:
@@ -492,6 +530,7 @@ def run_scan_pipeline(self, scan_run_id: int):
             _update_scan_run(db, scan_run_id, ScanRunStatus.FAILED, error=str(exc))
         except Exception:
             logger.exception("Failed to update scan_run status after pipeline error")
+        _send_scan_notification(scan_run_id, "failed", pipeline_stats, tenant_id)
         # Retry infrastructure-level failures (DB disconnect, Redis timeout, etc.)
         # The scan_run is already marked FAILED; if the retry succeeds it will
         # be re-marked as RUNNING at the top of the next attempt.
