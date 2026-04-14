@@ -256,7 +256,7 @@ def collect_seeds(tenant_id: int):
         )
 
         # Run uncover if keywords are present and API keys configured
-        if seed_data["keywords"] and tenant.osint_api_keys:
+        if seed_data["keywords"] and tenant.api_keys:
             try:
                 uncover_results = run_uncover(tenant_id, seed_data["keywords"])
                 seed_data["domains"].extend(uncover_results)
