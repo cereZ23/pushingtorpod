@@ -60,9 +60,11 @@ class TestCertificateEndpoints:
         assert len(certs) > 0
 
         # Verify all certificates expire within 30 days
-        cutoff_date = datetime.now(timezone.utc) + timedelta(days=30)
+        # not_after is TIMESTAMP WITHOUT TIME ZONE — compare as naive UTC
+        cutoff_date = datetime.utcnow() + timedelta(days=30)
         for cert in certs:
-            not_after = datetime.fromisoformat(cert["not_after"].replace("Z", "+00:00"))
+            raw = cert["not_after"].replace("Z", "").replace("+00:00", "")
+            not_after = datetime.fromisoformat(raw)
             assert not_after <= cutoff_date
 
     def test_list_expiring_certificates_within_7_days(
@@ -84,9 +86,11 @@ class TestCertificateEndpoints:
         # The fixture creates a cert expiring in 3 days; verify it appears
         assert len(certs) > 0
         # Verify returned certs are within 30-day expiring window
-        cutoff_date = datetime.now(timezone.utc) + timedelta(days=30)
+        # not_after is TIMESTAMP WITHOUT TIME ZONE — compare as naive UTC
+        cutoff_date = datetime.utcnow() + timedelta(days=30)
         for cert in certs:
-            not_after = datetime.fromisoformat(cert["not_after"].replace("Z", "+00:00"))
+            raw = cert["not_after"].replace("Z", "").replace("+00:00", "")
+            not_after = datetime.fromisoformat(raw)
             assert not_after <= cutoff_date
 
     def test_certificate_details_include_san_domains(self, authenticated_client, test_tenant, certificate_with_sans):
@@ -157,10 +161,11 @@ class TestCertificateEndpoints:
         else:
             certs = data
 
-        # All returned certificates should be expired
-        now = datetime.now(timezone.utc)
+        # All returned certificates should be expired (naive UTC comparison)
+        now = datetime.utcnow()
         for cert in certs:
-            not_after = datetime.fromisoformat(cert["not_after"].replace("Z", "+00:00"))
+            raw = cert["not_after"].replace("Z", "").replace("+00:00", "")
+            not_after = datetime.fromisoformat(raw)
             assert not_after < now
 
 

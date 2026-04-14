@@ -645,7 +645,7 @@ def client(db_session):
     """
     from fastapi.testclient import TestClient
     from app.main import app
-    from app.api.dependencies import get_db as deps_get_db
+    from app.api.dependencies import get_db as deps_get_db, get_async_db
     from app.database import get_db as db_get_db
 
     def override_get_db():
@@ -654,8 +654,12 @@ def client(db_session):
         finally:
             pass
 
+    async def override_get_async_db():
+        yield db_session
+
     app.dependency_overrides[deps_get_db] = override_get_db
     app.dependency_overrides[db_get_db] = override_get_db
+    app.dependency_overrides[get_async_db] = override_get_async_db
 
     # Disable rate limiter for test isolation
     if hasattr(app.state, "limiter"):
@@ -997,7 +1001,7 @@ def authenticated_client(db_session, test_user, test_tenant):
     """
     from fastapi.testclient import TestClient
     from app.main import app
-    from app.api.dependencies import get_db as deps_get_db, get_current_user
+    from app.api.dependencies import get_db as deps_get_db, get_current_user, get_async_db, get_current_user_async
     from app.database import get_db as db_get_db
 
     def override_get_db():
@@ -1006,12 +1010,17 @@ def authenticated_client(db_session, test_user, test_tenant):
         finally:
             pass
 
+    async def override_get_async_db():
+        yield db_session
+
     async def override_get_current_user():
         return test_user
 
     app.dependency_overrides[deps_get_db] = override_get_db
     app.dependency_overrides[db_get_db] = override_get_db
+    app.dependency_overrides[get_async_db] = override_get_async_db
     app.dependency_overrides[get_current_user] = override_get_current_user
+    app.dependency_overrides[get_current_user_async] = override_get_current_user
 
     # Disable rate limiter for test isolation
     if hasattr(app.state, "limiter"):

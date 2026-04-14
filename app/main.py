@@ -220,6 +220,10 @@ async def mutation_rate_limit_middleware(request: Request, call_next):
     if _mutation_limiter_strategy is None or _mutation_rate is None:
         return await call_next(request)
 
+    # Skip if rate limiting is disabled (e.g. in tests)
+    if hasattr(request.app.state, "limiter") and not request.app.state.limiter.enabled:
+        return await call_next(request)
+
     try:
         # Build key: "mutation_limit:<identity>"
         identity = _get_rate_limit_key(request)
