@@ -766,6 +766,7 @@ watch(assetId, () => {
         v-if="dnsInfo"
         :dns-info="dnsInfo"
         :cloud-provider="cloudProviderInfo"
+        :dns-discovery="asset?.raw_metadata?.dns_discovery"
       />
 
       <!-- ================================================================ -->
