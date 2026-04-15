@@ -25,10 +25,10 @@ logger = logging.getLogger(__name__)
 # Updated manually when new confirmed vulns are found on monitored targets.
 # Format: (url_substring_in_matched_at, finding_name_substring, severity)
 CANARY_FINDINGS = [
-    # IFO targets — confirmed manually
-    ("ifo.it/Dockerfile", "Dockerfile", "MEDIUM"),
-    ("ifo.it/docker-compose.yml", "docker-compose", "CRITICAL"),
-    ("ifo.it/.htaccess", "htaccess", "MEDIUM"),
+    # IFO targets — confirmed manually (use www.ifo.it, not bare ifo.it)
+    ("www.ifo.it/Dockerfile", "Dockerfile", "MEDIUM"),
+    ("www.ifo.it/docker-compose.yml", "docker-compose", "CRITICAL"),
+    ("www.ifo.it/.htaccess", "htaccess", "MEDIUM"),
 ]
 
 
