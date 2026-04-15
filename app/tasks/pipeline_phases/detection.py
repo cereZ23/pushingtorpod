@@ -370,7 +370,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
                 templates=["/app/custom-nuclei-templates/"],
                 rate_limit=rate_limit,
                 concurrency=concurrency,
-                timeout=300,  # 5 min — 12 custom templates × ~130 targets
+                timeout=600,  # 10 min — 12 custom templates × ~130 targets + katana endpoints
                 exclude_tags="",  # empty string = no exclusions for our own templates
             )
             if isinstance(custom_result, dict):
