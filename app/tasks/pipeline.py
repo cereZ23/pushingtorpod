@@ -508,6 +508,20 @@ def run_scan_pipeline(self, scan_run_id: int):
         # Send completion notification (non-blocking)
         _send_scan_notification(scan_run_id, "completed", pipeline_stats, tenant_id)
 
+        # Post-scan validation: check canary findings to detect false negatives
+        try:
+            from app.services.scan_validator import validate_scan_findings
+
+            validation = validate_scan_findings(tenant_id, scan_run_id)
+            pipeline_stats["validation"] = validation
+            if not validation["validation_passed"]:
+                tenant_logger.warning(
+                    "SCAN VALIDATION FAILED: %d canary findings missing — possible pipeline false negatives",
+                    len(validation["canaries_missing"]),
+                )
+        except Exception as exc:
+            tenant_logger.warning("Scan validation error: %s", exc)
+
         return pipeline_stats
 
     except SoftTimeLimitExceeded:
