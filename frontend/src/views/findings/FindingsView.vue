@@ -30,6 +30,45 @@ const selectedSeverity = ref("");
 const selectedStatus = ref("open");
 const selectedSource = ref("");
 
+// View mode
+const viewMode = ref<"list" | "grouped">("list");
+
+// Grouped findings by host
+const groupedByHost = computed(() => {
+  const groups: Record<
+    string,
+    { findings: Finding[]; critical: number; high: number; medium: number }
+  > = {};
+  for (const f of findings.value) {
+    const host = (f as any).asset_identifier || (f as any).host || "Unknown";
+    if (!groups[host]) {
+      groups[host] = { findings: [], critical: 0, high: 0, medium: 0 };
+    }
+    groups[host].findings.push(f);
+    const sev = ((f as any).severity || "").toLowerCase();
+    if (sev === "critical") groups[host].critical++;
+    else if (sev === "high") groups[host].high++;
+    else if (sev === "medium") groups[host].medium++;
+  }
+  // Sort by critical desc, then high, then count
+  return Object.entries(groups).sort(
+    ([, a], [, b]) =>
+      b.critical - a.critical ||
+      b.high - a.high ||
+      b.findings.length - a.findings.length,
+  );
+});
+
+const expandedHosts = ref<Set<string>>(new Set());
+
+function toggleHost(host: string) {
+  if (expandedHosts.value.has(host)) {
+    expandedHosts.value.delete(host);
+  } else {
+    expandedHosts.value.add(host);
+  }
+}
+
 // Bulk selection
 const selectedIds = ref<Set<number>>(new Set());
 const isBulkUpdating = ref(false);
@@ -204,6 +243,32 @@ const getStatusColor = getFindingStatusBadgeClass;
         Findings
       </h2>
       <div class="flex items-center gap-2">
+        <div
+          class="flex rounded-md border border-gray-300 dark:border-dark-border overflow-hidden"
+        >
+          <button
+            @click="viewMode = 'list'"
+            class="px-3 py-2 text-sm font-medium transition-colors"
+            :class="
+              viewMode === 'list'
+                ? 'bg-primary-600 text-white'
+                : 'bg-white dark:bg-dark-bg-secondary text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary'
+            "
+          >
+            List
+          </button>
+          <button
+            @click="viewMode = 'grouped'"
+            class="px-3 py-2 text-sm font-medium transition-colors"
+            :class="
+              viewMode === 'grouped'
+                ? 'bg-primary-600 text-white'
+                : 'bg-white dark:bg-dark-bg-secondary text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary'
+            "
+          >
+            By Host
+          </button>
+        </div>
         <button
           @click="exportCsv"
           class="px-4 py-2 border border-gray-300 dark:border-dark-border text-gray-700 dark:text-dark-text-secondary rounded-md hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary text-sm font-medium"
@@ -354,7 +419,102 @@ const getStatusColor = getFindingStatusBadgeClass;
           </button>
         </div>
       </div>
-      <div class="overflow-x-auto">
+      <!-- Grouped by Host View -->
+      <div v-if="viewMode === 'grouped'" class="space-y-3">
+        <div
+          v-for="[host, group] in groupedByHost"
+          :key="host"
+          class="border border-gray-200 dark:border-dark-border rounded-lg overflow-hidden"
+        >
+          <button
+            @click="toggleHost(host)"
+            class="w-full px-4 py-3 flex items-center justify-between bg-gray-50 dark:bg-dark-bg-tertiary hover:bg-gray-100 dark:hover:bg-dark-bg-secondary transition-colors"
+          >
+            <div class="flex items-center gap-3">
+              <svg
+                class="w-4 h-4 text-gray-400 transition-transform"
+                :class="{ 'rotate-90': expandedHosts.has(host) }"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M9 5l7 7-7 7"
+                />
+              </svg>
+              <span
+                class="text-sm font-semibold text-gray-900 dark:text-dark-text-primary font-mono"
+                >{{ host }}</span
+              >
+              <span class="text-xs text-gray-500 dark:text-dark-text-tertiary"
+                >({{ group.findings.length }} findings)</span
+              >
+            </div>
+            <div class="flex items-center gap-2">
+              <span
+                v-if="group.critical > 0"
+                class="px-2 py-0.5 text-xs font-semibold rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+              >
+                {{ group.critical }} critical
+              </span>
+              <span
+                v-if="group.high > 0"
+                class="px-2 py-0.5 text-xs font-semibold rounded-full bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+              >
+                {{ group.high }} high
+              </span>
+              <span
+                v-if="group.medium > 0"
+                class="px-2 py-0.5 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+              >
+                {{ group.medium }} medium
+              </span>
+            </div>
+          </button>
+          <div
+            v-if="expandedHosts.has(host)"
+            class="divide-y divide-gray-200 dark:divide-dark-border"
+          >
+            <div
+              v-for="f in group.findings"
+              :key="f.id"
+              class="px-4 py-2.5 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary cursor-pointer"
+              @click="
+                router.push({ name: 'FindingDetail', params: { id: f.id } })
+              "
+            >
+              <div class="flex items-center gap-3 min-w-0">
+                <span
+                  class="px-2 py-0.5 text-xs font-semibold rounded-full flex-shrink-0"
+                  :class="getSeverityBadgeClass((f as any).severity)"
+                >
+                  {{ (f as any).severity }}
+                </span>
+                <span
+                  class="text-sm text-gray-900 dark:text-dark-text-primary truncate"
+                  >{{ f.name }}</span
+                >
+              </div>
+              <span
+                class="text-xs text-gray-400 dark:text-dark-text-tertiary flex-shrink-0 ml-2"
+                >{{ (f as any).source }}</span
+              >
+            </div>
+          </div>
+        </div>
+        <div
+          v-if="groupedByHost.length === 0"
+          class="text-center py-8 text-gray-500 dark:text-dark-text-secondary"
+        >
+          No findings match current filters
+        </div>
+      </div>
+
+      <!-- List View (existing table) -->
+      <div v-if="viewMode === 'list'" class="overflow-x-auto">
         <table
           class="min-w-full divide-y divide-gray-200 dark:divide-dark-border"
         >
