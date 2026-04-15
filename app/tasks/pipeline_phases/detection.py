@@ -355,7 +355,9 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     # never execute before timeout. Running them as a dedicated pass
     # guarantees they always run on every host.
     if asset_ids:
-        tenant_logger.info(f"Nuclei custom pass: {len(asset_ids)} direct assets, templates=['/app/custom-nuclei-templates/']")
+        tenant_logger.info(
+            f"Nuclei custom pass: {len(asset_ids)} direct assets, templates=['/app/custom-nuclei-templates/']"
+        )
         try:
             custom_result = run_nuclei_scan(
                 tenant_id,
