@@ -90,6 +90,11 @@ celery.conf.beat_schedule = {
         "schedule": crontab(hour=4, minute=0),  # 4 AM UTC daily
         "options": {"expires": 7200},
     },
+    "dispatch-scheduled-scans": {
+        "task": "app.tasks.scheduled_scans.dispatch_scheduled_scans",
+        "schedule": crontab(minute="*/1"),  # Every minute — checks cron expressions
+        "options": {"expires": 55},
+    },
 }
 
 

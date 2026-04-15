@@ -13,6 +13,7 @@ alembic==1.13.1
 
 # Celery and Redis
 celery==5.3.4
+croniter>=1.4.1  # Cron expression evaluation for scheduled scans
 redis==5.0.1
 
 # MinIO/S3
