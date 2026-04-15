@@ -383,6 +383,72 @@ def run_nuclei_scan(
             unmapped = len(findings) - len(findings_with_assets)
             tenant_logger.warning(f"Could not map {unmapped} findings to assets")
 
+        # Separate discovery findings from vulnerability findings.
+        # Discovery findings (CAA, NS, MX, AAAA, SPF detect, etc.) are
+        # stored as asset enrichment metadata, not as finding records.
+        _DISCOVERY_TEMPLATES = {
+            "caa-fingerprint",
+            "ns-record-detect",
+            "mx-record-detect",
+            "soa-record-detect",
+            "aaaa-record-detect",
+            "txt-record-detect",
+            "spf-record-detect",
+            "dkim-record-detect",
+            "ptr-record-detect",
+            "srv-record-detect",
+            "dns-saas-service-detection",
+            "bimi-record-detect",
+            "email-service-detect",
+            "tlsa-record-detect",
+            "dnssec-detect",
+            "dns-wildcard-detect",
+        }
+        vuln_findings = []
+        discovery_count = 0
+        for f in findings_with_assets:
+            tid = (f.get("template_id") or "").lower().replace(" ", "-")
+            if any(dt in tid for dt in _DISCOVERY_TEMPLATES):
+                # Store as enrichment on the asset
+                asset_id = f["asset_id"]
+                discovery_key = f.get("template_id", "unknown")
+                try:
+                    import json as _json
+
+                    asset = db.query(Asset).filter(Asset.id == asset_id).first()
+                    if asset:
+                        meta = {}
+                        if asset.raw_metadata:
+                            try:
+                                meta = (
+                                    _json.loads(asset.raw_metadata)
+                                    if isinstance(asset.raw_metadata, str)
+                                    else (asset.raw_metadata or {})
+                                )
+                            except (ValueError, TypeError):
+                                pass
+                        dns_discovery = meta.get("dns_discovery", {})
+                        dns_discovery[discovery_key] = {
+                            "name": f.get("name"),
+                            "matched_at": f.get("matched_at"),
+                            "severity": f.get("severity"),
+                        }
+                        meta["dns_discovery"] = dns_discovery
+                        asset.raw_metadata = _json.dumps(meta)
+                        discovery_count += 1
+                except Exception:
+                    pass
+            else:
+                vuln_findings.append(f)
+
+        if discovery_count:
+            db.commit()
+            tenant_logger.info(
+                f"Stored {discovery_count} discovery findings as asset enrichment (not in findings table)"
+            )
+
+        findings_with_assets = vuln_findings
+
         # Apply suppression rules (filter false positives)
         suppression_service = SuppressionService(db, tenant_id)
         unsuppressed, suppressed = suppression_service.filter_findings(findings_with_assets)

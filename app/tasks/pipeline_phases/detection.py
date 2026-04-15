@@ -211,13 +211,14 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     # prevents ALL subsequent templates (including simple detection checks
     # like docker-compose, htaccess) from running on that host. Keeping
     # intrusive excluded is essential for detection quality.
-    # Exclude noisy tags. `discovery` templates (CAA, NS, MX, SOA, SPF, AAAA
-    # etc.) only report that something EXISTS, not that it's vulnerable. They
-    # produce 80+ INFO findings per scan that drown actionable results.
+    # Discovery templates ARE important for EASM (SPF, DKIM, DMARC, CAA,
+    # DNSSEC, NS takeover, wildcard DNS). They're kept in the scan but
+    # post-processed: stored as asset enrichment metadata, not as findings
+    # in the vulnerability list. See _store_discovery_as_enrichment().
     tier_exclude_tags = {
-        1: "dos,headless,fuzz,osint,token-spray,intrusive,sqli,xss,ssrf,ssti,rce,upload,bruteforce,credential-stuffing,discovery",
-        2: "dos,headless,fuzz,osint,token-spray,intrusive,credential-stuffing,bruteforce,upload,discovery",
-        3: "dos,headless,fuzz,osint,intrusive,credential-stuffing,discovery",
+        1: "dos,headless,fuzz,osint,token-spray,intrusive,sqli,xss,ssrf,ssti,rce,upload,bruteforce,credential-stuffing",
+        2: "dos,headless,fuzz,osint,token-spray,intrusive,credential-stuffing,bruteforce,upload",
+        3: "dos,headless,fuzz,osint,intrusive,credential-stuffing",
     }
     exclude_tags = tier_exclude_tags.get(scan_tier, tier_exclude_tags[1])
 
