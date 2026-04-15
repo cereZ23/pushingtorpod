@@ -255,6 +255,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             "http/exposures/",
             "http/honeypot/",
             "http/cnvd/",
+            "http/technologies/wordpress/",  # 239 WP plugin + theme detection
             "ssl/",
         ],
         2: [
@@ -269,6 +270,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             "http/cnvd/",
             "http/miscellaneous/",
             "http/honeypot/",
+            "http/technologies/wordpress/",  # 239 WP plugin + theme detection
             "cloud/",
             "ssl/",
             "javascript/",
