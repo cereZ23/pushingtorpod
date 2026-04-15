@@ -256,6 +256,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             "http/honeypot/",
             "http/cnvd/",
             "http/technologies/wordpress/",  # 239 WP plugin + theme detection
+            "http/technologies/eol/",  # End-of-life software detection
             "ssl/",
         ],
         2: [
@@ -270,7 +271,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             "http/cnvd/",
             "http/miscellaneous/",
             "http/honeypot/",
-            "http/technologies/wordpress/",  # 239 WP plugin + theme detection
+            "http/technologies/",  # All 512 technology detection (WP, Apache, GraphQL, SAP, etc.)
             "cloud/",
             "ssl/",
             "javascript/",
