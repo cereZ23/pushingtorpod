@@ -1,0 +1,35 @@
+id: wp-layerslider-detect
+
+info:
+  name: WordPress LayerSlider - Outdated Version Detection
+  author: pushingtorpod
+  severity: critical
+  description: |
+    Detects WordPress LayerSlider plugin. Versions < 7.10.1 are vulnerable
+    to CVE-2024-2879 (unauthenticated SQL injection, CVSS 9.8).
+  tags: custom,wordpress,plugin,layerslider
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/wp-content/plugins/LayerSlider/readme.txt"
+      - "{{BaseURL}}/wp-content/plugins/layerslider/readme.txt"
+
+    stop-at-first-match: true
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        words:
+          - "LayerSlider"
+
+      - type: status
+        status:
+          - 200
+
+    extractors:
+      - type: regex
+        group: 1
+        regex:
+          - "(?i)Stable tag:\\s*([0-9.]+)"
+          - "(?i)Version:\\s*([0-9.]+)"

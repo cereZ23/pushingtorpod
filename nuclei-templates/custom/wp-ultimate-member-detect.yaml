@@ -1,0 +1,33 @@
+id: wp-ultimate-member-detect
+
+info:
+  name: WordPress Ultimate Member - Outdated Version Detection
+  author: pushingtorpod
+  severity: critical
+  description: |
+    Detects WordPress Ultimate Member plugin. Versions < 2.6.7 are vulnerable
+    to CVE-2023-3460 (unauthenticated privilege escalation to admin), one of
+    the most critical WordPress plugin CVEs. Version 2.0.43 is extremely outdated.
+  tags: custom,wordpress,plugin,ultimate-member
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/wp-content/plugins/ultimate-member/readme.txt"
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        words:
+          - "Ultimate Member"
+
+      - type: status
+        status:
+          - 200
+
+    extractors:
+      - type: regex
+        group: 1
+        regex:
+          - "(?i)Stable tag:\\s*([0-9.]+)"
+          - "(?i)Version:\\s*([0-9.]+)"

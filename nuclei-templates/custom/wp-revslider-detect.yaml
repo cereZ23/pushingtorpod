@@ -1,0 +1,35 @@
+id: wp-revslider-detect
+
+info:
+  name: WordPress RevSlider - Outdated Version Detection
+  author: pushingtorpod
+  severity: high
+  description: |
+    Detects WordPress Slider Revolution (RevSlider) plugin. Versions < 6.7.0
+    are vulnerable to multiple CVEs including unauthenticated file download
+    (CVE-2014-9735), SQL injection, and stored XSS.
+  tags: custom,wordpress,plugin,revslider
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/wp-content/plugins/revslider/readme.txt"
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        words:
+          - "Slider Revolution"
+          - "RevSlider"
+        condition: or
+
+      - type: status
+        status:
+          - 200
+
+    extractors:
+      - type: regex
+        group: 1
+        regex:
+          - "(?i)Stable tag:\\s*([0-9.]+)"
+          - "(?i)Version:\\s*([0-9.]+)"

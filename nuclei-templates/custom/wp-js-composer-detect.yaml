@@ -1,0 +1,39 @@
+id: wp-js-composer-detect
+
+info:
+  name: WordPress WPBakery/JS Composer - Outdated Version Detection
+  author: pushingtorpod
+  severity: high
+  description: |
+    Detects WordPress WPBakery Page Builder (js_composer). Versions < 7.0
+    are vulnerable to multiple CVEs including XSS (CVE-2023-38000),
+    privilege escalation, and arbitrary shortcode execution.
+  tags: custom,wordpress,plugin,wpbakery,js-composer
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/wp-content/plugins/js_composer/readme.txt"
+      - "{{BaseURL}}/wp-content/plugins/js_composer/changelog.txt"
+
+    stop-at-first-match: true
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        words:
+          - "WPBakery"
+          - "Visual Composer"
+          - "js_composer"
+        condition: or
+
+      - type: status
+        status:
+          - 200
+
+    extractors:
+      - type: regex
+        group: 1
+        regex:
+          - "(?i)Stable tag:\\s*([0-9.]+)"
+          - "(?i)Version:\\s*([0-9.]+)"

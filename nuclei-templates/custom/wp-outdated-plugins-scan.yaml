@@ -1,0 +1,47 @@
+id: wp-outdated-plugins-scan
+
+info:
+  name: WordPress Outdated Plugin Detection (Multi-Check)
+  author: pushingtorpod
+  severity: medium
+  description: |
+    Scans for common WordPress plugins by checking readme.txt files.
+    Extracts version numbers for comparison. Covers: Contact Form 7,
+    Customer Area, GDPR Framework, If Menu, and other common plugins.
+  tags: custom,wordpress,plugin,outdated
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/wp-content/plugins/contact-form-7/readme.txt"
+      - "{{BaseURL}}/wp-content/plugins/customer-area/readme.txt"
+      - "{{BaseURL}}/wp-content/plugins/gdpr-framework/readme.txt"
+      - "{{BaseURL}}/wp-content/plugins/if-menu/readme.txt"
+      - "{{BaseURL}}/wp-content/plugins/wordpress-seo/readme.txt"
+      - "{{BaseURL}}/wp-content/plugins/woocommerce/readme.txt"
+      - "{{BaseURL}}/wp-content/plugins/elementor/readme.txt"
+      - "{{BaseURL}}/wp-content/plugins/wordfence/readme.txt"
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        words:
+          - "=== "
+          - "Stable tag:"
+        condition: and
+
+      - type: status
+        status:
+          - 200
+
+    extractors:
+      - type: regex
+        group: 1
+        regex:
+          - "===\\s+(.+?)\\s+==="
+
+      - type: regex
+        name: version
+        group: 1
+        regex:
+          - "(?i)Stable tag:\\s*([0-9.]+)"
