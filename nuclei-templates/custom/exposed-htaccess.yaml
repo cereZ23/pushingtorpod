@@ -3,7 +3,7 @@ id: exposed-htaccess
 info:
   name: .htaccess File Exposed
   author: pushingtorpod
-  severity: medium
+  severity: low
   description: |
     The .htaccess configuration file is publicly accessible, revealing
     web server rewrite rules, authentication directives, and potentially

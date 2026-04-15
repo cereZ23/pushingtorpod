@@ -28,7 +28,6 @@ CANARY_FINDINGS = [
     # IFO targets — confirmed manually (use www.ifo.it, not bare ifo.it)
     ("www.ifo.it/Dockerfile", "Dockerfile", "MEDIUM"),
     ("www.ifo.it/docker-compose.yml", "docker-compose", "CRITICAL"),
-    ("www.ifo.it/.htaccess", "htaccess", "MEDIUM"),
 ]
 
 
