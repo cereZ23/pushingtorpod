@@ -276,7 +276,24 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             "ssl/",
             "javascript/",
         ],
-        # T3: same dirs as T2 but with broader severity + fewer exclude-tags
+        3: [
+            "http/cves/",
+            "http/exposed-panels/",
+            "http/misconfiguration/",
+            "http/default-logins/",
+            "http/takeovers/",
+            "http/exposures/",
+            "http/vulnerabilities/",
+            "http/iot/",
+            "http/cnvd/",
+            "http/miscellaneous/",
+            "http/honeypot/",
+            "http/technologies/",
+            "cloud/",
+            "ssl/",
+            "javascript/",
+            "dast/",  # Active payload injection — T3 only (requires authorization)
+        ],
     }
     templates_for_scan = tier_templates.get(scan_tier, tier_templates[2])
 
