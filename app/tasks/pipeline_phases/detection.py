@@ -52,8 +52,11 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     # Tier-based Nuclei severity configuration
     # Tier 3 excludes 'info' -- those are mostly tech-detection templates
     # (4000+) that duplicate Phase 6 and add 20+ min to scan time.
+    # Include medium for all tiers — many real exposure findings
+    # (Dockerfile, docker-compose, .htaccess, .env) are rated medium.
+    # Excluding medium from T1 caused false negatives on known vulns.
     tier_severity = {
-        1: ["critical", "high"],
+        1: ["critical", "high", "medium"],
         2: ["critical", "high", "medium"],
         3: ["critical", "high", "medium", "low"],
     }
