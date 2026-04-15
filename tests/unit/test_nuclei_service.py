@@ -166,8 +166,8 @@ class TestNucleiService:
             concurrency=50,
         )
         tpls = [args[i + 1] for i, a in enumerate(args) if a == "-t"]
-        assert any("custom/" in t for t in tpls), "custom/ template dir missing from defaults"
-        assert NUCLEI_TEMPLATES_DIR + "/custom/" in tpls
+        assert any("custom-nuclei-templates" in t for t in tpls), "custom template dir missing from defaults"
+        assert "/app/custom-nuclei-templates/" in tpls
 
     def test_build_nuclei_args_default_templates_are_absolute(self, nuclei_service):
         args = nuclei_service._build_nuclei_args(
