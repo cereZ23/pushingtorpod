@@ -386,29 +386,36 @@ def run_nuclei_scan(
         # Separate discovery findings from vulnerability findings.
         # Discovery findings (CAA, NS, MX, AAAA, SPF detect, etc.) are
         # stored as asset enrichment metadata, not as finding records.
-        _DISCOVERY_TEMPLATES = {
-            "caa-fingerprint",
-            "ns-record-detect",
-            "mx-record-detect",
-            "soa-record-detect",
-            "aaaa-record-detect",
-            "txt-record-detect",
-            "spf-record-detect",
-            "dkim-record-detect",
-            "ptr-record-detect",
-            "srv-record-detect",
-            "dns-saas-service-detection",
-            "bimi-record-detect",
-            "email-service-detect",
-            "tlsa-record-detect",
-            "dnssec-detect",
-            "dns-wildcard-detect",
-        }
+        # Match by substring — nuclei template IDs vary across versions
+        # (e.g., "mx-fingerprint", "mx-record-detect", "mx-service-detector")
+        _DISCOVERY_SUBSTRINGS = [
+            "caa-",
+            "mx-",
+            "ns-",
+            "nameserver-",
+            "soa-",
+            "aaaa-",
+            "txt-",
+            "spf-",
+            "dkim-",
+            "dmarc-",
+            "ptr-",
+            "srv-",
+            "saas-service",
+            "bimi-",
+            "email-service",
+            "tlsa-",
+            "dnssec-",
+            "wildcard-",
+            "pop3-detect",
+            "openssh-detect",
+            "rdp-detect",
+        ]
         vuln_findings = []
         discovery_count = 0
         for f in findings_with_assets:
             tid = (f.get("template_id") or "").lower().replace(" ", "-")
-            if any(dt in tid for dt in _DISCOVERY_TEMPLATES):
+            if any(dt in tid for dt in _DISCOVERY_SUBSTRINGS):
                 # Store as enrichment on the asset
                 asset_id = f["asset_id"]
                 discovery_key = f.get("template_id", "unknown")

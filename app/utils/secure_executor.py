@@ -45,6 +45,7 @@ class SecureToolExecutor:
     # Paths allowed outside the temp directory (read-only resources)
     SAFE_PATH_PREFIXES = (
         "/home/appuser/nuclei-templates",
+        "/app/custom-nuclei-templates",
         "/app/data/",
     )
 

@@ -244,6 +244,8 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     # Excluded everywhere: http/technologies/ (Phase 6 does it), http/osint/
     # (Phase 1 does it), dast/ (payload injection risk), credential-stuffing/
     # (legal), headless/ (Phase 7 does it), file/code/workflows/ (not HTTP).
+    # NOTE: custom/ removed — custom templates are now at /app/custom-nuclei-templates/
+    # and appended automatically by nuclei_service.py (survives nuclei auto-update).
     tier_templates = {
         1: [
             "http/cves/",
@@ -254,7 +256,6 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             "http/honeypot/",
             "http/cnvd/",
             "ssl/",
-            "custom/",
         ],
         2: [
             "http/cves/",
@@ -271,7 +272,6 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             "cloud/",
             "ssl/",
             "javascript/",
-            "custom/",
         ],
         # T3: same dirs as T2 but with broader severity + fewer exclude-tags
     }
