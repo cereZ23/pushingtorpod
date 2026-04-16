@@ -536,49 +536,49 @@ const getStatusColor = getFindingStatusBadgeClass;
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+                class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
               >
                 Name
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+                class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
               >
                 Severity
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+                class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
               >
                 Status
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+                class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
               >
                 Asset
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+                class="hidden xl:table-cell px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
               >
                 Source
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-center text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+                class="hidden 2xl:table-cell px-3 py-3 text-center text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
               >
                 Seen
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+                class="hidden 2xl:table-cell px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
               >
                 First Seen
               </th>
               <th
                 scope="col"
-                class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+                class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
               >
                 Actions
               </th>
@@ -601,7 +601,7 @@ const getStatusColor = getFindingStatusBadgeClass;
                   :aria-label="`Select finding ${finding.name}`"
                 />
               </td>
-              <td class="px-6 py-4">
+              <td class="px-3 py-4">
                 <div
                   class="text-sm font-medium text-gray-900 dark:text-dark-text-primary"
                 >
@@ -620,7 +620,7 @@ const getStatusColor = getFindingStatusBadgeClass;
                   {{ finding.template_id }}
                 </div>
               </td>
-              <td class="px-6 py-4 whitespace-nowrap">
+              <td class="px-3 py-4 whitespace-nowrap">
                 <div class="flex items-center gap-1.5 flex-wrap">
                   <span
                     class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
@@ -664,7 +664,7 @@ const getStatusColor = getFindingStatusBadgeClass;
                   </span>
                 </div>
               </td>
-              <td class="px-6 py-4 whitespace-nowrap">
+              <td class="px-3 py-4 whitespace-nowrap">
                 <span
                   class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
                   :class="getStatusColor(finding.status)"
@@ -672,7 +672,7 @@ const getStatusColor = getFindingStatusBadgeClass;
                   {{ finding.status }}
                 </span>
               </td>
-              <td class="px-6 py-4">
+              <td class="px-3 py-4">
                 <div class="text-sm text-gray-900 dark:text-dark-text-primary">
                   {{ finding.asset_identifier || "-" }}
                 </div>
@@ -684,11 +684,13 @@ const getStatusColor = getFindingStatusBadgeClass;
                 </div>
               </td>
               <td
-                class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-dark-text-primary"
+                class="hidden xl:table-cell px-3 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-dark-text-primary"
               >
                 {{ finding.source }}
               </td>
-              <td class="px-6 py-4 whitespace-nowrap text-center">
+              <td
+                class="hidden 2xl:table-cell px-3 py-4 whitespace-nowrap text-center"
+              >
                 <span
                   v-if="finding.occurrence_count > 1"
                   class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300"
@@ -703,11 +705,11 @@ const getStatusColor = getFindingStatusBadgeClass;
                 >
               </td>
               <td
-                class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-dark-text-secondary"
+                class="hidden 2xl:table-cell px-3 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-dark-text-secondary"
               >
                 {{ formatDate(finding.first_seen) }}
               </td>
-              <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+              <td class="px-3 py-4 whitespace-nowrap text-sm font-medium">
                 <button
                   @click="viewFinding(finding.id)"
                   class="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300"
