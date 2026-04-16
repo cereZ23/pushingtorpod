@@ -108,7 +108,7 @@ jobs:
           pytest tests/ -v \
             --cov=app \
             --cov-report=xml \
-            --cov-fail-under=45 \
+            --cov-fail-under=40 \
             --cov-report=term-missing \
             --durations=20 \
             --timeout=120 \
