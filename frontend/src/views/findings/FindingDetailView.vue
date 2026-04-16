@@ -23,6 +23,7 @@ const isLoading = ref(true);
 const isUpdatingStatus = ref(false);
 const statusError = ref("");
 const error = ref("");
+const showPlaybook = ref(true);
 
 type FindingStatus = "open" | "suppressed" | "fixed";
 
@@ -635,6 +636,150 @@ onMounted(() => {
           <pre v-else class="text-gray-900 dark:text-dark-text-primary">{{
             JSON.stringify(finding.evidence, null, 2)
           }}</pre>
+        </div>
+      </div>
+
+      <!-- Remediation Playbook -->
+      <div
+        v-if="(finding as any).playbook"
+        class="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/10 dark:to-emerald-900/10 border border-green-200 dark:border-green-800/30 shadow rounded-lg p-6"
+      >
+        <div class="flex items-center gap-2 mb-4">
+          <svg
+            class="w-6 h-6 text-green-600 dark:text-green-400"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+            />
+          </svg>
+          <h3
+            class="text-lg font-semibold text-gray-900 dark:text-dark-text-primary"
+          >
+            Come sistemarlo
+          </h3>
+          <button
+            @click="showPlaybook = !showPlaybook"
+            class="ml-auto text-sm text-green-700 dark:text-green-400 hover:text-green-900 dark:hover:text-green-300"
+          >
+            {{ showPlaybook ? "Nascondi" : "Mostra playbook" }}
+          </button>
+        </div>
+
+        <div
+          v-if="!showPlaybook"
+          class="text-sm text-gray-700 dark:text-dark-text-secondary"
+        >
+          <p class="font-semibold">{{ (finding as any).playbook.title }}</p>
+          <p class="mt-1 text-xs">{{ (finding as any).playbook.risk }}</p>
+        </div>
+
+        <div v-if="showPlaybook" class="space-y-4">
+          <!-- Risk -->
+          <div
+            class="bg-red-50 dark:bg-red-900/20 border-l-4 border-red-500 p-3 rounded"
+          >
+            <p
+              class="text-xs font-semibold text-red-800 dark:text-red-300 uppercase tracking-wider mb-1"
+            >
+              Perche' e' importante
+            </p>
+            <p class="text-sm text-red-900 dark:text-red-200">
+              {{ (finding as any).playbook.risk }}
+            </p>
+          </div>
+
+          <!-- Steps -->
+          <div>
+            <p
+              class="text-xs font-semibold text-gray-700 dark:text-dark-text-secondary uppercase tracking-wider mb-2"
+            >
+              Passi da eseguire
+            </p>
+            <ol class="space-y-3">
+              <li
+                v-for="(step, idx) in (finding as any).playbook.steps"
+                :key="idx"
+                class="flex gap-3"
+              >
+                <span
+                  class="flex-shrink-0 w-6 h-6 rounded-full bg-green-600 text-white text-xs font-bold flex items-center justify-center"
+                  >{{ idx + 1 }}</span
+                >
+                <div class="flex-1 min-w-0">
+                  <p
+                    class="text-sm font-semibold text-gray-900 dark:text-dark-text-primary"
+                  >
+                    {{ step.title }}
+                  </p>
+                  <p
+                    v-if="step.description"
+                    class="text-xs text-gray-600 dark:text-dark-text-secondary mt-0.5"
+                  >
+                    {{ step.description }}
+                  </p>
+                  <pre
+                    v-if="step.command"
+                    class="mt-2 bg-gray-900 dark:bg-black text-green-400 text-xs p-3 rounded overflow-x-auto font-mono whitespace-pre-wrap"
+                    >{{ step.command }}</pre
+                  >
+                </div>
+              </li>
+            </ol>
+          </div>
+
+          <!-- Verify -->
+          <div v-if="(finding as any).playbook.verify">
+            <p
+              class="text-xs font-semibold text-gray-700 dark:text-dark-text-secondary uppercase tracking-wider mb-2"
+            >
+              Verifica il fix
+            </p>
+            <pre
+              class="bg-gray-900 dark:bg-black text-amber-400 text-xs p-3 rounded overflow-x-auto font-mono whitespace-pre-wrap"
+              >{{ (finding as any).playbook.verify }}</pre
+            >
+          </div>
+
+          <!-- Docs -->
+          <div v-if="(finding as any).playbook.docs?.length">
+            <p
+              class="text-xs font-semibold text-gray-700 dark:text-dark-text-secondary uppercase tracking-wider mb-2"
+            >
+              Documentazione
+            </p>
+            <ul class="space-y-1">
+              <li v-for="doc in (finding as any).playbook.docs" :key="doc">
+                <a
+                  :href="doc"
+                  target="_blank"
+                  rel="noopener"
+                  class="text-xs text-primary-600 dark:text-primary-400 hover:underline break-all"
+                  >{{ doc }}</a
+                >
+              </li>
+            </ul>
+          </div>
+
+          <!-- Email template -->
+          <div v-if="(finding as any).playbook.email_template">
+            <details class="bg-white dark:bg-dark-bg-tertiary rounded p-3">
+              <summary
+                class="text-xs font-semibold text-gray-700 dark:text-dark-text-secondary uppercase tracking-wider cursor-pointer"
+              >
+                Template email al team dev
+              </summary>
+              <pre
+                class="mt-2 text-xs text-gray-900 dark:text-dark-text-primary whitespace-pre-wrap"
+                >{{ (finding as any).playbook.email_template }}</pre
+              >
+            </details>
+          </div>
         </div>
       </div>
 

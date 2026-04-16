@@ -353,6 +353,37 @@ def list_findings(
     )
 
 
+@router.get("/{finding_id}/playbook")
+def get_finding_playbook(
+    tenant_id: int, finding_id: int, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)
+):
+    """Get remediation playbook for a specific finding.
+
+    Returns step-by-step remediation instructions with verification commands,
+    or null if no playbook is available for this finding type.
+    """
+    from app.services.remediation_playbook import get_playbook
+
+    finding = db.query(Finding).join(Asset).filter(Finding.id == finding_id, Asset.tenant_id == tenant_id).first()
+    if not finding:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finding not found")
+
+    playbook = get_playbook(template_id=finding.template_id, name=finding.name)
+    if not playbook:
+        return {"playbook": None, "finding_id": finding_id}
+
+    host = finding.asset.identifier if finding.asset else ""
+    pb = {**playbook}
+    if "steps" in pb:
+        pb["steps"] = [{**s, "command": (s.get("command") or "").replace("{host}", host)} for s in pb["steps"]]
+    if "verify" in pb:
+        pb["verify"] = pb["verify"].replace("{host}", host)
+    if "email_template" in pb:
+        pb["email_template"] = pb["email_template"].replace("{host}", host)
+
+    return {"playbook": pb, "finding_id": finding_id, "host": host}
+
+
 @router.get("/{finding_id}", response_model=FindingDetailResponse)
 def get_finding(
     tenant_id: int, finding_id: int, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)
@@ -388,7 +419,24 @@ def get_finding(
         "type": finding.asset.type.value if hasattr(finding.asset.type, "value") else finding.asset.type,
     }
 
-    # TODO: Add remediation guidance from knowledge base
+    # Remediation playbook (italian-language step-by-step fix guide)
+    from app.services.remediation_playbook import get_playbook
+
+    playbook = get_playbook(template_id=finding.template_id, name=finding.name)
+    host = finding.asset.identifier
+    if playbook:
+        # Substitute {host} placeholder in commands
+        pb = {**playbook}
+        if "steps" in pb:
+            pb["steps"] = [{**s, "command": (s.get("command") or "").replace("{host}", host)} for s in pb["steps"]]
+        if "verify" in pb:
+            pb["verify"] = pb["verify"].replace("{host}", host)
+        if "email_template" in pb:
+            pb["email_template"] = pb["email_template"].replace("{host}", host)
+        response_data["playbook"] = pb
+    else:
+        response_data["playbook"] = None
+
     response_data["remediation"] = None
     response_data["references"] = []
     response_data["tags"] = []
