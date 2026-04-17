@@ -40,10 +40,9 @@ def dispatch_scheduled_scans() -> dict:
             db.query(ScanProfile)
             .join(Project)
             .filter(
-                ScanProfile.enabled == True,
+                ScanProfile.enabled == True,  # noqa: E712
                 ScanProfile.schedule_cron.isnot(None),
                 ScanProfile.schedule_cron != "",
-                Project.is_active == True,
             )
             .all()
         )
