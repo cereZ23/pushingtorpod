@@ -1281,11 +1281,7 @@ def delete_profile(
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
 
-    profile = (
-        db.query(ScanProfile)
-        .filter(ScanProfile.id == profile_id, ScanProfile.project_id == project_id)
-        .first()
-    )
+    profile = db.query(ScanProfile).filter(ScanProfile.id == profile_id, ScanProfile.project_id == project_id).first()
     if not profile:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan profile not found")
 
