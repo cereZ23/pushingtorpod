@@ -36,6 +36,7 @@ celery = Celery(
         "app.tasks.report_delivery",
         "app.tasks.alert_evaluation",
         "app.tasks.cleanup",
+        "app.tasks.scheduled_scans",
     ],
 )
 
