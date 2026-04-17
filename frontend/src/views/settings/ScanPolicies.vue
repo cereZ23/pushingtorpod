@@ -76,9 +76,6 @@ const newScope = ref({
   description: "",
 });
 
-// Rate limiting
-const globalRateLimit = ref(100);
-
 // Schedule presets
 const schedulePresets = [
   { label: "Daily at 2 AM", value: "0 2 * * *" },
@@ -816,51 +813,6 @@ onMounted(async () => {
                     />
                   </svg>
                 </button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Global Rate Limiting -->
-          <div
-            class="bg-white dark:bg-dark-bg-secondary rounded-lg border border-gray-200 dark:border-dark-border p-6"
-          >
-            <h3
-              class="text-lg font-semibold text-gray-900 dark:text-dark-text-primary mb-4"
-            >
-              Global Rate Limiting
-            </h3>
-            <div class="flex items-center gap-6">
-              <div class="flex-1">
-                <label
-                  class="block text-sm font-medium text-gray-700 dark:text-dark-text-secondary mb-2"
-                >
-                  Maximum requests per second across all scans
-                </label>
-                <input
-                  v-model.number="globalRateLimit"
-                  type="range"
-                  min="1"
-                  max="500"
-                  step="1"
-                  class="w-full h-2 bg-gray-200 dark:bg-dark-bg-tertiary rounded-lg appearance-none cursor-pointer accent-primary-600"
-                />
-                <div
-                  class="flex justify-between text-xs text-gray-500 dark:text-dark-text-tertiary mt-1"
-                >
-                  <span>1 req/s</span>
-                  <span>250 req/s</span>
-                  <span>500 req/s</span>
-                </div>
-              </div>
-              <div class="text-center min-w-[80px]">
-                <p
-                  class="text-3xl font-bold text-primary-600 dark:text-primary-400"
-                >
-                  {{ globalRateLimit }}
-                </p>
-                <p class="text-xs text-gray-500 dark:text-dark-text-tertiary">
-                  req/s
-                </p>
               </div>
             </div>
           </div>
