@@ -1257,6 +1257,51 @@ def update_profile_schedule(
     return ScanProfileResponse.model_validate(profile)
 
 
+@router.delete(
+    "/projects/{project_id}/profiles/{profile_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_profile(
+    tenant_id: int,
+    project_id: int,
+    profile_id: int,
+    db: Session = Depends(get_db),
+    membership=Depends(verify_tenant_access),
+):
+    """Delete a scan profile.
+
+    Raises:
+        404: Project or profile not found
+        403: No write permission
+    """
+    if not membership.has_permission("write"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Write permission required")
+
+    project = db.query(Project).filter(Project.id == project_id, Project.tenant_id == tenant_id).first()
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    profile = (
+        db.query(ScanProfile)
+        .filter(ScanProfile.id == profile_id, ScanProfile.project_id == project_id)
+        .first()
+    )
+    if not profile:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan profile not found")
+
+    db.delete(profile)
+    db.commit()
+
+    log_data_modification(
+        action="delete",
+        resource="scan_profile",
+        resource_id=str(profile_id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        details={"name": profile.name, "project_id": project.id},
+    )
+
+
 # ===========================================================================
 # MONITORING STATUS
 # ===========================================================================

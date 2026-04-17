@@ -238,6 +238,23 @@ async function handleCreateProfile(): Promise<void> {
   }
 }
 
+async function handleDeleteProfile(profile: ScanProfile): Promise<void> {
+  if (!currentTenantId.value || !selectedProjectId.value) return;
+  if (!confirm(`Delete profile "${profile.name}"?`)) return;
+
+  try {
+    await apiClient.delete(
+      `/api/v1/tenants/${currentTenantId.value}/projects/${selectedProjectId.value}/profiles/${profile.id}`,
+    );
+    profiles.value = profiles.value.filter((p) => p.id !== profile.id);
+    showSuccess("Profile deleted");
+  } catch (err: unknown) {
+    const message =
+      err instanceof Error ? err.message : "Failed to delete profile";
+    error.value = message;
+  }
+}
+
 async function handleUpdateSchedule(
   profile: ScanProfile,
   cron: string | null,
@@ -690,12 +707,18 @@ onMounted(async () => {
                         </span>
                       </template>
                     </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                    <td class="px-6 py-4 whitespace-nowrap text-sm space-x-3">
                       <button
                         @click="startEditSchedule(profile)"
                         class="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
                       >
                         Edit Schedule
+                      </button>
+                      <button
+                        @click="handleDeleteProfile(profile)"
+                        class="text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
+                      >
+                        Delete
                       </button>
                     </td>
                   </tr>
