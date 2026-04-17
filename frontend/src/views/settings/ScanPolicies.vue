@@ -587,32 +587,32 @@ onMounted(async () => {
                 <thead class="bg-gray-50 dark:bg-dark-bg-tertiary">
                   <tr>
                     <th
-                      class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+                      class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
                     >
                       Name
                     </th>
                     <th
-                      class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+                      class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
                     >
                       Tier
                     </th>
                     <th
-                      class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+                      class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
                     >
                       Ports
                     </th>
                     <th
-                      class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+                      class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
                     >
                       Rate
                     </th>
                     <th
-                      class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+                      class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
                     >
                       Schedule
                     </th>
                     <th
-                      class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+                      class="px-3 py-3 text-right text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
                     >
                       Actions
                     </th>
@@ -626,33 +626,33 @@ onMounted(async () => {
                     :key="profile.id"
                     class="hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary"
                   >
-                    <td class="px-6 py-4 whitespace-nowrap">
+                    <td class="px-3 py-3 whitespace-nowrap">
                       <div
                         class="text-sm font-medium text-gray-900 dark:text-dark-text-primary"
                       >
                         {{ profile.name }}
                       </div>
                     </td>
-                    <td class="px-6 py-4 whitespace-nowrap">
+                    <td class="px-3 py-3 whitespace-nowrap">
                       <span
                         class="px-2 py-0.5 text-xs font-semibold rounded-full"
                         :class="getTierBadgeClass(profile.scan_tier)"
                       >
-                        Tier {{ profile.scan_tier }} -
+                        T{{ profile.scan_tier }}
                         {{ getTierLabel(profile.scan_tier) }}
                       </span>
                     </td>
                     <td
-                      class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-dark-text-secondary"
+                      class="px-3 py-3 whitespace-nowrap text-sm text-gray-600 dark:text-dark-text-secondary"
                     >
                       {{ profile.port_scan_mode }}
                     </td>
                     <td
-                      class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-dark-text-secondary"
+                      class="px-3 py-3 whitespace-nowrap text-sm text-gray-600 dark:text-dark-text-secondary"
                     >
                       {{ profile.max_rate_pps }} req/s
                     </td>
-                    <td class="px-6 py-4">
+                    <td class="px-3 py-3">
                       <template v-if="editingScheduleId === profile.id">
                         <div class="flex items-center gap-2">
                           <select
@@ -707,12 +707,14 @@ onMounted(async () => {
                         </span>
                       </template>
                     </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm space-x-3">
+                    <td
+                      class="px-3 py-3 whitespace-nowrap text-sm text-right space-x-2"
+                    >
                       <button
                         @click="startEditSchedule(profile)"
                         class="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
                       >
-                        Edit Schedule
+                        Schedule
                       </button>
                       <button
                         @click="handleDeleteProfile(profile)"
