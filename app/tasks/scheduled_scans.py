@@ -126,14 +126,19 @@ def _is_due(profile: ScanProfile, now: datetime, db) -> bool:
         return False
 
     try:
-        cron = croniter(profile.schedule_cron, now - timedelta(minutes=1))
-        next_time = cron.get_next(datetime)
+        # Find the most recent cron trigger point that has already passed
+        cron = croniter(profile.schedule_cron, now)
+        prev_trigger = cron.get_prev(datetime)
 
-        # Due if next trigger is within 1 minute of now
-        if abs((next_time - now).total_seconds()) > 60:
+        # How long ago was the last trigger point?
+        seconds_since_trigger = (now - prev_trigger).total_seconds()
+
+        # Only fire if the trigger was within the last 5 minutes
+        # (gives buffer for jitter, worker delays, etc.)
+        if seconds_since_trigger > 300:
             return False
 
-        # Check last completed scan for this profile
+        # Check last completed scan for this project
         last_scan = (
             db.query(ScanRun)
             .filter(
@@ -145,8 +150,9 @@ def _is_due(profile: ScanProfile, now: datetime, db) -> bool:
         )
 
         if last_scan and last_scan.completed_at:
-            # Don't re-trigger if last scan completed less than 1 hour ago
-            if (now - last_scan.completed_at.replace(tzinfo=timezone.utc)).total_seconds() < 3600:
+            last_completed = last_scan.completed_at.replace(tzinfo=timezone.utc)
+            # Don't re-trigger if last scan completed AFTER this trigger point
+            if last_completed > prev_trigger.replace(tzinfo=timezone.utc):
                 return False
 
         return True
