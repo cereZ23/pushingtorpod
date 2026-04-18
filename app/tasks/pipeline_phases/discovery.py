@@ -262,25 +262,76 @@ def _phase_1c_whois_discovery(tenant_id, project_id, scan_run_id, db, tenant_log
     enrichment_result = phase_1c_network_enrichment(tenant_id, asset_ids, db, tenant_logger)
 
     # --- IP Range Discovery from WHOIS org name ---
-    # After enrichment, extract org names from WHOIS data on root domains
-    # and discover IP ranges via BGPView/RIPE.
+    # After enrichment, discover IP ranges owned by the same org.
+    # Strategy:
+    # 1. Try org from WHOIS metadata (works for .com/.org, often null for .it)
+    # 2. Try raw WHOIS text for "Organisation:" line (RIPE format)
+    # 3. Fallback: use resolved IPs to query their ASN netblocks
     import ipaddress
-    from app.services.network_intel import discover_org_ip_ranges, whois_lookup
+    import json as _json
+    from app.services.network_intel import discover_org_ip_ranges
 
     org_names_seen: set[str] = set()
     new_ips_created = 0
 
-    for asset in assets:
-        if asset.type != AssetType.DOMAIN:
-            continue
-        # Get org from raw_metadata (populated by enrichment above)
-        metadata = asset.raw_metadata if isinstance(asset.raw_metadata, dict) else {}
-        whois_data = metadata.get("whois") if isinstance(metadata.get("whois"), dict) else {}
-        org = whois_data.get("org") if isinstance(whois_data, dict) else None
-        if not org or org.lower() in org_names_seen:
-            continue
-        org_names_seen.add(org.lower())
+    import socket as _socket
 
+    # Collect org names from ALL known IPs (not just domain resolution)
+    # This catches orgs like IFO whose domains resolve to Azure but own
+    # GARR IP ranges that appear on other assets.
+    ip_assets = [a for a in assets if a.type == AssetType.IP]
+    domain_assets = [a for a in assets if a.type == AssetType.DOMAIN]
+
+    def _ripe_org_for_ip(ip: str) -> str | None:
+        """Query RIPE WHOIS for org-name of an IP."""
+        try:
+            with _socket.create_connection(("whois.ripe.net", 43), timeout=10) as sock:
+                sock.sendall(f"{ip}\r\n".encode())
+                response = b""
+                while True:
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        break
+                    response += chunk
+                for line in response.decode(errors="replace").splitlines():
+                    stripped = line.strip()
+                    if stripped.lower().startswith("org-name:"):
+                        return stripped.split(":", 1)[1].strip()
+        except Exception:
+            pass
+        return None
+
+    # Strategy 1: check WHOIS metadata from domains
+    for asset in domain_assets:
+        try:
+            metadata = asset.raw_metadata
+            if isinstance(metadata, str):
+                metadata = _json.loads(metadata)
+            if isinstance(metadata, dict):
+                whois_data = metadata.get("whois")
+                if isinstance(whois_data, dict) and whois_data.get("org"):
+                    org = whois_data["org"]
+                    if org.lower() not in org_names_seen:
+                        org_names_seen.add(org.lower())
+        except Exception:
+            pass
+
+    # Strategy 2: query RIPE WHOIS for a sample of known IPs
+    # (limit to 10 to avoid rate-limiting)
+    for asset in ip_assets[:10]:
+        org = _ripe_org_for_ip(asset.identifier)
+        if org and org.lower() not in org_names_seen:
+            org_names_seen.add(org.lower())
+            tenant_logger.info("Phase 1c: found org '%s' via RIPE WHOIS for IP %s", org, asset.identifier)
+
+    if not org_names_seen:
+        tenant_logger.info("Phase 1c: no org names found for IP range discovery")
+        enrichment_result["ip_ranges_discovered"] = 0
+        enrichment_result["new_ips_from_ranges"] = 0
+        return enrichment_result
+
+    # Now discover IP ranges for each unique org
+    for org in list(org_names_seen):
         tenant_logger.info("Phase 1c: discovering IP ranges for org '%s'", org)
         ip_ranges = discover_org_ip_ranges(org)
 
