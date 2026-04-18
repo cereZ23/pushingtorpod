@@ -106,6 +106,18 @@ const heatmapData = ref<RiskHeatmapResponse>({
 });
 const heatmapLoading = ref(false);
 
+// Change detection data
+interface ChangeDetection {
+  period_days: number;
+  new_assets_count: number;
+  removed_assets_count: number;
+  new_findings_count: number;
+  fixed_findings_count: number;
+  new_critical: number;
+  new_high: number;
+}
+const changes = ref<ChangeDetection | null>(null);
+
 // -- Computed: SVG Charts --
 
 // Risk grade from score (shared utility)
@@ -369,8 +381,8 @@ async function loadDashboard(): Promise<void> {
         "Dashboard data unavailable. Start a scan to populate your attack surface.";
     }
 
-    // Load graph data and heatmap in parallel
-    await Promise.all([loadGraphData(), loadHeatmap()]);
+    // Load graph data, heatmap, and changes in parallel
+    await Promise.all([loadGraphData(), loadHeatmap(), loadChanges()]);
   } catch (err: unknown) {
     if (
       err instanceof Error &&
@@ -426,6 +438,19 @@ async function loadGraphData(): Promise<void> {
     // If no real data, leave graph empty
   } catch {
     // Graph data unavailable - leave empty
+  }
+}
+
+async function loadChanges(): Promise<void> {
+  if (!currentTenantId.value) return;
+  try {
+    const response = await apiClient.get<ChangeDetection>(
+      `/api/v1/tenants/${currentTenantId.value}/dashboard/changes`,
+      { params: { days: 7 }, signal: abortController?.signal },
+    );
+    changes.value = response.data;
+  } catch {
+    // Change detection unavailable - leave null
   }
 }
 
@@ -897,6 +922,63 @@ onUnmounted(() => {
                 />
               </svg>
             </router-link>
+          </div>
+        </div>
+      </div>
+
+      <!-- What Changed (7 days) -->
+      <div
+        v-if="changes"
+        class="bg-white dark:bg-dark-bg-secondary rounded-lg border border-gray-200 dark:border-dark-border p-5"
+      >
+        <div class="flex items-center justify-between mb-4">
+          <h3
+            class="text-lg font-semibold text-gray-900 dark:text-dark-text-primary"
+          >
+            What Changed
+          </h3>
+          <span class="text-xs text-gray-500 dark:text-dark-text-tertiary"
+            >Last {{ changes.period_days }} days</span
+          >
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div
+            class="text-center p-3 rounded-lg bg-blue-50 dark:bg-blue-900/10"
+          >
+            <p class="text-2xl font-bold text-blue-600 dark:text-blue-400">
+              +{{ changes.new_assets_count }}
+            </p>
+            <p class="text-xs text-gray-600 dark:text-dark-text-secondary mt-1">
+              New Assets
+            </p>
+          </div>
+          <div class="text-center p-3 rounded-lg bg-red-50 dark:bg-red-900/10">
+            <p class="text-2xl font-bold text-red-600 dark:text-red-400">
+              +{{ changes.new_findings_count }}
+            </p>
+            <p class="text-xs text-gray-600 dark:text-dark-text-secondary mt-1">
+              New Findings
+            </p>
+          </div>
+          <div
+            class="text-center p-3 rounded-lg bg-orange-50 dark:bg-orange-900/10"
+          >
+            <p class="text-2xl font-bold text-orange-600 dark:text-orange-400">
+              {{ changes.new_critical }}C / {{ changes.new_high }}H
+            </p>
+            <p class="text-xs text-gray-600 dark:text-dark-text-secondary mt-1">
+              Critical / High
+            </p>
+          </div>
+          <div
+            class="text-center p-3 rounded-lg bg-green-50 dark:bg-green-900/10"
+          >
+            <p class="text-2xl font-bold text-green-600 dark:text-green-400">
+              {{ changes.fixed_findings_count }}
+            </p>
+            <p class="text-xs text-gray-600 dark:text-dark-text-secondary mt-1">
+              Fixed
+            </p>
           </div>
         </div>
       </div>

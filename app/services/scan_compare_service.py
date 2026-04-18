@@ -99,11 +99,27 @@ class ScanCompareService:
         base_stats = base_run.stats or {}
         compare_stats = compare_run.stats or {}
 
-        if "snapshot" not in base_stats or "snapshot" not in compare_stats:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="One or both scan runs lack snapshot data (runs before diff engine was enabled)",
-            )
+        # Backfill snapshots on-demand for scan runs that predate the diff engine
+        from app.tasks.diff_alert import _build_snapshot
+        from sqlalchemy.orm.attributes import flag_modified
+
+        for run, stats in [(base_run, base_stats), (compare_run, compare_stats)]:
+            if "snapshot" not in stats:
+                logger.info("Backfilling snapshot for scan_run %d", run.id)
+                snap = _build_snapshot(self.db, run.tenant_id)
+                updated = dict(stats)
+                updated["snapshot"] = {
+                    "asset_keys": list(snap.asset_keys),
+                    "service_keys": list(snap.service_keys),
+                    "finding_keys": list(snap.finding_keys),
+                }
+                run.stats = updated
+                flag_modified(run, "stats")
+                self.db.commit()
+
+        # Re-read after potential backfill
+        base_stats = base_run.stats or {}
+        compare_stats = compare_run.stats or {}
 
         base_snapshot = _snapshot_from_stats(base_stats)
         compare_snapshot = _snapshot_from_stats(compare_stats)

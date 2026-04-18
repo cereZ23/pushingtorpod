@@ -45,7 +45,6 @@ from app.utils.logger import TenantLoggerAdapter
 from app.tasks.pipeline_phases.discovery import (
     _phase_0_seed_ingestion,
     _phase_1_passive_discovery,
-    _phase_1b_github_dorking,
     _phase_1c_whois_discovery,
     _phase_1d_cloud_buckets,
     _phase_1e_cloud_enum,
@@ -114,7 +113,6 @@ def _send_scan_notification(scan_run_id: int, status: str, stats: dict, tenant_i
 PHASE_DEFS = {
     "0": {"name": "Seed Ingestion", "required": True},
     "1": {"name": "Passive Discovery", "required": True},
-    "1b": {"name": "GitHub Dorking", "required": False},
     "1c": {"name": "WHOIS/RDAP Discovery", "required": False},
     "1d": {"name": "Cloud Bucket Discovery", "required": False},
     "1e": {"name": "Cloud Asset Enumeration", "required": False},
@@ -144,7 +142,7 @@ PHASES = [{"id": pid, **pdef} for pid, pdef in PHASE_DEFS.items()]
 # Independent phases are grouped to cut total wall-clock time.
 EXECUTION_PLAN = [
     "0",  # Seed ingestion (must be first)
-    ["1", "1b", "1c", "1d", "1e"],  # Discovery: subfinder, GitHub, WHOIS, cloud in parallel
+    ["1", "1c", "1d", "1e"],  # Discovery: subfinder, WHOIS, cloud in parallel
     "2",  # DNS bruteforce (needs Phase 1 results)
     "3",  # DNS resolution (needs Phase 2 results)
     "5b",  # CDN/WAF detection (before probing — skip CDN IPs)
@@ -559,11 +557,6 @@ def _should_skip_phase(phase_id: str, project: Project, scan_tier: int = 1) -> t
 
     project_settings = project.settings or {}
 
-    if phase_id == "1b":
-        # GitHub dorking requires GITHUB_TOKEN
-        if not getattr(app_settings, "github_token", None):
-            return True, "GITHUB_TOKEN not configured"
-
     if phase_id == "1c":
         # WHOIS is optional - skip if explicitly disabled
         if not project_settings.get("whois_enabled", True):
@@ -611,8 +604,6 @@ def _execute_phase(
         return _phase_0_seed_ingestion(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == "1":
         return _phase_1_passive_discovery(tenant_id, project_id, scan_run_id, db, tenant_logger)
-    elif phase_id == "1b":
-        return _phase_1b_github_dorking(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == "1c":
         return _phase_1c_whois_discovery(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == "1d":

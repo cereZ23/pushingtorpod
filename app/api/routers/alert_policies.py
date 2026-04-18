@@ -531,24 +531,62 @@ def test_alert_policy(
     policy = _get_policy_or_404(db, tenant_id, policy_id)
 
     channels = policy.channels or []
-    channels_tested = [ch.get("type", "unknown") for ch in channels]
+    if not channels:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Policy has no channels configured",
+        )
 
-    # TODO: Integrate with actual notification dispatching (Celery task).
-    # For now we return a success response indicating which channels would
-    # be contacted.  In production, this should dispatch via the notify
-    # subsystem and report per-channel success/failure.
+    # Build a synthetic Alert object for the test
+    from app.models.risk import Alert, AlertStatus
+
+    test_alert = Alert(
+        tenant_id=tenant_id,
+        policy_id=policy.id,
+        event_type="test",
+        severity="info",
+        title=f'[TEST] NimbusGuard alert test — policy "{policy.name}"',
+        body="This is a test notification from NimbusGuard EASM.\nIf you received this, the channel is configured correctly.",
+        status=AlertStatus.PENDING,
+    )
+
+    # Send through each channel, track results
+    from app.tasks.alert_evaluation import _send_via_channel
+    from app.utils.logger import TenantLoggerAdapter
+
+    tenant_logger = TenantLoggerAdapter(logger, {"tenant_id": tenant_id})
+    channels_ok: list[str] = []
+    channels_failed: list[str] = []
+
+    for ch in channels:
+        ch_type = ch.get("type", "unknown")
+        try:
+            _send_via_channel(ch, test_alert, tenant_logger)
+            channels_ok.append(ch_type)
+        except Exception as exc:
+            logger.warning("Test notification failed for channel %s: %s", ch_type, exc)
+            channels_failed.append(ch_type)
+
+    success = len(channels_ok) > 0
+    parts = []
+    if channels_ok:
+        parts.append(f"Sent to {', '.join(channels_ok)}")
+    if channels_failed:
+        parts.append(f"Failed: {', '.join(channels_failed)}")
+    message = ". ".join(parts) if parts else "No channels contacted"
 
     logger.info(
-        "Test notification dispatched for policy %d (tenant %d) to channels: %s",
+        "Test notification for policy %d (tenant %d): ok=%s failed=%s",
         policy_id,
         tenant_id,
-        ", ".join(channels_tested),
+        channels_ok,
+        channels_failed,
     )
 
     return TestNotificationResponse(
-        success=True,
-        channels_tested=channels_tested,
-        message=f"Test notification sent to {len(channels_tested)} channel(s)",
+        success=success,
+        channels_tested=channels_ok + channels_failed,
+        message=message,
     )
 
 

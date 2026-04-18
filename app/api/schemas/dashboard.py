@@ -217,6 +217,31 @@ class HeatmapCell(BaseModel):
     )
 
 
+class ChangeItem(BaseModel):
+    """Single changed item (asset or finding)."""
+
+    id: int = Field(..., description="Item ID")
+    identifier: str = Field(..., description="Asset identifier or finding name")
+    type: str = Field(..., description="Asset type or finding severity")
+    first_seen: datetime = Field(..., description="When item was first seen")
+
+
+class ChangeDetectionResponse(BaseModel):
+    """Change detection summary for a given time window."""
+
+    period_days: int = Field(..., description="Number of days in the analysis window")
+    new_assets: list[ChangeItem] = Field(..., description="Assets first seen in the period")
+    new_assets_count: int = Field(..., description="Total new assets count")
+    removed_assets: list[ChangeItem] = Field(..., description="Assets not seen since before the period")
+    removed_assets_count: int = Field(..., description="Total removed assets count")
+    new_findings: list[ChangeItem] = Field(..., description="Findings first seen in the period")
+    new_findings_count: int = Field(..., description="Total new findings count")
+    fixed_findings: list[ChangeItem] = Field(..., description="Findings marked fixed in the period")
+    fixed_findings_count: int = Field(..., description="Total fixed findings count")
+    new_critical: int = Field(..., description="New critical findings in the period")
+    new_high: int = Field(..., description="New high findings in the period")
+
+
 class RiskHeatmapResponse(BaseModel):
     """Risk heatmap: open findings grouped by severity and asset type."""
 

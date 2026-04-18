@@ -27,6 +27,8 @@ from app.models.issues import Issue, IssueStatus
 from app.models.risk import RiskScore
 from app.models.scanning import ScanRun, ScanRunStatus
 from app.api.schemas.dashboard import (
+    ChangeDetectionResponse,
+    ChangeItem,
     DashboardSummary,
     SeverityBreakdown,
     AssetTypeBreakdown,
@@ -524,3 +526,139 @@ def _verify_tenant_exists(db: Session, tenant_id: int) -> None:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Tenant not found",
         )
+
+
+@router.get("/changes", response_model=ChangeDetectionResponse)
+def get_changes(
+    tenant_id: int,
+    days: int = Query(7, ge=1, le=90, description="Lookback period in days"),
+    limit: int = Query(50, ge=1, le=200, description="Max items per category"),
+    db: Session = Depends(get_db),
+    membership=Depends(verify_tenant_access),
+) -> ChangeDetectionResponse:
+    """What changed in the last N days.
+
+    Returns new assets, removed assets, new findings, and fixed findings
+    within the specified time window. Core endpoint for CISO dashboards.
+    """
+    _verify_tenant_exists(db, tenant_id)
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # New assets (first_seen >= cutoff)
+    new_assets_q = (
+        db.query(Asset)
+        .filter(Asset.tenant_id == tenant_id, Asset.is_active.is_(True), Asset.first_seen >= cutoff)
+        .order_by(Asset.first_seen.desc())
+    )
+    new_assets_total = new_assets_q.count()
+    new_assets = [
+        ChangeItem(
+            id=a.id,
+            identifier=a.identifier,
+            type=a.type.value if hasattr(a.type, "value") else str(a.type),
+            first_seen=a.first_seen,
+        )
+        for a in new_assets_q.limit(limit).all()
+    ]
+
+    # Removed assets (last_seen < cutoff, still in DB but no longer active)
+    removed_assets_q = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.is_active.is_(False),
+            Asset.last_seen >= cutoff - timedelta(days=days),
+            Asset.last_seen < cutoff,
+        )
+        .order_by(Asset.last_seen.desc())
+    )
+    removed_assets_total = removed_assets_q.count()
+    removed_assets = [
+        ChangeItem(
+            id=a.id,
+            identifier=a.identifier,
+            type=a.type.value if hasattr(a.type, "value") else str(a.type),
+            first_seen=a.first_seen,
+        )
+        for a in removed_assets_q.limit(limit).all()
+    ]
+
+    # New findings (first_seen >= cutoff)
+    new_findings_q = (
+        db.query(Finding)
+        .join(Asset)
+        .filter(Asset.tenant_id == tenant_id, Finding.first_seen >= cutoff)
+        .order_by(Finding.first_seen.desc())
+    )
+    new_findings_total = new_findings_q.count()
+
+    # Count critical/high among new findings
+    new_critical = (
+        db.query(func.count(Finding.id))
+        .join(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Finding.first_seen >= cutoff,
+            Finding.severity == FindingSeverity.CRITICAL,
+        )
+        .scalar()
+        or 0
+    )
+    new_high = (
+        db.query(func.count(Finding.id))
+        .join(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Finding.first_seen >= cutoff,
+            Finding.severity == FindingSeverity.HIGH,
+        )
+        .scalar()
+        or 0
+    )
+
+    new_findings = [
+        ChangeItem(
+            id=f.id,
+            identifier=f.name or f.template_id or str(f.id),
+            type=f.severity.value if hasattr(f.severity, "value") else str(f.severity),
+            first_seen=f.first_seen,
+        )
+        for f in new_findings_q.limit(limit).all()
+    ]
+
+    # Fixed findings (status=fixed, last_seen >= cutoff)
+    fixed_findings_q = (
+        db.query(Finding)
+        .join(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Finding.status == FindingStatus.FIXED,
+            Finding.last_seen >= cutoff,
+        )
+        .order_by(Finding.last_seen.desc())
+    )
+    fixed_findings_total = fixed_findings_q.count()
+    fixed_findings = [
+        ChangeItem(
+            id=f.id,
+            identifier=f.name or f.template_id or str(f.id),
+            type=f.severity.value if hasattr(f.severity, "value") else str(f.severity),
+            first_seen=f.first_seen,
+        )
+        for f in fixed_findings_q.limit(limit).all()
+    ]
+
+    return ChangeDetectionResponse(
+        period_days=days,
+        new_assets=new_assets,
+        new_assets_count=new_assets_total,
+        removed_assets=removed_assets,
+        removed_assets_count=removed_assets_total,
+        new_findings=new_findings,
+        new_findings_count=new_findings_total,
+        fixed_findings=fixed_findings,
+        fixed_findings_count=fixed_findings_total,
+        new_critical=new_critical,
+        new_high=new_high,
+    )
