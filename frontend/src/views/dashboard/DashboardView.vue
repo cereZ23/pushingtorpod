@@ -946,7 +946,8 @@ onUnmounted(() => {
             class="text-center p-3 rounded-lg bg-blue-50 dark:bg-blue-900/10"
           >
             <p class="text-2xl font-bold text-blue-600 dark:text-blue-400">
-              +{{ changes.new_assets_count }}
+              {{ changes.new_assets_count > 0 ? "+" : ""
+              }}{{ changes.new_assets_count }}
             </p>
             <p class="text-xs text-gray-600 dark:text-dark-text-secondary mt-1">
               New Assets
@@ -954,7 +955,8 @@ onUnmounted(() => {
           </div>
           <div class="text-center p-3 rounded-lg bg-red-50 dark:bg-red-900/10">
             <p class="text-2xl font-bold text-red-600 dark:text-red-400">
-              +{{ changes.new_findings_count }}
+              {{ changes.new_findings_count > 0 ? "+" : ""
+              }}{{ changes.new_findings_count }}
             </p>
             <p class="text-xs text-gray-600 dark:text-dark-text-secondary mt-1">
               New Findings
