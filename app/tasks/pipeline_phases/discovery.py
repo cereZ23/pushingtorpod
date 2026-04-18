@@ -274,9 +274,9 @@ def _phase_1c_whois_discovery(tenant_id, project_id, scan_run_id, db, tenant_log
         if asset.type != AssetType.DOMAIN:
             continue
         # Get org from raw_metadata (populated by enrichment above)
-        metadata = asset.raw_metadata or {}
-        whois_data = metadata.get("whois", {})
-        org = whois_data.get("org")
+        metadata = asset.raw_metadata if isinstance(asset.raw_metadata, dict) else {}
+        whois_data = metadata.get("whois") if isinstance(metadata.get("whois"), dict) else {}
+        org = whois_data.get("org") if isinstance(whois_data, dict) else None
         if not org or org.lower() in org_names_seen:
             continue
         org_names_seen.add(org.lower())
