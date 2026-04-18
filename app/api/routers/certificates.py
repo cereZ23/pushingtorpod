@@ -121,6 +121,115 @@ def list_certificates(
     )
 
 
+## IMPORTANT: Static routes (/expiring, /health) MUST be registered
+# BEFORE the dynamic /{certificate_id} route, otherwise FastAPI will
+# try to match "expiring" as a certificate_id integer.
+
+
+@router.get("/expiring", response_model=List[CertificateResponse])
+def get_expiring_certificates(
+    tenant_id: int,
+    days: int = Query(30, ge=1, le=365, description="Days until expiry"),
+    db: Session = Depends(get_db),
+    membership=Depends(verify_tenant_access),
+):
+    """Get certificates expiring within the specified number of days."""
+    expiry_threshold = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=days)
+
+    certificates = (
+        db.query(Certificate)
+        .join(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Certificate.is_expired == False,  # noqa: E712
+            Certificate.not_after <= expiry_threshold,
+        )
+        .order_by(Certificate.not_after.asc())
+        .all()
+    )
+
+    return [CertificateResponse.model_validate(c) for c in certificates]
+
+
+@router.get("/health", response_model=CertificateHealthResponse)
+def get_certificate_health(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    membership=Depends(verify_tenant_access),
+):
+    """Get certificate health summary."""
+    total = db.query(Certificate).join(Asset).filter(Asset.tenant_id == tenant_id).count()
+
+    expired = (
+        db.query(Certificate)
+        .join(Asset)
+        .filter(Asset.tenant_id == tenant_id, Certificate.is_expired == True)  # noqa: E712
+        .count()
+    )
+
+    thirty_days = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30)
+    expiring_soon = (
+        db.query(Certificate)
+        .join(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Certificate.is_expired == False,  # noqa: E712
+            Certificate.not_after <= thirty_days,
+        )
+        .count()
+    )
+
+    self_signed = (
+        db.query(Certificate)
+        .join(Asset)
+        .filter(Asset.tenant_id == tenant_id, Certificate.is_self_signed == True)  # noqa: E712
+        .count()
+    )
+
+    weak_signature = (
+        db.query(Certificate)
+        .join(Asset)
+        .filter(Asset.tenant_id == tenant_id, Certificate.has_weak_signature == True)  # noqa: E712
+        .count()
+    )
+
+    wildcard = (
+        db.query(Certificate)
+        .join(Asset)
+        .filter(Asset.tenant_id == tenant_id, Certificate.is_wildcard == True)  # noqa: E712
+        .count()
+    )
+
+    issuers = (
+        db.query(Certificate.issuer, func.count(Certificate.id).label("count"))
+        .join(Asset)
+        .filter(Asset.tenant_id == tenant_id, Certificate.issuer.isnot(None))
+        .group_by(Certificate.issuer)
+        .all()
+    )
+    by_issuer = {issuer: count for issuer, count in issuers}
+
+    key_sizes = (
+        db.query(Certificate.public_key_bits, func.count(Certificate.id).label("count"))
+        .join(Asset)
+        .filter(Asset.tenant_id == tenant_id, Certificate.public_key_bits.isnot(None))
+        .group_by(Certificate.public_key_bits)
+        .all()
+    )
+    by_key_size = {str(size): count for size, count in key_sizes if size}
+
+    return CertificateHealthResponse(
+        total_certificates=total,
+        expired=expired,
+        expiring_soon=expiring_soon,
+        self_signed=self_signed,
+        weak_signature=weak_signature,
+        wildcard=wildcard,
+        by_issuer=by_issuer,
+        by_key_size=by_key_size,
+    )
+
+
 @router.get("/{certificate_id}", response_model=CertificateResponse)
 def get_certificate(
     tenant_id: int, certificate_id: int, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)
@@ -141,122 +250,3 @@ def get_certificate(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate not found")
 
     return CertificateResponse.model_validate(certificate)
-
-
-@router.get("/expiring", response_model=List[CertificateResponse])
-def get_expiring_certificates(
-    tenant_id: int,
-    days: int = Query(30, ge=1, le=365, description="Days until expiry"),
-    db: Session = Depends(get_db),
-    membership=Depends(verify_tenant_access),
-):
-    """
-    Get certificates expiring soon
-
-    Default: 30 days
-
-    Critical for preventing service disruptions
-
-    Returns:
-        Certificates expiring within specified days, sorted by expiry date
-    """
-    # not_after is TIMESTAMP WITHOUT TIME ZONE — strip tzinfo for comparison
-    expiry_threshold = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=days)
-
-    certificates = (
-        db.query(Certificate)
-        .join(Asset)
-        .filter(
-            Asset.tenant_id == tenant_id, Certificate.is_expired == False, Certificate.not_after <= expiry_threshold
-        )
-        .order_by(Certificate.not_after.asc())
-        .all()
-    )
-
-    return [CertificateResponse.model_validate(c) for c in certificates]
-
-
-@router.get("/health", response_model=CertificateHealthResponse)
-def get_certificate_health(tenant_id: int, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)):
-    """
-    Get certificate health summary
-
-    Aggregated view of certificate posture:
-    - Total certificates
-    - Expired/expiring
-    - Self-signed
-    - Weak signatures
-    - Distribution by issuer/key size
-
-    Useful for compliance and security dashboards
-    """
-    # Total certificates
-    total = db.query(Certificate).join(Asset).filter(Asset.tenant_id == tenant_id).count()
-
-    # Expired certificates
-    expired = (
-        db.query(Certificate).join(Asset).filter(Asset.tenant_id == tenant_id, Certificate.is_expired == True).count()
-    )
-
-    # Expiring soon (30 days) — not_after is TIMESTAMP WITHOUT TIME ZONE
-    thirty_days = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30)
-    expiring_soon = (
-        db.query(Certificate)
-        .join(Asset)
-        .filter(Asset.tenant_id == tenant_id, Certificate.is_expired == False, Certificate.not_after <= thirty_days)
-        .count()
-    )
-
-    # Self-signed
-    self_signed = (
-        db.query(Certificate)
-        .join(Asset)
-        .filter(Asset.tenant_id == tenant_id, Certificate.is_self_signed == True)
-        .count()
-    )
-
-    # Weak signature
-    weak_signature = (
-        db.query(Certificate)
-        .join(Asset)
-        .filter(Asset.tenant_id == tenant_id, Certificate.has_weak_signature == True)
-        .count()
-    )
-
-    # Wildcard certificates
-    wildcard = (
-        db.query(Certificate).join(Asset).filter(Asset.tenant_id == tenant_id, Certificate.is_wildcard == True).count()
-    )
-
-    # Distribution by issuer
-    issuers = (
-        db.query(Certificate.issuer, func.count(Certificate.id).label("count"))
-        .join(Asset)
-        .filter(Asset.tenant_id == tenant_id, Certificate.issuer.isnot(None))
-        .group_by(Certificate.issuer)
-        .all()
-    )
-
-    by_issuer = {issuer: count for issuer, count in issuers}
-
-    # Distribution by key size
-    key_sizes = (
-        db.query(Certificate.public_key_bits, func.count(Certificate.id).label("count"))
-        .join(Asset)
-        .filter(Asset.tenant_id == tenant_id, Certificate.public_key_bits.isnot(None))
-        .group_by(Certificate.public_key_bits)
-        .all()
-    )
-
-    by_key_size = {str(size): count for size, count in key_sizes if size}
-
-    return CertificateHealthResponse(
-        total_certificates=total,
-        expired=expired,
-        expiring_soon=expiring_soon,
-        self_signed=self_signed,
-        weak_signature=weak_signature,
-        wildcard=wildcard,
-        by_issuer=by_issuer,
-        by_key_size=by_key_size,
-    )
