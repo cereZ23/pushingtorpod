@@ -118,6 +118,29 @@ interface ChangeDetection {
 }
 const changes = ref<ChangeDetection | null>(null);
 
+// Expiring certificates data
+interface ExpiringCertificate {
+  id: number;
+  asset_id: number;
+  subject_cn: string | null;
+  not_after: string | null;
+  days_until_expiry: number | null;
+  issuer: string | null;
+  is_wildcard: boolean;
+}
+const expiringCerts = ref<ExpiringCertificate[]>([]);
+
+// Finding severity trends data
+interface SeverityTrendDay {
+  date: string;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  info: number;
+}
+const severityTrends = ref<SeverityTrendDay[]>([]);
+
 // -- Computed: SVG Charts --
 
 // Risk grade from score (shared utility)
@@ -202,6 +225,69 @@ const trendDots = computed(() => {
     value: val,
     label: `Scan ${i + 1}`,
   }));
+});
+
+// Severity trend bar chart (daily totals for 30 days)
+const trendBars = computed(() => {
+  const data = severityTrends.value;
+  if (data.length === 0) return [];
+  const bars = data.map((day) => ({
+    date: day.date,
+    total: day.critical + day.high + day.medium + day.low + day.info,
+    critical: day.critical,
+    high: day.high,
+    medium: day.medium,
+    low: day.low,
+    info: day.info,
+  }));
+  return bars;
+});
+
+const trendBarMax = computed(() => {
+  const maxVal = Math.max(...trendBars.value.map((b) => b.total), 1);
+  return maxVal;
+});
+
+const trendBarSvgPath = computed(() => {
+  const bars = trendBars.value;
+  if (bars.length === 0) return "";
+  const maxVal = trendBarMax.value;
+  const w = 280;
+  const h = 100;
+  const padding = 10;
+  const availW = w - padding * 2;
+  const availH = h - padding * 2;
+  const step = availW / bars.length;
+
+  // Build a polyline from daily totals
+  const points = bars.map((bar, i) => {
+    const x = padding + i * step + step / 2;
+    const y = h - padding - (bar.total / maxVal) * availH;
+    return `${x},${y}`;
+  });
+  return points.join(" ");
+});
+
+const trendBarArea = computed(() => {
+  const bars = trendBars.value;
+  if (bars.length === 0) return "";
+  const maxVal = trendBarMax.value;
+  const w = 280;
+  const h = 100;
+  const padding = 10;
+  const availW = w - padding * 2;
+  const availH = h - padding * 2;
+  const step = availW / bars.length;
+
+  const baseline = h - padding;
+  const points = bars.map((bar, i) => {
+    const x = padding + i * step + step / 2;
+    const y = h - padding - (bar.total / maxVal) * availH;
+    return `${x},${y}`;
+  });
+  const firstX = padding + step / 2;
+  const lastX = padding + (bars.length - 1) * step + step / 2;
+  return `${firstX},${baseline} ${points.join(" ")} ${lastX},${baseline}`;
 });
 
 // Graph node positions (simple circular layout)
@@ -381,8 +467,14 @@ async function loadDashboard(): Promise<void> {
         "Dashboard data unavailable. Start a scan to populate your attack surface.";
     }
 
-    // Load graph data, heatmap, and changes in parallel
-    await Promise.all([loadGraphData(), loadHeatmap(), loadChanges()]);
+    // Load graph data, heatmap, changes, expiring certs, and severity trends in parallel
+    await Promise.all([
+      loadGraphData(),
+      loadHeatmap(),
+      loadChanges(),
+      loadExpiringCerts(),
+      loadSeverityTrends(),
+    ]);
   } catch (err: unknown) {
     if (
       err instanceof Error &&
@@ -468,6 +560,32 @@ async function loadHeatmap(): Promise<void> {
     // Heatmap data unavailable - leave empty
   } finally {
     heatmapLoading.value = false;
+  }
+}
+
+async function loadExpiringCerts(): Promise<void> {
+  if (!currentTenantId.value) return;
+  try {
+    const response = await apiClient.get<ExpiringCertificate[]>(
+      `/api/v1/tenants/${currentTenantId.value}/certificates/expiring`,
+      { params: { days: 30 }, signal: abortController?.signal },
+    );
+    expiringCerts.value = response.data;
+  } catch {
+    // Expiring certs unavailable - leave empty
+  }
+}
+
+async function loadSeverityTrends(): Promise<void> {
+  if (!currentTenantId.value) return;
+  try {
+    const response = await apiClient.get<SeverityTrendDay[]>(
+      `/api/v1/tenants/${currentTenantId.value}/findings/trends/severity`,
+      { params: { days: 30 }, signal: abortController?.signal },
+    );
+    severityTrends.value = response.data;
+  } catch {
+    // Severity trends unavailable - leave empty
   }
 }
 
@@ -985,6 +1103,80 @@ onUnmounted(() => {
         </div>
       </div>
 
+      <!-- Expiring Certificates Warning -->
+      <div
+        v-if="expiringCerts.length > 0"
+        class="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/30 rounded-lg p-5"
+      >
+        <div class="flex items-start gap-3">
+          <svg
+            class="w-6 h-6 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+            />
+          </svg>
+          <div class="flex-1">
+            <h3
+              class="text-sm font-semibold text-amber-800 dark:text-amber-300"
+            >
+              {{ expiringCerts.length }} certificate{{
+                expiringCerts.length !== 1 ? "s" : ""
+              }}
+              expiring in 30 days
+            </h3>
+            <ul class="mt-2 space-y-1">
+              <li
+                v-for="cert in expiringCerts.slice(0, 5)"
+                :key="cert.id"
+                class="flex items-center justify-between text-sm text-amber-700 dark:text-amber-400"
+              >
+                <span class="font-medium truncate mr-3">{{
+                  cert.subject_cn || "Unknown CN"
+                }}</span>
+                <span
+                  class="flex-shrink-0 text-xs text-amber-600 dark:text-amber-500"
+                >
+                  {{
+                    cert.days_until_expiry != null
+                      ? cert.days_until_expiry + "d left"
+                      : cert.not_after
+                        ? new Date(cert.not_after).toLocaleDateString()
+                        : "N/A"
+                  }}
+                </span>
+              </li>
+            </ul>
+            <router-link
+              v-if="expiringCerts.length > 5"
+              to="/certificates"
+              class="inline-flex items-center gap-1 mt-2 text-sm font-medium text-amber-700 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-300"
+            >
+              View all {{ expiringCerts.length }} certificates
+              <svg
+                class="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M9 5l7 7-7 7"
+                />
+              </svg>
+            </router-link>
+          </div>
+        </div>
+      </div>
+
       <!-- Charts Row -->
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <!-- Severity Donut Chart -->
@@ -1130,7 +1322,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Second Charts Row -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <!-- Risk Score Trend Line -->
         <div
           class="bg-white dark:bg-dark-bg-secondary p-6 rounded-lg border border-gray-200 dark:border-dark-border"
@@ -1451,6 +1643,146 @@ onUnmounted(() => {
               Risk: {{ hoveredNode.risk_score }}/100
             </p>
           </div>
+        </div>
+
+        <!-- Finding Trend (30d) -->
+        <div
+          class="bg-white dark:bg-dark-bg-secondary p-6 rounded-lg border border-gray-200 dark:border-dark-border"
+        >
+          <h3
+            class="text-lg font-semibold text-gray-900 dark:text-dark-text-primary mb-4"
+          >
+            Finding Trend (30d)
+          </h3>
+          <svg
+            v-if="trendBars.length > 0"
+            viewBox="0 0 280 120"
+            class="w-full"
+            preserveAspectRatio="xMidYMid meet"
+          >
+            <title>Finding Trend - Last 30 Days</title>
+            <!-- Grid lines -->
+            <line
+              x1="10"
+              y1="30"
+              x2="270"
+              y2="30"
+              stroke="currentColor"
+              stroke-width="0.3"
+              class="text-gray-200 dark:text-gray-700"
+            />
+            <line
+              x1="10"
+              y1="55"
+              x2="270"
+              y2="55"
+              stroke="currentColor"
+              stroke-width="0.3"
+              class="text-gray-200 dark:text-gray-700"
+            />
+            <line
+              x1="10"
+              y1="80"
+              x2="270"
+              y2="80"
+              stroke="currentColor"
+              stroke-width="0.3"
+              class="text-gray-200 dark:text-gray-700"
+            />
+            <!-- Y-axis labels -->
+            <text
+              x="6"
+              y="14"
+              fill="currentColor"
+              font-size="6"
+              class="text-gray-400 dark:text-gray-500"
+              text-anchor="end"
+            >
+              {{ trendBarMax }}
+            </text>
+            <text
+              x="6"
+              y="84"
+              fill="currentColor"
+              font-size="6"
+              class="text-gray-400 dark:text-gray-500"
+              text-anchor="end"
+            >
+              0
+            </text>
+            <!-- Area fill -->
+            <polygon
+              v-if="trendBarArea"
+              :points="trendBarArea"
+              fill="#8b5cf6"
+              fill-opacity="0.15"
+            />
+            <!-- Trend line -->
+            <polyline
+              v-if="trendBarSvgPath"
+              :points="trendBarSvgPath"
+              fill="none"
+              stroke="#8b5cf6"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <!-- Data dots (show every ~5th to avoid clutter) -->
+            <circle
+              v-for="(bar, i) in trendBars"
+              :key="i"
+              :cx="
+                10 + (i * 260) / trendBars.length + 260 / trendBars.length / 2
+              "
+              :cy="100 - 10 - (bar.total / trendBarMax) * 80"
+              r="2"
+              fill="#8b5cf6"
+              fill-opacity="0.6"
+              class="hover:fill-opacity-100"
+            >
+              <title>{{ bar.date }}: {{ bar.total }} findings</title>
+            </circle>
+            <!-- X-axis markers (first, middle, last) -->
+            <text
+              v-if="trendBars.length > 0"
+              :x="10 + 260 / trendBars.length / 2"
+              y="116"
+              fill="currentColor"
+              font-size="6"
+              class="text-gray-400 dark:text-gray-500"
+              text-anchor="middle"
+            >
+              {{ trendBars[0].date.slice(5) }}
+            </text>
+            <text
+              v-if="trendBars.length > 1"
+              :x="
+                10 +
+                ((trendBars.length - 1) * 260) / trendBars.length +
+                260 / trendBars.length / 2
+              "
+              y="116"
+              fill="currentColor"
+              font-size="6"
+              class="text-gray-400 dark:text-gray-500"
+              text-anchor="middle"
+            >
+              {{ trendBars[trendBars.length - 1].date.slice(5) }}
+            </text>
+          </svg>
+          <!-- Empty state -->
+          <div
+            v-else
+            class="flex items-center justify-center h-32 text-sm text-gray-500 dark:text-dark-text-secondary"
+          >
+            No finding trend data available
+          </div>
+          <p
+            v-if="trendBars.length > 0"
+            class="text-xs text-gray-500 dark:text-dark-text-tertiary mt-2 text-center"
+          >
+            New findings per day (last 30 days)
+          </p>
         </div>
       </div>
 

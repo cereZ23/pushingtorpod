@@ -200,8 +200,7 @@ def _dispatch_nuclei_retest(
             template_id=template_id,
         )
         logger.info(
-            f"Dispatched retest (task={task.id}, scan_run={scan_run_id}, "
-            f"asset={asset_id}, template={template_id})"
+            f"Dispatched retest (task={task.id}, scan_run={scan_run_id}, asset={asset_id}, template={template_id})"
         )
         return task.id
     except Exception as exc:

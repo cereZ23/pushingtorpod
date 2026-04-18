@@ -21,6 +21,7 @@ Manages the scan pipeline:
   Phase 7:  Visual Recon (stub)
   Phase 8:  Misconfiguration Detection
   Phase 9:  Vulnerability Scanning (nuclei, + interactsh on Tier 3)
+  Phase 9b: DNSTwist Typosquatting Detection (Tier 3 only)
   Phase 10: Correlation & Dedup
   Phase 11: Risk Scoring
   Phase 12: Diff, Alerting & Reporting
@@ -67,6 +68,7 @@ from app.tasks.pipeline_phases.reconnaissance import (
 from app.tasks.pipeline_phases.detection import (
     _phase_8_misconfig_detection,
     _phase_9_vuln_scanning,
+    _phase_9b_dnstwist,
     _phase_10_correlation,
     _phase_11_risk_scoring,
     _phase_12_diff_alerting,
@@ -129,6 +131,7 @@ PHASE_DEFS = {
     "7": {"name": "Visual Recon", "required": False},
     "8": {"name": "Misconfiguration Detection", "required": True},
     "9": {"name": "Vulnerability Scanning", "required": True},
+    "9b": {"name": "DNSTwist Typosquatting", "required": False},
     "10": {"name": "Correlation & Dedup", "required": True},
     "11": {"name": "Risk Scoring", "required": True},
     "12": {"name": "Diff & Alerting", "required": True},
@@ -154,7 +157,7 @@ EXECUTION_PLAN = [
     # - 7: Playwright screenshots add no security findings, cost 2-3 min +
     #   ~1GB RAM. HTTPx title + tech detection (phase 4) provides the same
     #   metadata. Katana endpoints (6b) replace the "see what's there" value.
-    ["8", "9"],  # Misconfig + Nuclei in parallel (misconfig is read-only)
+    ["8", "9", "9b"],  # Misconfig + Nuclei + DNSTwist in parallel
     ["10", "11"],  # Correlation + Risk scoring in parallel
     "12",  # Diff & alerting
 ]
@@ -580,6 +583,11 @@ def _should_skip_phase(phase_id: str, project: Project, scan_tier: int = 1) -> t
         if scan_tier < 2:
             return True, "DNS permutation requires tier 2+"
 
+    if phase_id == "9b":
+        # DNSTwist typosquatting detection requires tier 3 (aggressive)
+        if scan_tier < 3:
+            return True, "DNSTwist requires tier 3 (Aggressive)"
+
     if phase_id == "5b":
         # cdncheck is read-only DNS lookup, safe for all tiers
         pass
@@ -636,6 +644,8 @@ def _execute_phase(
         return _phase_8_misconfig_detection(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == "9":
         return _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier)
+    elif phase_id == "9b":
+        return _phase_9b_dnstwist(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == "10":
         return _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == "11":

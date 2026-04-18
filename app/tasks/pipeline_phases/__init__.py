@@ -4,7 +4,7 @@ Modules:
 - discovery:       Phases 0, 1, 1b, 1c, 1d, 1e
 - enumeration:     Phases 2, 3, 4, 4b, 5, 5b, 5c
 - reconnaissance:  Phases 6, 6b, 6c, 7
-- detection:       Phases 8, 9, 10, 11, 12
+- detection:       Phases 8, 9, 9b, 10, 11, 12
 """
 
 from app.tasks.pipeline_phases.discovery import (
@@ -33,6 +33,7 @@ from app.tasks.pipeline_phases.reconnaissance import (
 from app.tasks.pipeline_phases.detection import (
     _phase_8_misconfig_detection,
     _phase_9_vuln_scanning,
+    _phase_9b_dnstwist,
     _phase_10_correlation,
     _phase_11_risk_scoring,
     _phase_12_diff_alerting,
@@ -58,6 +59,7 @@ __all__ = [
     "_phase_7_visual_recon",
     "_phase_8_misconfig_detection",
     "_phase_9_vuln_scanning",
+    "_phase_9b_dnstwist",
     "_phase_10_correlation",
     "_phase_11_risk_scoring",
     "_phase_12_diff_alerting",

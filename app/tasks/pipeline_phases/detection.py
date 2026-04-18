@@ -1,7 +1,8 @@
-"""Detection phase implementations (Phases 8, 9, 10, 11, 12).
+"""Detection phase implementations (Phases 8, 9, 9b, 10, 11, 12).
 
 Phase 8:  Misconfiguration Detection
 Phase 9:  Vulnerability Scanning (nuclei, + interactsh on Tier 3)
+Phase 9b: DNSTwist Typosquatting Detection (Tier 3 only)
 Phase 10: Correlation & Dedup
 Phase 11: Risk Scoring
 Phase 12: Diff, Alerting & Reporting
@@ -451,6 +452,30 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         "memory_after_mb": round(mem_after),
         "memory_delta_mb": round(mem_after - mem_before),
     }
+
+
+def _phase_9b_dnstwist(tenant_id, project_id, scan_run_id, db, tenant_logger):
+    """Phase 9b: DNSTwist typosquatting / domain permutation detection.
+
+    Only runs on Tier 3 (Aggressive) scans. Generates domain permutations
+    for all root domains belonging to the tenant and checks DNS registration
+    to detect potential phishing / brand abuse domains.
+    """
+    from app.tasks.dnstwist_scan import run_dnstwist
+
+    tenant_logger.info("Starting DNSTwist typosquatting scan")
+
+    # run_dnstwist is a Celery task, but we call the underlying function
+    # directly (synchronously) within the pipeline to keep orchestration
+    # in one place and avoid double-queuing.
+    result = run_dnstwist(tenant_id=tenant_id, domain_list=None)
+
+    if isinstance(result, dict):
+        return {
+            "findings_created": result.get("findings_created", 0),
+            "domains_scanned": result.get("domains_scanned", 0),
+        }
+    return {"findings_created": 0, "domains_scanned": 0}
 
 
 def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger):
