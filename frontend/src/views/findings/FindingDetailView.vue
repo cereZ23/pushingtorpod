@@ -25,6 +25,84 @@ const statusError = ref("");
 const error = ref("");
 const showPlaybook = ref(true);
 
+// Retest state
+const isRetesting = ref(false);
+const retestResult = ref<string | null>(null);
+const retestPolling = ref(false);
+
+async function triggerRetest(): Promise<void> {
+  if (!finding.value || !tenantStore.currentTenantId) return;
+  isRetesting.value = true;
+  retestResult.value = null;
+
+  try {
+    const { data } = await (
+      await import("@/api/client")
+    ).default.post(
+      `/api/v1/tenants/${tenantStore.currentTenantId}/findings/${finding.value.id}/retest`,
+    );
+    retestResult.value = "running";
+
+    // Poll for result
+    const scanRunId = data.data?.scan_run_id;
+    if (scanRunId) {
+      pollRetestStatus();
+    }
+  } catch (err: unknown) {
+    const axiosErr = err as {
+      response?: { data?: { detail?: string } };
+      message?: string;
+    };
+    retestResult.value =
+      "error: " +
+      (axiosErr.response?.data?.detail || axiosErr.message || "Retest failed");
+  } finally {
+    isRetesting.value = false;
+  }
+}
+
+async function pollRetestStatus(): Promise<void> {
+  if (!finding.value || !tenantStore.currentTenantId) return;
+  retestPolling.value = true;
+
+  const maxAttempts = 30;
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise((r) => setTimeout(r, 5000));
+
+    try {
+      const { data } = await (
+        await import("@/api/client")
+      ).default.get(
+        `/api/v1/tenants/${tenantStore.currentTenantId}/findings/${finding.value!.id}/retest-status`,
+      );
+
+      if (
+        data.scan_run_status === "COMPLETED" ||
+        data.scan_run_status === "completed"
+      ) {
+        if (data.retest_result === "fixed" || data.current_status === "fixed") {
+          retestResult.value = "fixed";
+        } else {
+          retestResult.value = "still_vulnerable";
+        }
+        // Reload finding to get updated status
+        await loadFindingDetails();
+        break;
+      } else if (
+        data.scan_run_status === "FAILED" ||
+        data.scan_run_status === "failed"
+      ) {
+        retestResult.value = "error: scan failed";
+        break;
+      }
+    } catch {
+      // Keep polling
+    }
+  }
+
+  retestPolling.value = false;
+}
+
 type FindingStatus = "open" | "suppressed" | "fixed";
 
 const statusTransitions = computed(
@@ -321,12 +399,98 @@ onMounted(() => {
           >
             {{ transition.label }}
           </button>
+          <!-- Retest Button -->
+          <button
+            @click="triggerRetest"
+            :disabled="isRetesting || retestPolling"
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border rounded-md transition-colors disabled:opacity-50 bg-cyan-50 text-cyan-700 border-cyan-200 hover:bg-cyan-100 dark:bg-cyan-900/10 dark:text-cyan-400 dark:border-cyan-800"
+          >
+            <svg
+              v-if="retestPolling"
+              class="w-4 h-4 animate-spin"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                class="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+              />
+              <path
+                class="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+              />
+            </svg>
+            <svg
+              v-else
+              class="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+              />
+            </svg>
+            {{
+              retestPolling
+                ? "Scanning..."
+                : isRetesting
+                  ? "Queuing..."
+                  : "Verifica Fix"
+            }}
+          </button>
           <router-link
             to="/issues"
             class="inline-flex items-center px-3 py-1.5 text-sm font-medium border border-gray-300 dark:border-dark-border rounded-md text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary"
           >
             View Issues
           </router-link>
+        </div>
+
+        <!-- Retest Result -->
+        <div
+          v-if="retestResult"
+          class="rounded-md p-3 mb-4"
+          :class="
+            retestResult === 'fixed'
+              ? 'bg-green-50 dark:bg-green-900/20'
+              : retestResult === 'running'
+                ? 'bg-blue-50 dark:bg-blue-900/20'
+                : retestResult === 'still_vulnerable'
+                  ? 'bg-red-50 dark:bg-red-900/20'
+                  : 'bg-yellow-50 dark:bg-yellow-900/20'
+          "
+        >
+          <p
+            class="text-sm font-medium"
+            :class="
+              retestResult === 'fixed'
+                ? 'text-green-800 dark:text-green-200'
+                : retestResult === 'running'
+                  ? 'text-blue-800 dark:text-blue-200'
+                  : retestResult === 'still_vulnerable'
+                    ? 'text-red-800 dark:text-red-200'
+                    : 'text-yellow-800 dark:text-yellow-200'
+            "
+          >
+            {{
+              retestResult === "fixed"
+                ? "Fixed! La vulnerabilita' non e' piu' presente."
+                : retestResult === "running"
+                  ? "Retest in corso... scanning con Nuclei."
+                  : retestResult === "still_vulnerable"
+                    ? "Ancora vulnerabile. Il finding e' ancora presente."
+                    : retestResult
+            }}
+          </p>
         </div>
 
         <!-- Status Update Error -->
