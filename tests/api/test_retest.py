@@ -26,8 +26,8 @@ from app.models.scanning import Project, ScanRun, ScanRunStatus
 
 @pytest.fixture
 def mock_nuclei_task():
-    """Mock the Celery ``run_nuclei_scan.delay`` call used by the router."""
-    with patch("app.tasks.scanning.run_nuclei_scan") as task_mock:
+    """Mock the Celery ``run_retest.delay`` call used by the router."""
+    with patch("app.tasks.scanning.run_retest") as task_mock:
         async_result = MagicMock()
         async_result.id = "celery-task-abc123"
         task_mock.delay.return_value = async_result
