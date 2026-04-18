@@ -30,6 +30,21 @@ const selectedSeverity = ref("");
 const selectedStatus = ref("open");
 const selectedSource = ref("");
 
+// Sorting
+const sortBy = ref("last_seen");
+const sortOrder = ref<"asc" | "desc">("desc");
+
+function handleSort(column: string) {
+  if (sortBy.value === column) {
+    sortOrder.value = sortOrder.value === "asc" ? "desc" : "asc";
+  } else {
+    sortBy.value = column;
+    sortOrder.value = "desc";
+  }
+  currentPage.value = 1;
+  loadFindings();
+}
+
 // View mode
 const viewMode = ref<"list" | "grouped">("list");
 
@@ -118,6 +133,8 @@ async function loadFindings() {
       severity: selectedSeverity.value || undefined,
       status: selectedStatus.value || undefined,
       source: selectedSource.value || undefined,
+      sort_by: sortBy.value,
+      sort_order: sortOrder.value,
     };
 
     const response: PaginatedResponse<Finding> = await findingApi.list(
@@ -535,28 +552,75 @@ const getStatusColor = getFindingStatusBadgeClass;
                 />
               </th>
               <th
+                v-for="col in [
+                  { key: 'name', label: 'Name' },
+                  { key: 'severity', label: 'Severity' },
+                  { key: 'status', label: 'Status' },
+                  { key: 'asset_identifier', label: 'Asset' },
+                ]"
+                :key="col.key"
                 scope="col"
-                class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+                class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200"
+                :aria-sort="
+                  sortBy === col.key
+                    ? sortOrder === 'asc'
+                      ? 'ascending'
+                      : 'descending'
+                    : undefined
+                "
+                @click="handleSort(col.key)"
               >
-                Name
-              </th>
-              <th
-                scope="col"
-                class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
-              >
-                Severity
-              </th>
-              <th
-                scope="col"
-                class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
-              >
-                Status
-              </th>
-              <th
-                scope="col"
-                class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
-              >
-                Asset
+                <div class="flex items-center gap-1">
+                  {{ col.label }}
+                  <!-- Active sort: up arrow -->
+                  <svg
+                    v-if="sortBy === col.key && sortOrder === 'asc'"
+                    class="w-3.5 h-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M5 15l7-7 7 7"
+                    />
+                  </svg>
+                  <!-- Active sort: down arrow -->
+                  <svg
+                    v-else-if="sortBy === col.key && sortOrder === 'desc'"
+                    class="w-3.5 h-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M19 9l-7 7-7-7"
+                    />
+                  </svg>
+                  <!-- Inactive: up/down arrows dimmed -->
+                  <svg
+                    v-else
+                    class="w-3.5 h-3.5 opacity-30"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"
+                    />
+                  </svg>
+                </div>
               </th>
               <th
                 scope="col"
@@ -572,9 +636,64 @@ const getStatusColor = getFindingStatusBadgeClass;
               </th>
               <th
                 scope="col"
-                class="hidden 2xl:table-cell px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+                class="hidden 2xl:table-cell px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200"
+                :aria-sort="
+                  sortBy === 'first_seen'
+                    ? sortOrder === 'asc'
+                      ? 'ascending'
+                      : 'descending'
+                    : undefined
+                "
+                @click="handleSort('first_seen')"
               >
-                First Seen
+                <div class="flex items-center gap-1">
+                  First Seen
+                  <svg
+                    v-if="sortBy === 'first_seen' && sortOrder === 'asc'"
+                    class="w-3.5 h-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M5 15l7-7 7 7"
+                    />
+                  </svg>
+                  <svg
+                    v-else-if="sortBy === 'first_seen' && sortOrder === 'desc'"
+                    class="w-3.5 h-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M19 9l-7 7-7-7"
+                    />
+                  </svg>
+                  <svg
+                    v-else
+                    class="w-3.5 h-3.5 opacity-30"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"
+                    />
+                  </svg>
+                </div>
               </th>
               <th
                 scope="col"

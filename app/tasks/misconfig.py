@@ -1208,7 +1208,8 @@ def check_auth_001(
     findings: list[dict] = []
     login_indicators = ["login", "sign in", "log in", "signin", "authenticate"]
     for svc in services:
-        if svc.has_tls:
+        # Skip if TLS is enabled or port is a known HTTPS port
+        if svc.has_tls or svc.port in (443, 8443):
             continue
         title = (svc.http_title or "").lower()
         if any(indicator in title for indicator in login_indicators):

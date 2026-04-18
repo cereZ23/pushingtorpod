@@ -380,22 +380,47 @@ def _phase_4_http_probing(tenant_id, project_id, scan_run_id, db, tenant_logger)
     from app.tasks.enrichment import run_httpx
     from app.models.database import Asset, AssetType, Service
 
-    assets = (
+    # Domains/subdomains: always probe (they resolve to web servers)
+    domain_assets = (
         db.query(Asset)
         .filter(
             Asset.tenant_id == tenant_id,
-            Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN, AssetType.IP]),
-            Asset.is_active == True,
+            Asset.type.in_([AssetType.DOMAIN, AssetType.SUBDOMAIN]),
+            Asset.is_active == True,  # noqa: E712
         )
         .all()
     )
+
+    # IPs: only probe those that have open ports (from naabu Phase 5)
+    # This avoids wasting time on 400+ dead IPs from CIDR expansion
+    ip_assets_with_services = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type == AssetType.IP,
+            Asset.is_active == True,  # noqa: E712
+            Asset.id.in_(db.query(Service.asset_id).filter(Service.asset_id.isnot(None))),
+        )
+        .all()
+    )
+
+    assets = domain_assets + ip_assets_with_services
 
     if not assets:
         tenant_logger.warning("No active assets for HTTP probing")
         return {"services_discovered": 0, "hosts_probed": 0, "relationships_created": 0}
 
     asset_ids = [a.id for a in assets]
-    tenant_logger.info(f"HTTPx: probing {len(asset_ids)} assets")
+    skipped_ips = (
+        db.query(Asset)
+        .filter(Asset.tenant_id == tenant_id, Asset.type == AssetType.IP, Asset.is_active == True)  # noqa: E712
+        .count()
+        - len(ip_assets_with_services)
+    )
+    tenant_logger.info(
+        f"HTTPx: probing {len(asset_ids)} assets ({len(domain_assets)} domains + "
+        f"{len(ip_assets_with_services)} IPs with ports, skipped {skipped_ips} dead IPs)"
+    )
     result = run_httpx(tenant_id, asset_ids)
 
     services_created = result.get("services_created", 0) if isinstance(result, dict) else 0

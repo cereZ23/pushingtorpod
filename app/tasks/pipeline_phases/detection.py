@@ -299,16 +299,65 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     templates_for_scan = tier_templates.get(scan_tier, tier_templates[2])
 
     # DNS/network template config (Pass 3)
-    # Tier 1: dns/ only (SPF, DKIM, DMARC, DNSSEC, zone transfer) -- fast, ~1 min
-    # Tier 2: dns/ + network/ basics (SSH, FTP, SNMP, Redis, MySQL, MongoDB)
-    # Tier 3: dns/ + network/ full (all protocol checks)
+    # All tiers get network/ — exposed SSH, RDP, Redis, MongoDB etc. are
+    # critical findings that an EASM must detect regardless of scan tier.
     dns_network_templates = {
-        1: ["dns/"],
+        1: ["dns/", "network/"],
         2: ["dns/", "network/"],
         3: ["dns/", "network/"],
     }
-    dns_net_tpls = dns_network_templates.get(scan_tier, ["dns/"])
-    dns_net_asset_ids = [a.id for a in all_active_domains]
+    dns_net_tpls = dns_network_templates.get(scan_tier, ["dns/", "network/"])
+
+    # Targets for DNS/network pass: domains + IPs/subdomains with non-HTTP services
+    # (SSH, RDP, FTP, Redis, MySQL, etc.) that the HTTP pass wouldn't scan.
+    non_http_ports = {
+        22,
+        21,
+        23,
+        25,
+        110,
+        143,
+        389,
+        445,
+        993,
+        995,
+        1099,
+        1433,
+        1521,
+        3306,
+        3389,
+        5432,
+        5900,
+        5984,
+        6379,
+        6380,
+        8089,
+        9200,
+        11211,
+        27017,
+        50000,
+    }
+    ip_with_network_services = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type.in_([AssetType.IP, AssetType.SUBDOMAIN, AssetType.DOMAIN]),
+            Asset.is_active == True,  # noqa: E712
+            Asset.id.in_(
+                db.query(Service.asset_id).filter(
+                    Service.port.in_(non_http_ports),
+                )
+            ),
+        )
+        .all()
+    )
+    dns_net_asset_ids = list({a.id for a in all_active_domains} | {a.id for a in ip_with_network_services})
+
+    if ip_with_network_services:
+        tenant_logger.info(
+            "Nuclei network pass: %d assets with non-HTTP services (SSH, RDP, DB, etc.)",
+            len(ip_with_network_services),
+        )
 
     # Memory profiling: log RSS before/after Nuclei passes
     import psutil
