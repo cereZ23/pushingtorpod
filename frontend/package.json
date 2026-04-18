@@ -47,20 +47,21 @@
     "@vue/test-utils": "^2.4.6",
     "autoprefixer": "^10.4.19",
     "eslint": "^8.57.0",
-    "eslint-plugin-vue": "^9.23.0",
-    "happy-dom": "^20.8.9",
+    "eslint-plugin-vue": "^9.33.0",
+    "happy-dom": "^20.9.0",
     "postcss": "^8.4.38",
     "prettier": "^3.2.5",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.4.2",
-    "vite": "^5.4.19",
+    "vite": "^5.4.21",
     "vitest": "^2.1.0",
     "vue-tsc": "^2.0.6"
   },
   "pnpm": {
     "overrides": {
-      "lodash": ">=4.17.22",
-      "picomatch": ">=4.0.2"
+      "lodash": ">=4.18.1",
+      "follow-redirects": ">=1.16.0",
+      "picomatch": ">=4.0.4"
     }
   }
 }
