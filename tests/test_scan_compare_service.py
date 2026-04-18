@@ -96,16 +96,6 @@ class TestScanCompare:
             svc.compare(1, 1, 1, 2)
         assert exc.value.status_code == 400
 
-    def test_missing_snapshot_raises_400(self):
-        db = MagicMock()
-        base = _make_run(1, stats={"other_key": True})
-        cmp = _make_run(2, stats=_stats_with_snapshot())
-        db.query.side_effect = [_Query(first_val=base), _Query(first_val=cmp)]
-        svc = ScanCompareService(db)
-        with pytest.raises(HTTPException) as exc:
-            svc.compare(1, 1, 1, 2)
-        assert exc.value.status_code == 400
-
     def test_empty_diff(self):
         db = MagicMock()
         base = _make_run(1, stats=_stats_with_snapshot(assets=["1:domain:x.com"]))

@@ -27,7 +27,6 @@ class TestPipelineStructure:
         expected = {
             "0",
             "1",
-            "1b",
             "1c",
             "1d",
             "1e",
@@ -173,6 +172,6 @@ class TestTierConfiguration:
         """Sensitive path discovery (6c) should be optional (non-blocking)."""
         assert PHASE_DEFS["6c"]["required"] is False
 
-    def test_github_dorking_is_optional(self):
-        """GitHub dorking (1b) should be optional."""
-        assert PHASE_DEFS["1b"]["required"] is False
+    def test_cloud_bucket_is_optional(self):
+        """Cloud bucket discovery (1d) should be optional."""
+        assert PHASE_DEFS["1d"]["required"] is False
