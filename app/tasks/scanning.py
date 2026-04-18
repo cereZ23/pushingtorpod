@@ -744,3 +744,68 @@ def calculate_all_tenant_risk_scores():
         "group_id": result.id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@celery.task(name="app.tasks.scanning.run_retest")
+def run_retest(
+    scan_run_id: int,
+    tenant_id: int,
+    asset_id: int,
+    template_id: str | None = None,
+) -> dict:
+    """Run a targeted Nuclei retest and update the scan_run + finding status."""
+    from app.database import SessionLocal
+    from app.models.scanning import ScanRun, ScanRunStatus
+    from app.models.database import Finding, FindingStatus
+
+    db = SessionLocal()
+    try:
+        scan_run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
+        if not scan_run:
+            return {"error": "scan_run not found"}
+
+        scan_run.status = ScanRunStatus.RUNNING
+        scan_run.started_at = datetime.now(timezone.utc)
+        db.commit()
+
+        # Run the actual nuclei scan synchronously
+        result = run_nuclei_scan(
+            tenant_id=tenant_id,
+            asset_ids=[asset_id],
+            templates=[template_id] if template_id else None,
+            rate_limit=50,
+        )
+
+        findings_found = result.get("findings_created", 0) + result.get("findings_updated", 0)
+        retest_finding_id = (scan_run.stats or {}).get("retest_finding_id")
+
+        # Update scan_run status
+        scan_run.status = ScanRunStatus.COMPLETED
+        scan_run.completed_at = datetime.now(timezone.utc)
+        db.commit()
+
+        # Update finding retest_result
+        if retest_finding_id:
+            finding = db.query(Finding).filter(Finding.id == retest_finding_id).first()
+            if finding:
+                if findings_found > 0:
+                    finding.retest_result = "still_vulnerable"
+                else:
+                    finding.retest_result = "fixed"
+                    finding.status = FindingStatus.FIXED
+                db.commit()
+
+        return {
+            "scan_run_id": scan_run_id,
+            "findings_found": findings_found,
+            "retest_result": "still_vulnerable" if findings_found > 0 else "fixed",
+        }
+    except Exception as exc:
+        logger.exception("Retest failed for scan_run %d: %s", scan_run_id, exc)
+        if scan_run:
+            scan_run.status = ScanRunStatus.FAILED
+            scan_run.completed_at = datetime.now(timezone.utc)
+            db.commit()
+        return {"error": str(exc)}
+    finally:
+        db.close()

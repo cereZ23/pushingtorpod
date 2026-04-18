@@ -189,19 +189,18 @@ def _dispatch_nuclei_retest(
     asset_id: int,
     template_id: str | None,
 ) -> str | None:
-    """Dispatch a targeted Nuclei scan via Celery."""
+    """Dispatch a targeted Nuclei retest via Celery."""
     try:
-        from app.tasks.scanning import run_nuclei_scan
+        from app.tasks.scanning import run_retest
 
-        templates = [template_id] if template_id else None
-        task = run_nuclei_scan.delay(
+        task = run_retest.delay(
+            scan_run_id=scan_run_id,
             tenant_id=tenant_id,
-            asset_ids=[asset_id],
-            templates=templates,
-            rate_limit=50,  # Conservative rate for targeted retests
+            asset_id=asset_id,
+            template_id=template_id,
         )
         logger.info(
-            f"Dispatched retest Nuclei scan (task={task.id}, scan_run={scan_run_id}, "
+            f"Dispatched retest (task={task.id}, scan_run={scan_run_id}, "
             f"asset={asset_id}, template={template_id})"
         )
         return task.id
