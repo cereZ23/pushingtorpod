@@ -480,12 +480,14 @@ function getStatusBadgeClass(status: string): string {
           </svg>
           <div>
             <p class="text-sm font-medium text-amber-800 dark:text-amber-200">
-              Beta — Partial coverage
+              EASM scope — 15 technological controls
             </p>
             <p class="text-sm text-amber-700 dark:text-amber-300 mt-1">
-              Compliance mapping currently covers ~20 of 93 ISO 27001 Annex A
-              controls. Use this report as a starting point, not as audit
-              evidence. Full coverage is on our roadmap.
+              This report maps external scan findings to 15 ISO 27001 Annex A
+              controls (A.8 Technological + A.5 Cloud/Threat Intel) that are
+              observable from the attack surface. Organizational (A.5), People
+              (A.6) and Physical (A.7) controls require internal assessment
+              tools and are out of EASM scope.
             </p>
           </div>
         </div>
