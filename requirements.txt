@@ -25,6 +25,7 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.1.2  # Pin bcrypt 4.x for passlib compatibility
 python-multipart>=0.0.21
 slowapi==0.1.9  # Rate limiting for FastAPI
+ipwhois>=1.2.0  # IP WHOIS/RDAP lookups for IP range discovery
 python3-saml>=1.16.0  # SAML2 SSO authentication
 pyotp>=2.9.0  # TOTP MFA
 qrcode[pil]>=7.4  # QR code generation for MFA setup

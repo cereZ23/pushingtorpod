@@ -282,24 +282,51 @@ def _phase_1c_whois_discovery(tenant_id, project_id, scan_run_id, db, tenant_log
     ip_assets = [a for a in assets if a.type == AssetType.IP]
     domain_assets = [a for a in assets if a.type == AssetType.DOMAIN]
 
-    def _ripe_org_for_ip(ip: str) -> str | None:
-        """Query RIPE WHOIS for org-name of an IP."""
+    def _whois_ip_range(ip: str) -> dict:
+        """Query WHOIS for org and IP range of an address. Works with any registry."""
+        import subprocess
+
+        result: dict = {"org_name": None, "inetnum_start": None, "inetnum_end": None, "cidr": None}
         try:
-            with _socket.create_connection(("whois.ripe.net", 43), timeout=10) as sock:
-                sock.sendall(f"{ip}\r\n".encode())
-                response = b""
-                while True:
-                    chunk = sock.recv(4096)
-                    if not chunk:
-                        break
-                    response += chunk
-                for line in response.decode(errors="replace").splitlines():
-                    stripped = line.strip()
-                    if stripped.lower().startswith("org-name:"):
-                        return stripped.split(":", 1)[1].strip()
+            import ipwhois
+
+            obj = ipwhois.IPWhois(ip)
+            rdap = obj.lookup_rdap(depth=0)
+            result["org_name"] = rdap.get("network", {}).get("name") or rdap.get("asn_description")
+            cidr = rdap.get("network", {}).get("cidr")
+            if cidr:
+                result["cidr"] = cidr
+            start = rdap.get("network", {}).get("start_address")
+            end = rdap.get("network", {}).get("end_address")
+            if start and end:
+                result["inetnum_start"] = start
+                result["inetnum_end"] = end
+        except ImportError:
+            # Fallback: raw socket WHOIS to whois.ripe.net
+            try:
+                with _socket.create_connection(("whois.ripe.net", 43), timeout=10) as sock:
+                    sock.sendall(f"{ip}\r\n".encode())
+                    response = b""
+                    while True:
+                        chunk = sock.recv(4096)
+                        if not chunk:
+                            break
+                        response += chunk
+                    for line in response.decode(errors="replace").splitlines():
+                        stripped = line.strip()
+                        if stripped.lower().startswith("org-name:") and not result["org_name"]:
+                            result["org_name"] = stripped.split(":", 1)[1].strip()
+                        if stripped.lower().startswith("inetnum:") and not result["inetnum_start"]:
+                            range_str = stripped.split(":", 1)[1].strip()
+                            parts = range_str.split("-")
+                            if len(parts) == 2:
+                                result["inetnum_start"] = parts[0].strip()
+                                result["inetnum_end"] = parts[1].strip()
+            except Exception:
+                pass
         except Exception:
             pass
-        return None
+        return result
 
     # Strategy 1: check WHOIS metadata from domains
     for asset in domain_assets:
@@ -316,71 +343,74 @@ def _phase_1c_whois_discovery(tenant_id, project_id, scan_run_id, db, tenant_log
         except Exception:
             pass
 
-    # Strategy 2: query RIPE WHOIS for a sample of known IPs
-    # (limit to 10 to avoid rate-limiting)
-    for asset in ip_assets[:10]:
-        org = _ripe_org_for_ip(asset.identifier)
+    # Strategy 2: WHOIS each known IP → get org + IP range directly
+    # (limit to 5 to avoid rate-limiting)
+    ranges_seen: set[str] = set()
+
+    for asset in ip_assets[:5]:
+        info = _whois_ip_range(asset.identifier)
+        org = info.get("org_name")
+        start_ip = info.get("inetnum_start")
+        end_ip = info.get("inetnum_end")
+        cidr = info.get("cidr")
+
         if org and org.lower() not in org_names_seen:
             org_names_seen.add(org.lower())
-            tenant_logger.info("Phase 1c: found org '%s' via RIPE WHOIS for IP %s", org, asset.identifier)
+            tenant_logger.info("Phase 1c: found org '%s' via WHOIS for IP %s", org, asset.identifier)
 
-    if not org_names_seen:
-        tenant_logger.info("Phase 1c: no org names found for IP range discovery")
-        enrichment_result["ip_ranges_discovered"] = 0
-        enrichment_result["new_ips_from_ranges"] = 0
-        return enrichment_result
-
-    # Now discover IP ranges for each unique org
-    for org in list(org_names_seen):
-        tenant_logger.info("Phase 1c: discovering IP ranges for org '%s'", org)
-        ip_ranges = discover_org_ip_ranges(org)
-
-        for range_info in ip_ranges:
-            prefix = range_info.get("prefix")
-            if not prefix:
+        # Build networks from CIDR or start-end range
+        networks: list = []
+        if cidr:
+            for c in cidr.split(","):
+                c = c.strip()
+                try:
+                    networks.append(ipaddress.ip_network(c, strict=False))
+                except ValueError:
+                    pass
+        elif start_ip and end_ip:
+            range_key = f"{start_ip}-{end_ip}"
+            if range_key in ranges_seen:
                 continue
+            ranges_seen.add(range_key)
             try:
-                network = ipaddress.ip_network(prefix, strict=False)
-            except ValueError:
-                continue
-
-            # Only scan ranges up to /22 (1024 IPs) to avoid scanning huge ISP blocks
-            if network.prefixlen < 22:
-                tenant_logger.info(
-                    "Skipping large prefix %s (/%d) — too broad",
-                    prefix,
-                    network.prefixlen,
+                networks = list(
+                    ipaddress.summarize_address_range(
+                        ipaddress.IPv4Address(start_ip),
+                        ipaddress.IPv4Address(end_ip),
+                    )
                 )
+            except (ValueError, TypeError):
                 continue
 
-            # Create IP assets for each address in the range
+        for network in networks:
+            if network.prefixlen < 22:
+                tenant_logger.info("Skipping large prefix %s (/%d)", network, network.prefixlen)
+                continue
+
+            range_new = 0
             for ip_addr in network.hosts():
                 ip_str = str(ip_addr)
-                existing = (
-                    db.query(Asset.id)
-                    .filter(
-                        Asset.tenant_id == tenant_id,
-                        Asset.identifier == ip_str,
-                    )
-                    .first()
-                )
+                existing = db.query(Asset.id).filter(Asset.tenant_id == tenant_id, Asset.identifier == ip_str).first()
                 if not existing:
-                    new_asset = Asset(
-                        tenant_id=tenant_id,
-                        type=AssetType.IP,
-                        identifier=ip_str,
-                        is_active=True,
-                        source="ip_range_discovery",
+                    db.add(
+                        Asset(
+                            tenant_id=tenant_id,
+                            type=AssetType.IP,
+                            identifier=ip_str,
+                            is_active=True,
+                            source="ip_range_discovery",
+                        )
                     )
-                    db.add(new_asset)
                     new_ips_created += 1
+                    range_new += 1
 
-            if new_ips_created > 0:
+            if range_new > 0:
                 db.commit()
                 tenant_logger.info(
-                    "Phase 1c: created %d new IP assets from range %s",
-                    new_ips_created,
-                    prefix,
+                    "Phase 1c: created %d new IP assets from %s (%s)",
+                    range_new,
+                    network,
+                    org or "unknown",
                 )
 
     enrichment_result["ip_ranges_discovered"] = len(org_names_seen)
