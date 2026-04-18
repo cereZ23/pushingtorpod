@@ -419,7 +419,6 @@ def _phase_1c_whois_discovery(tenant_id, project_id, scan_run_id, db, tenant_log
                             type=AssetType.IP,
                             identifier=ip_str,
                             is_active=True,
-                            source="ip_range_discovery",
                         )
                     )
                     new_ips_created += 1
