@@ -553,12 +553,10 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     #   T1: full blocklist (SSH, SMB, RDP, MySQL, Postgres)
     #   T2: reduced — keep only login-oriented services (legal risk) blocked
     #   T3: empty  — operator has authorization, scan everything
-    tier_blocklist = {
-        1: [22, 445, 3389, 3306, 5432],
-        2: [22, 3389],
-        3: [],
-    }
-    blocked_ports = tier_blocklist.get(scan_tier, [22, 445, 3389, 3306, 5432])
+    # EASM must discover all exposed services — an exposed MySQL/Postgres
+    # is a critical finding, not something to hide. Naabu only does SYN scan
+    # (no auth attempts), so no legal risk from port discovery.
+    blocked_ports: list[int] = []
     config = {
         "top_ports": tier_ports.get(scan_tier, "1000"),
         "rate": params.naabu_rate,
