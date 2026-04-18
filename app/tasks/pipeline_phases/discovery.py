@@ -344,15 +344,36 @@ def _phase_1c_whois_discovery(tenant_id, project_id, scan_run_id, db, tenant_log
             pass
 
     # Strategy 2: WHOIS each known IP → get org + IP range directly
-    # (limit to 5 to avoid rate-limiting)
+    # Skip well-known cloud provider ranges (they own huge blocks, not ours)
+    CLOUD_ORGS = {
+        "msft",
+        "microsoft",
+        "google",
+        "amazon",
+        "akamai",
+        "cloudflare",
+        "aruba-net",
+        "digitalocean",
+        "ovh",
+        "hetzner",
+    }
     ranges_seen: set[str] = set()
+    ips_checked = 0
 
-    for asset in ip_assets[:5]:
+    for asset in ip_assets:
+        if ips_checked >= 10:
+            break
+        ips_checked += 1
         info = _whois_ip_range(asset.identifier)
         org = info.get("org_name")
         start_ip = info.get("inetnum_start")
         end_ip = info.get("inetnum_end")
         cidr = info.get("cidr")
+
+        # Skip cloud provider ranges — they own huge blocks, not ours
+        if org and any(cloud in org.lower() for cloud in CLOUD_ORGS):
+            tenant_logger.debug("Phase 1c: skipping cloud org '%s' for IP %s", org, asset.identifier)
+            continue
 
         if org and org.lower() not in org_names_seen:
             org_names_seen.add(org.lower())
