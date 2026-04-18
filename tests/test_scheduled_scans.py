@@ -47,7 +47,8 @@ class TestIsDue:
         profile.id = 1
 
         last_scan = MagicMock()
-        last_scan.completed_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+        # Scan completed 10 seconds ago — after this minute's trigger point
+        last_scan.completed_at = datetime.now(timezone.utc) - timedelta(seconds=10)
 
         db = MagicMock()
         db.query.return_value.filter.return_value.order_by.return_value.first.return_value = last_scan
