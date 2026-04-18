@@ -527,3 +527,77 @@ def enrich_asset_network(
     result["cloud_provider"] = detect_cloud_provider(headers, asn_org)
 
     return result
+
+
+def discover_org_ip_ranges(org_name: str) -> list[dict]:
+    """Discover IP ranges owned by an organization via RIPE/BGPView.
+
+    Queries the BGPView API to find ASNs and IP prefixes associated
+    with the given organization name. This enables discovery of
+    infrastructure that isn't linked to any known domain.
+
+    Args:
+        org_name: Organization name from WHOIS (e.g. "Istituti Fisioterapici Ospitalieri")
+
+    Returns:
+        List of dicts with keys: prefix, asn, asn_name, description
+    """
+    import httpx
+
+    if not org_name or len(org_name) < 3:
+        return []
+
+    ranges: list[dict] = []
+
+    try:
+        with httpx.Client(timeout=15) as client:
+            resp = client.get(
+                "https://api.bgpview.io/search",
+                params={"query_term": org_name},
+            )
+            if resp.status_code != 200:
+                logger.debug("BGPView search failed for '%s': %d", org_name, resp.status_code)
+                return []
+
+            data = resp.json().get("data", {})
+
+            # Collect ASNs
+            asns = data.get("asns", [])
+            asn_numbers = [a["asn"] for a in asns]
+
+            # Collect direct IP prefix results
+            for prefix_info in data.get("ipv4_prefixes", []):
+                ranges.append(
+                    {
+                        "prefix": prefix_info.get("prefix"),
+                        "asn": prefix_info.get("parent", {}).get("asn"),
+                        "asn_name": prefix_info.get("name"),
+                        "description": prefix_info.get("description"),
+                    }
+                )
+
+            # For each ASN, get all announced prefixes
+            for asn in asn_numbers:
+                try:
+                    pfx_resp = client.get(f"https://api.bgpview.io/asn/{asn}/prefixes")
+                    if pfx_resp.status_code == 200:
+                        pfx_data = pfx_resp.json().get("data", {})
+                        for pfx in pfx_data.get("ipv4_prefixes", []):
+                            prefix = pfx.get("prefix")
+                            if prefix and not any(r["prefix"] == prefix for r in ranges):
+                                ranges.append(
+                                    {
+                                        "prefix": prefix,
+                                        "asn": asn,
+                                        "asn_name": pfx.get("name"),
+                                        "description": pfx.get("description"),
+                                    }
+                                )
+                except Exception:
+                    continue
+
+    except Exception as exc:
+        logger.warning("Failed to discover IP ranges for org '%s': %s", org_name, exc)
+
+    logger.info("Discovered %d IP range(s) for org '%s'", len(ranges), org_name)
+    return ranges

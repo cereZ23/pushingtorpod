@@ -259,7 +259,82 @@ def _phase_1c_whois_discovery(tenant_id, project_id, scan_run_id, db, tenant_log
         f"(domains + IPs only, subdomains inherit WHOIS from parent)"
     )
 
-    return phase_1c_network_enrichment(tenant_id, asset_ids, db, tenant_logger)
+    enrichment_result = phase_1c_network_enrichment(tenant_id, asset_ids, db, tenant_logger)
+
+    # --- IP Range Discovery from WHOIS org name ---
+    # After enrichment, extract org names from WHOIS data on root domains
+    # and discover IP ranges via BGPView/RIPE.
+    import ipaddress
+    from app.services.network_intel import discover_org_ip_ranges, whois_lookup
+
+    org_names_seen: set[str] = set()
+    new_ips_created = 0
+
+    for asset in assets:
+        if asset.type != AssetType.DOMAIN:
+            continue
+        # Get org from raw_metadata (populated by enrichment above)
+        metadata = asset.raw_metadata or {}
+        whois_data = metadata.get("whois", {})
+        org = whois_data.get("org")
+        if not org or org.lower() in org_names_seen:
+            continue
+        org_names_seen.add(org.lower())
+
+        tenant_logger.info("Phase 1c: discovering IP ranges for org '%s'", org)
+        ip_ranges = discover_org_ip_ranges(org)
+
+        for range_info in ip_ranges:
+            prefix = range_info.get("prefix")
+            if not prefix:
+                continue
+            try:
+                network = ipaddress.ip_network(prefix, strict=False)
+            except ValueError:
+                continue
+
+            # Only scan ranges up to /22 (1024 IPs) to avoid scanning huge ISP blocks
+            if network.prefixlen < 22:
+                tenant_logger.info(
+                    "Skipping large prefix %s (/%d) — too broad",
+                    prefix,
+                    network.prefixlen,
+                )
+                continue
+
+            # Create IP assets for each address in the range
+            for ip_addr in network.hosts():
+                ip_str = str(ip_addr)
+                existing = (
+                    db.query(Asset.id)
+                    .filter(
+                        Asset.tenant_id == tenant_id,
+                        Asset.identifier == ip_str,
+                    )
+                    .first()
+                )
+                if not existing:
+                    new_asset = Asset(
+                        tenant_id=tenant_id,
+                        type=AssetType.IP,
+                        identifier=ip_str,
+                        is_active=True,
+                        source="ip_range_discovery",
+                    )
+                    db.add(new_asset)
+                    new_ips_created += 1
+
+            if new_ips_created > 0:
+                db.commit()
+                tenant_logger.info(
+                    "Phase 1c: created %d new IP assets from range %s",
+                    new_ips_created,
+                    prefix,
+                )
+
+    enrichment_result["ip_ranges_discovered"] = len(org_names_seen)
+    enrichment_result["new_ips_from_ranges"] = new_ips_created
+    return enrichment_result
 
 
 def _phase_1d_cloud_buckets(tenant_id, project_id, scan_run_id, db, tenant_logger):
