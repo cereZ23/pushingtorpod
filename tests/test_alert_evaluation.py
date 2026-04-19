@@ -210,7 +210,7 @@ class TestHighestSeverity:
         assert ae._highest_severity(findings) == "info"
 
 
-_SSRF_PATCH = "app.tasks.alert_evaluation.validate_endpoint_url_ssrf"
+_SSRF_PATCH = "app.utils.validators.validate_endpoint_url_ssrf"
 
 
 class TestSlackMessage:
