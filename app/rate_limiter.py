@@ -63,23 +63,15 @@ def _get_rate_limit_key(request: Request) -> str:
         try:
             import jwt as pyjwt
 
-            # Decode without verification -- we only need the subject claim
-            # for rate-limit keying.  Full verification happens later in the
-            # dependency chain.  Using ``options`` to skip expiry/signature
-            # checks keeps this function fast and avoids key-loading here.
-            payload = pyjwt.decode(
-                token,
-                options={
-                    "verify_signature": False,
-                    "verify_exp": False,
-                },
-                algorithms=["RS256", "HS256"],
-            )
-            user_id = payload.get("sub")
-            if user_id:
-                return f"user:{user_id}"
+            # Use a hash of the raw token as rate-limit key.
+            # We intentionally avoid decoding claims without signature
+            # verification — an attacker could forge a JWT with someone
+            # else's user_id to exhaust their rate limit bucket.
+            import hashlib
+
+            token_hash = hashlib.sha256(token.encode()).hexdigest()[:16]
+            return f"token:{token_hash}"
         except Exception:
-            # Token is malformed -- fall through to IP-based limiting
             pass
 
     return get_remote_address(request)

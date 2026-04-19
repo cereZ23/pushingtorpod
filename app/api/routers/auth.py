@@ -584,7 +584,7 @@ def forgot_password(
 
             send_password_reset_email(user.email, token)  # send plaintext to user
         except Exception:
-            logger.exception("Failed to send password reset email to %s", payload.email)
+            logger.error("Failed to send password reset email to %s", payload.email)
             # Clear the token so the user can retry
             user.password_reset_token = None
             user.password_reset_expires = None

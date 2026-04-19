@@ -213,11 +213,14 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Start timer
         start_time = time.time()
 
-        # Extract request info
+        # Extract request info — sanitize to prevent log injection
+        def _sanitize_log(val: str) -> str:
+            return val.replace("\n", "").replace("\r", "").replace("\x00", "")[:500]
+
         client_ip = request.client.host if request.client else "unknown"
-        method = request.method
-        path = request.url.path
-        query = str(request.url.query) if request.url.query else ""
+        method = _sanitize_log(request.method)
+        path = _sanitize_log(request.url.path)
+        query = _sanitize_log(str(request.url.query)) if request.url.query else ""
 
         # Get request ID
         request_id = getattr(request.state, "request_id", "unknown")

@@ -18,6 +18,7 @@ COPY . .
 EXPOSE 5173
 
 # Run dev server with hot reload
+USER node
 CMD ["pnpm", "dev"]
 
 
@@ -50,6 +51,11 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# Run as non-root user
+RUN chown -R nginx:nginx /usr/share/nginx/html /var/cache/nginx /var/log/nginx /etc/nginx/conf.d \
+    && touch /var/run/nginx.pid && chown nginx:nginx /var/run/nginx.pid
+USER nginx
 
 # Health check — use 127.0.0.1 explicitly. Busybox wget resolves "localhost"
 # via /etc/hosts which maps it to both 127.0.0.1 and ::1 and tries IPv6 first,
