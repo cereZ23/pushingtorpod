@@ -404,7 +404,7 @@ class TestExportPdf:
             gen_cls.return_value.generate_pdf.side_effect = RuntimeError("boom")
             response = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/reports/export/pdf")
             assert response.status_code == 500
-            assert "boom" in response.json()["detail"]
+            assert "Report generation failed" in response.json()["detail"]
 
 
 class TestExportDocx:

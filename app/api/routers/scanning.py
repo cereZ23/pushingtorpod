@@ -58,7 +58,7 @@ def trigger_nuclei_scan(
     _TEMPLATE_PATH_RE = re.compile(r"^[a-zA-Z0-9_./:\-]+$")
     if template_paths:
         for tp in template_paths:
-            if ".." in tp or not _TEMPLATE_PATH_RE.match(tp):
+            if ".." in tp or tp.startswith("/") or not _TEMPLATE_PATH_RE.match(tp):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid template path",

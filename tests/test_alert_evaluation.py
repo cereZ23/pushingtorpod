@@ -210,9 +210,12 @@ class TestHighestSeverity:
         assert ae._highest_severity(findings) == "info"
 
 
+_SSRF_PATCH = "app.tasks.alert_evaluation.validate_endpoint_url_ssrf"
+
+
 class TestSlackMessage:
     def test_slack_payload(self):
-        with patch("httpx.Client") as mock_client:
+        with patch(_SSRF_PATCH), patch("httpx.Client") as mock_client:
             ctx = mock_client.return_value.__enter__.return_value
             ctx.post.return_value = MagicMock()
             ae._send_slack_message("https://slack", _alert(severity="high"))
@@ -220,7 +223,7 @@ class TestSlackMessage:
         assert kwargs["json"]["attachments"][0]["color"] == "#FF6600"
 
     def test_slack_default_color(self):
-        with patch("httpx.Client") as mock_client:
+        with patch(_SSRF_PATCH), patch("httpx.Client") as mock_client:
             ctx = mock_client.return_value.__enter__.return_value
             ctx.post.return_value = MagicMock()
             ae._send_slack_message("u", _alert(severity="???"))
@@ -231,7 +234,7 @@ class TestSlackMessage:
 class TestWebhookMessage:
     def test_hmac_signed(self):
         with patch.object(ae, "settings", _Settings(webhook_secret="SECR")):
-            with patch("httpx.Client") as mock_client:
+            with patch(_SSRF_PATCH), patch("httpx.Client") as mock_client:
                 ctx = mock_client.return_value.__enter__.return_value
                 ctx.post.return_value = MagicMock()
                 ae._send_webhook_message("https://x", _alert())
@@ -240,7 +243,7 @@ class TestWebhookMessage:
 
     def test_no_secret_no_signature(self):
         with patch.object(ae, "settings", _Settings()):
-            with patch("httpx.Client") as mock_client:
+            with patch(_SSRF_PATCH), patch("httpx.Client") as mock_client:
                 ctx = mock_client.return_value.__enter__.return_value
                 ctx.post.return_value = MagicMock()
                 ae._send_webhook_message("https://x", _alert())
@@ -250,19 +253,18 @@ class TestWebhookMessage:
 
 class TestTeamsMessage:
     def test_teams_adaptive_card(self):
-        with patch("httpx.Client") as mock_client:
+        with patch(_SSRF_PATCH), patch("httpx.Client") as mock_client:
             ctx = mock_client.return_value.__enter__.return_value
             ctx.post.return_value = MagicMock()
             ae._send_teams_message("https://teams", _alert(severity="critical"))
         kwargs = ctx.post.call_args.kwargs
         card = kwargs["json"]
         assert card["type"] == "message"
-        # Severity mapped to "attention" for critical
         text_block = card["attachments"][0]["content"]["body"][0]
         assert text_block["style"] == "attention"
 
     def test_teams_default_style(self):
-        with patch("httpx.Client") as mock_client:
+        with patch(_SSRF_PATCH), patch("httpx.Client") as mock_client:
             ctx = mock_client.return_value.__enter__.return_value
             ctx.post.return_value = MagicMock()
             ae._send_teams_message("u", _alert(severity="unknown"))
