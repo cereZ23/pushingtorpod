@@ -4,6 +4,8 @@ Scanning Router
 Manual scanning endpoints for Nuclei vulnerability scanning
 """
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from sqlalchemy.orm import Session
 from typing import Optional, List
@@ -47,6 +49,21 @@ def trigger_nuclei_scan(
             "asset_ids": [1, 2, 3]
         }
     """
+    if not membership.has_permission("write"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Write permission required",
+        )
+
+    _TEMPLATE_PATH_RE = re.compile(r"^[a-zA-Z0-9_./:\-]+$")
+    if template_paths:
+        for tp in template_paths:
+            if ".." in tp or not _TEMPLATE_PATH_RE.match(tp):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid template path",
+                )
+
     logger.info(f"Triggering Nuclei scan for tenant {tenant_id} (asset_ids: {asset_ids}, severity: {severity_levels})")
 
     # Trigger async Nuclei scan task (note: task uses 'severity' parameter, not 'severity_levels')
@@ -71,6 +88,12 @@ def update_nuclei_templates(tenant_id: int, membership=Depends(verify_tenant_acc
     Returns:
         TaskResponse with task status
     """
+    if not membership.has_permission("admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin permission required",
+        )
+
     from app.tasks.scanning import update_nuclei_templates as update_task
 
     logger.info(f"Triggering Nuclei template update (requested by tenant {tenant_id})")

@@ -366,10 +366,19 @@ def root(request: Request):
     }
 
 
-@app.get("/metrics", include_in_schema=False)
-async def metrics(request: Request):
-    """Prometheus metrics scrape endpoint (no auth required)."""
-    return metrics_endpoint(request)
+if settings.metrics_token:
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics(request: Request):
+        """Prometheus metrics scrape endpoint."""
+        token = request.query_params.get("token")
+        if not token:
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:]
+        if token != settings.metrics_token:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        return metrics_endpoint(request)
 
 
 # Include routers

@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:13000"]
     cors_allow_credentials: bool = True
     cors_allow_methods: list[str] = ["GET", "POST", "PUT", "DELETE", "PATCH"]
-    cors_allow_headers: list[str] = ["*"]
+    cors_allow_headers: list[str] = ["Authorization", "Content-Type", "X-Request-ID", "Accept"]
 
     # JWT Authentication (Sprint 2 - Critical Vulnerability Fix #3, Sprint 3 - Enhanced RS256)
     # RS256 (asymmetric) recommended for production - more secure, allows public key distribution
@@ -253,6 +253,9 @@ class Settings(BaseSettings):
     saml_default_role: str = "member"
     saml_auto_provision: bool = True  # auto-create users on first SAML login
     saml_frontend_url: str = "http://localhost:13000"  # frontend URL for post-login redirect
+
+    # Metrics
+    metrics_token: Optional[str] = None
 
     # Feature Flags
     feature_uncover_enabled: bool = True

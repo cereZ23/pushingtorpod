@@ -478,6 +478,14 @@ def _send_slack_message(webhook_url: str, alert: Alert) -> None:
     """Post an alert to a Slack incoming webhook."""
     import httpx
 
+    from app.utils.validators import validate_endpoint_url_ssrf
+
+    try:
+        validate_endpoint_url_ssrf(webhook_url, require_https=True)
+    except ValueError:
+        logger.warning("SSRF check failed for Slack webhook URL, skipping delivery")
+        return
+
     color_map = {
         "critical": "#FF0000",
         "high": "#FF6600",
@@ -531,6 +539,14 @@ def _send_webhook_message(url: str, alert: Alert) -> None:
 
     import httpx
 
+    from app.utils.validators import validate_endpoint_url_ssrf
+
+    try:
+        validate_endpoint_url_ssrf(url, require_https=False)
+    except ValueError:
+        logger.warning("SSRF check failed for webhook URL, skipping delivery")
+        return
+
     payload = {
         "event_type": alert.event_type,
         "severity": alert.severity,
@@ -561,6 +577,14 @@ def _send_webhook_message(url: str, alert: Alert) -> None:
 def _send_teams_message(webhook_url: str, alert: Alert) -> None:
     """Post an alert to a Microsoft Teams incoming webhook using Adaptive Card."""
     import httpx
+
+    from app.utils.validators import validate_endpoint_url_ssrf
+
+    try:
+        validate_endpoint_url_ssrf(webhook_url, require_https=True)
+    except ValueError:
+        logger.warning("SSRF check failed for Teams webhook URL, skipping delivery")
+        return
 
     color_map = {
         "critical": "attention",

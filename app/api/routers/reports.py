@@ -669,7 +669,7 @@ def export_report_pdf(
         logger.exception("PDF generation failed for tenant %s", tenant_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"PDF generation failed: {exc}",
+            detail="Report generation failed",
         )
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -730,7 +730,7 @@ def export_report_docx(
         logger.exception("DOCX generation failed for tenant %s", tenant_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"DOCX generation failed: {exc}",
+            detail="Report generation failed",
         )
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")

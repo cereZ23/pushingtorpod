@@ -902,12 +902,10 @@ def mfa_verify(
     import pyotp
     import redis as _redis
 
-    # Look up MFA token in Redis
+    # Look up MFA token in Redis (read without consuming)
     try:
         r = _redis.from_url(settings.redis_url, socket_connect_timeout=2)
         user_id_bytes = r.get(f"mfa_token:{payload.mfa_token}")
-        if user_id_bytes:
-            r.delete(f"mfa_token:{payload.mfa_token}")
         r.close()
     except Exception:
         logger.exception("Failed to validate MFA token from Redis")
@@ -924,8 +922,15 @@ def mfa_verify(
 
     user_id = int(user_id_bytes.decode())
 
-    # Check per-user MFA lockout before doing any verification
     _check_mfa_lockout(user_id)
+
+    # Consume the MFA token only after lockout check passes
+    try:
+        r = _redis.from_url(settings.redis_url, socket_connect_timeout=2)
+        r.delete(f"mfa_token:{payload.mfa_token}")
+        r.close()
+    except Exception:
+        logger.exception("Failed to consume MFA token from Redis")
 
     user = db.query(User).filter(User.id == user_id).first()
 

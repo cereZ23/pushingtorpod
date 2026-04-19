@@ -230,6 +230,9 @@ class JWTManager:
             verification_key = self.security_keys.get_verification_key()
             payload = jwt.decode(token, verification_key, algorithms=[self.algorithm])
 
+            if payload.get("type") != "access":
+                raise HTTPException(status_code=401, detail="Invalid token type")
+
             # Check if token is revoked
             jti = payload.get("jti")
             if jti:

@@ -86,14 +86,11 @@ class SecurityKeys:
                 self._generate_rsa_keys(private_key_path, public_key_path)
         except Exception as e:
             logger.error(f"Failed to load RSA keys: {e}")
-            # Fallback to HMAC — security downgrade
             if settings.environment == "production":
-                logger.error(
-                    "SECURITY DOWNGRADE: Falling back from RS256 to HS256 in production. "
-                    "Fix RSA key configuration to restore asymmetric signing."
-                )
-            else:
-                logger.warning("Falling back to HS256 with symmetric secret (non-production)")
+                raise RuntimeError(
+                    "RS256 key loading failed in production. Fix RSA key configuration before starting."
+                ) from e
+            logger.warning("Falling back to HS256 with symmetric secret (non-production)")
             self.algorithm = "HS256"
             self.secret_key = settings.jwt_secret_key
 
