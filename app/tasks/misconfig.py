@@ -18,7 +18,7 @@ Categories and control IDs:
   - Email Security                (EML-001, EML-002, EML-003, EML-004, EML-006, EML-007, EML-008)
   - DNS Security                  (DNS-001)
   - Authentication                (AUTH-001, AUTH-002)
-  - Service Exposure              (EXP-006, EML-009)
+  - Service Exposure              (EXP-006, EXP-011, EML-009)
 """
 
 import ipaddress
@@ -1611,6 +1611,102 @@ def check_exp_006(
                     ),
                 }
             )
+    return findings
+
+
+# Sensitive non-web ports that naabu intentionally blocklists (settings.
+# naabu_blocked_ports) and that Nuclei therefore never receives targets for —
+# so without a direct probe they are completely invisible. Severity reflects
+# the risk of the service being reachable from the public internet at all.
+_SENSITIVE_PORTS: dict[int, tuple[str, str]] = {
+    22: ("SSH", "low"),  # commonly exposed; report as surface, not alarm
+    23: ("Telnet", "high"),
+    445: ("SMB", "high"),
+    3389: ("RDP", "high"),
+    5900: ("VNC", "high"),
+    3306: ("MySQL", "high"),
+    5432: ("PostgreSQL", "high"),
+    6379: ("Redis", "high"),
+    9200: ("Elasticsearch", "high"),
+    27017: ("MongoDB", "high"),
+    11211: ("Memcached", "high"),
+}
+
+
+def _probe_tcp(host: str, port: int, timeout: int) -> tuple[bool, str]:
+    """Non-destructive TCP reachability + banner grab.
+
+    Opens a connection and reads whatever the service volunteers — NO data is
+    sent, so nothing is written/changed on the target. Returns (open, banner).
+    """
+    import socket
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            sock.settimeout(timeout)
+            try:
+                banner = sock.recv(256).decode("utf-8", errors="replace").strip()
+            except (OSError, UnicodeError):
+                banner = ""
+            return True, banner
+    except (OSError, ValueError):
+        return False, ""
+
+
+def _probe_sensitive_ports(host: str, timeout: int) -> dict[int, tuple[bool, str]]:
+    """Probe all sensitive ports concurrently so per-host wall time ≈ one timeout."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _one(port: int) -> tuple[int, tuple[bool, str]]:
+        return port, _probe_tcp(host, port, timeout)
+
+    with ThreadPoolExecutor(max_workers=len(_SENSITIVE_PORTS)) as executor:
+        return {port: res for port, res in executor.map(_one, _SENSITIVE_PORTS.keys())}
+
+
+@register(
+    control_id="EXP-011",
+    name="Sensitive non-web service exposed to the internet",
+    severity="high",
+    confidence=0.85,
+    category="Service Exposure",
+    asset_types=["domain", "subdomain", "ip"],
+)
+def check_exp_011(
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
+) -> list[dict]:
+    """Directly probe sensitive non-web ports (SSH/RDP/DB/cache) that naabu
+    blocklists — so Nuclei never sees them and they are otherwise invisible.
+
+    Purely a reachability + banner check (no auth, no writes). Ports are probed
+    concurrently to keep per-host cost to roughly a single timeout.
+    """
+    findings: list[dict] = []
+    if not settings.nonweb_exposure_enabled or not _is_safe_probe_target(asset.identifier):
+        return findings
+
+    results = _probe_sensitive_ports(asset.identifier, settings.nonweb_probe_timeout)
+    for port, (svc_name, severity) in _SENSITIVE_PORTS.items():
+        is_open, banner = results.get(port, (False, ""))
+        if not is_open:
+            continue
+        findings.append(
+            {
+                "name": f"{svc_name} exposed to the internet on port {port}",
+                "severity": severity,
+                "confidence": 0.85,
+                "evidence": {"port": port, "service": svc_name, "banner": banner[:200]},
+                "control_id": "EXP-011",
+                "finding_key": f"EXP-011:{asset.identifier}:{port}",
+                "remediation": (
+                    f"Restrict {svc_name} (port {port}) to trusted networks or a VPN via firewall rules. "
+                    "Sensitive management, database, and cache services must not be reachable from the public internet."
+                ),
+            }
+        )
     return findings
 
 
