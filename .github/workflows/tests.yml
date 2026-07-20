@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main, develop]
 
+# Serialize deploys on main (queue, never overlap on the server); cancel
+# superseded PR runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 permissions:
   contents: read
   packages: write
@@ -22,8 +28,8 @@ jobs:
     name: "Lint"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install ruff
@@ -88,9 +94,9 @@ jobs:
       CELERY_TASK_ALWAYS_EAGER: "true"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -123,7 +129,7 @@ jobs:
             -k "not test_security_comprehensive and not test_get_asset_tree_returns_hierarchy and not test_get_tenant_dashboard_returns_stats and not test_get_tenant_stats_returns_detailed_metrics and not test_dashboard_endpoint_response_time_under_500ms and not test_database_query_performance and not test_tenant_dashboard_pagination and not test_get_asset_by_id_returns_details and not test_pagination_performance and not test_health_returns_expected_shape and not test_tenant_endpoints_require_valid_tenant_id and not test_unauthorized_tenant_access_returns_403 and not test_get_tenant_dashboard_enforces_tenant_isolation and not test_tenant_not_found_returns_404 and not test_run_amass_with_domains and not test_get_services_by_technology and not test_run_parallel_enumeration_amass_disabled"
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         if: always()
         with:
           file: ./coverage.xml
@@ -139,9 +145,9 @@ jobs:
         working-directory: frontend
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -171,8 +177,8 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install bandit safety
@@ -196,7 +202,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: docker/login-action@v3
         with:
@@ -252,7 +258,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Deploy
         env:
