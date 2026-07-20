@@ -57,6 +57,7 @@ cryptography>=44.0.3  # Secret encryption — bumped for DNS constraint enforcem
 python-whois==0.9.4  # WHOIS/RDAP lookups for hidden asset discovery
 geoip2>=4.8.0  # MaxMind GeoLite2 local database lookups (City + ASN)
 dnstwist==20240116  # Domain permutation / typosquatting detection
+dnspython>=2.6.0  # Targeted DNS lookups (DMARC/DKIM TXT, MX) for email-auth checks
 
 # Visual Recon
 # Pin to 1.56.0 (last release before the Chrome for Testing switch): v1.57

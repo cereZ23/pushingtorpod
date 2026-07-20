@@ -1,7 +1,7 @@
 """
 Misconfiguration Detection Engine - Phase 8
 
-Implements 21 security controls across 7 categories using a decorator-based
+Implements 22 security controls across 7 categories using a decorator-based
 control registry. Each control function inspects asset data (services, certificates,
 HTTP headers, DNS records) and produces structured findings.
 
@@ -15,7 +15,7 @@ Categories and control IDs:
   - TLS Certificate Intelligence  (TLS-001, TLS-005, TLS-009, TLS-010)
   - Security Headers              (HDR-004, HDR-007, HDR-008, HDR-009, HDR-010)
   - Information Disclosure        (INF-009)
-  - Email Security                (EML-001, EML-002, EML-003, EML-006, EML-007, EML-008)
+  - Email Security                (EML-001, EML-002, EML-003, EML-004, EML-006, EML-007, EML-008)
   - DNS Security                  (DNS-001)
   - Authentication                (AUTH-001, AUTH-002)
   - Service Exposure              (EXP-006, EML-009)
@@ -41,6 +41,7 @@ from app.models.database import (
 )
 from app.models.enrichment import Certificate
 from app.services.dedup import compute_finding_fingerprint
+from app.services.dns_lookup import has_mx, resolve_txt
 from app.utils.logger import TenantLoggerAdapter
 from app.utils.validators import DomainValidator
 
@@ -1027,33 +1028,116 @@ def check_eml_003(
     certificates: list[Certificate],
     db: Any,
 ) -> list[dict]:
-    """Detect domains without a DMARC record."""
+    """Detect a missing or weak (p=none) DMARC policy via a live DNS lookup.
+
+    DMARC lives at ``_dmarc.<domain>`` — a name dnsx never resolves — so this
+    queries it directly. A missing record allows unmitigated spoofing; a
+    ``p=none`` policy only monitors (no enforcement).
+    """
     findings: list[dict] = []
-    metadata = _parse_raw_metadata(asset)
-    dns_txt = metadata.get("dns_txt", [])
-    dmarc_txt = metadata.get("dmarc_txt", [])
+    if not settings.mail_security_enabled:
+        return findings
 
-    all_txt = dns_txt + dmarc_txt
-    has_dmarc = any("v=dmarc1" in str(txt).lower() for txt in all_txt)
+    domain = asset.identifier
+    records = resolve_txt(f"_dmarc.{domain}", timeout=settings.mail_dns_timeout)
+    dmarc = next((r for r in records if "v=dmarc1" in r.lower()), None)
 
-    if all_txt and not has_dmarc:
+    if dmarc is None:
         findings.append(
             {
-                "name": f"Missing DMARC record for {asset.identifier}",
+                "name": f"Missing DMARC record for {domain}",
                 "severity": "medium",
-                "confidence": 0.60,
-                "evidence": {
-                    "domain": asset.identifier,
-                },
+                "confidence": 0.80,
+                "evidence": {"domain": domain, "dmarc_name": f"_dmarc.{domain}", "txt_records": records[:5]},
                 "control_id": "EML-003",
-                "finding_key": f"EML-003:{asset.identifier}",
+                "finding_key": f"EML-003:{domain}",
                 "remediation": (
-                    "Add a DMARC TXT record at _dmarc.{domain} (e.g. "
-                    "'v=DMARC1; p=quarantine; rua=mailto:dmarc@example.com') "
-                    "to enable email authentication reporting and enforcement."
+                    f"Add a DMARC TXT record at _dmarc.{domain} "
+                    "(e.g. 'v=DMARC1; p=quarantine; rua=mailto:dmarc@example.com') "
+                    "to enable email authentication enforcement and reporting."
                 ),
             }
         )
+    else:
+        policy_match = re.search(r"p\s*=\s*(none|quarantine|reject)", dmarc, re.IGNORECASE)
+        policy = policy_match.group(1).lower() if policy_match else "none"
+        if policy == "none":
+            findings.append(
+                {
+                    "name": f"DMARC policy is monitor-only (p=none) for {domain}",
+                    "severity": "low",
+                    "confidence": 0.85,
+                    "evidence": {"domain": domain, "dmarc_record": dmarc, "policy": policy},
+                    "control_id": "EML-003",
+                    "finding_key": f"EML-003:{domain}",
+                    "remediation": (
+                        "Move the DMARC policy from 'p=none' (monitoring only) to 'p=quarantine' "
+                        "or 'p=reject' once reporting confirms legitimate senders are aligned."
+                    ),
+                }
+            )
+    return findings
+
+
+# Common DKIM selectors published by mainstream mail providers / MTAs.
+_DKIM_SELECTORS = ["default", "google", "selector1", "selector2", "k1", "s1", "s2", "dkim", "mail", "mandrill"]
+
+
+@register(
+    control_id="EML-004",
+    name="No DKIM record found on common selectors",
+    severity="low",
+    confidence=0.40,
+    category="Email Security",
+    asset_types=["domain"],
+)
+def check_eml_004(
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
+) -> list[dict]:
+    """Flag mail-sending domains with no DKIM key on any common selector.
+
+    DKIM selectors are arbitrary, so absence on the common set does NOT prove
+    absence (a custom selector may exist). This is therefore a low-confidence,
+    presumptive finding, and only raised for domains that actually send mail
+    (have an MX record) to avoid noise on non-mail domains.
+    """
+    findings: list[dict] = []
+    if not settings.mail_security_enabled:
+        return findings
+
+    domain = asset.identifier
+    if not has_mx(domain, timeout=settings.mail_dns_timeout):
+        return findings  # domain doesn't receive/send mail — DKIM not expected
+
+    checked: list[str] = []
+    for selector in _DKIM_SELECTORS:
+        checked.append(selector)
+        records = resolve_txt(f"{selector}._domainkey.{domain}", timeout=settings.mail_dns_timeout)
+        if any("v=dkim1" in r.lower() or "k=rsa" in r.lower() or "p=" in r.lower() for r in records):
+            return findings  # a DKIM key exists — nothing to report
+
+    findings.append(
+        {
+            "name": f"No DKIM record found on common selectors for {domain}",
+            "severity": "low",
+            "confidence": 0.40,
+            "evidence": {
+                "domain": domain,
+                "selectors_checked": checked,
+                # Presumptive: a custom selector could still exist.
+                "confidence": "presumptive",
+            },
+            "control_id": "EML-004",
+            "finding_key": f"EML-004:{domain}",
+            "remediation": (
+                "Publish a DKIM key and sign outbound mail. If DKIM is already configured under a "
+                "custom selector, this finding can be suppressed."
+            ),
+        }
+    )
     return findings
 
 
