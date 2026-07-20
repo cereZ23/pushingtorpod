@@ -26,6 +26,25 @@ export type ScanRunStatus =
   | "failed"
   | "cancelled";
 
+export type ScanHealthStatus = "pass" | "warn" | "fail";
+
+export interface ScanHealthCheck {
+  name: string;
+  status: ScanHealthStatus;
+  detail: string;
+}
+
+// Tool-invariant scan-health verdict, computed server-side and embedded in
+// ScanRun.stats.health (see app/services/scan_health.py).
+export interface ScanHealth {
+  overall: ScanHealthStatus;
+  checks: ScanHealthCheck[];
+  failures: string[];
+  warnings: string[];
+  degraded: boolean;
+  summary: string;
+}
+
 export interface ScanRun {
   id: number;
   project_id: number;

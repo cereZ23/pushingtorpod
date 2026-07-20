@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted, computed, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useTenantStore } from "@/stores/tenant";
 import { useScanStore } from "@/stores/scans";
-import type { PhaseStatus } from "@/stores/scans";
+import type { PhaseStatus, ScanHealth } from "@/stores/scans";
 import { formatDate } from "@/utils/formatters";
 
 const route = useRoute();
@@ -24,6 +24,13 @@ const isRunning = computed(() => {
 });
 
 const isCancelling = ref(false);
+
+// Tool-invariant scan-health verdict, embedded server-side in stats.health.
+const scanHealth = computed<ScanHealth | null>(() => {
+  const health = scanStore.currentScanRun?.stats?.health;
+  if (!health || typeof health !== "object") return null;
+  return health as ScanHealth;
+});
 
 onMounted(async () => {
   await loadScanData();
@@ -130,6 +137,30 @@ function getRunStatusBadge(status: string): string {
       "bg-gray-100 text-gray-600 dark:bg-gray-700/30 dark:text-gray-400",
   };
   return classes[status] || classes.pending;
+}
+
+function healthBannerClass(overall: string): string {
+  const classes: Record<string, string> = {
+    fail: "bg-red-50 border-red-200 dark:bg-red-900/10 dark:border-red-900/40",
+    warn: "bg-amber-50 border-amber-200 dark:bg-amber-900/10 dark:border-amber-900/40",
+    pass: "bg-green-50 border-green-200 dark:bg-green-900/10 dark:border-green-900/40",
+  };
+  return classes[overall] || classes.pass;
+}
+
+function healthPillClass(status: string): string {
+  const classes: Record<string, string> = {
+    fail: "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400",
+    warn: "bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400",
+    pass: "bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400",
+  };
+  return classes[status] || classes.pass;
+}
+
+function healthTitle(overall: string): string {
+  if (overall === "fail") return "Scan degraded";
+  if (overall === "warn") return "Scan completed with warnings";
+  return "Scan health OK";
 }
 
 function formatPhaseDuration(phase: {
@@ -263,10 +294,14 @@ function getStatsEntries(
   stats: Record<string, unknown> | null,
 ): Array<{ key: string; value: string }> {
   if (!stats) return [];
-  return Object.entries(stats).map(([key, value]) => ({
-    key: key.replace(/_/g, " "),
-    value: String(value),
-  }));
+  return Object.entries(stats)
+    // `health` is rendered by its own banner; skip nested objects that would
+    // otherwise show as "[object Object]" tiles in the flat summary grid.
+    .filter(([, value]) => typeof value !== "object" || value === null)
+    .map(([key, value]) => ({
+      key: key.replace(/_/g, " "),
+      value: String(value),
+    }));
 }
 </script>
 
@@ -605,6 +640,63 @@ function getStatsEntries(
                   </span>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scan Health -->
+      <div
+        v-if="scanHealth"
+        class="rounded-lg border p-6"
+        :class="healthBannerClass(scanHealth.overall)"
+      >
+        <div class="flex items-start justify-between gap-4">
+          <div class="flex items-center gap-3">
+            <span
+              class="px-2.5 py-0.5 inline-flex items-center text-xs font-semibold rounded-full uppercase tracking-wide"
+              :class="healthPillClass(scanHealth.overall)"
+            >
+              {{ scanHealth.overall === "fail" ? "Degraded" : scanHealth.overall }}
+            </span>
+            <div>
+              <h3
+                class="text-base font-semibold text-gray-900 dark:text-dark-text-primary"
+              >
+                {{ healthTitle(scanHealth.overall) }}
+              </h3>
+              <p class="text-sm text-gray-600 dark:text-dark-text-secondary">
+                {{ scanHealth.summary }}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Per-check breakdown -->
+        <div
+          v-if="scanHealth.checks && scanHealth.checks.length > 0"
+          class="mt-4 space-y-2"
+        >
+          <div
+            v-for="check in scanHealth.checks"
+            :key="check.name"
+            class="flex items-start gap-3 text-sm"
+          >
+            <span
+              class="mt-0.5 px-2 py-0.5 inline-flex items-center text-xs font-medium rounded-full shrink-0 uppercase"
+              :class="healthPillClass(check.status)"
+            >
+              {{ check.status }}
+            </span>
+            <div>
+              <span
+                class="font-medium capitalize text-gray-900 dark:text-dark-text-primary"
+              >
+                {{ check.name.replace(/_/g, " ") }}
+              </span>
+              <span class="ml-2 text-gray-600 dark:text-dark-text-secondary">
+                {{ check.detail }}
+              </span>
             </div>
           </div>
         </div>
