@@ -36,6 +36,7 @@ from app.services.chart_generator import (
     generate_severity_chart,
     generate_trend_chart,
 )
+from app.services.scanning.confidence import confidence_from_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -441,18 +442,19 @@ class ReportGenerator:
         self,
         severity: Optional[str] = None,
         finding_status: Optional[str] = None,
-        limit: int = 500,
+        limit: int = 5000,
     ) -> List[Dict[str, Any]]:
-        """Collect detailed findings for the technical report."""
+        """Collect detailed findings for the technical report.
+
+        Scope MUST match the executive summary counts (which filter only by
+        ``tenant_id`` + status) so the detailed section is never a subset of
+        what the summary claims — an ``is_active`` filter here previously made
+        the report silently drop findings on inactive assets. Truncation
+        against ``limit`` is tracked and surfaced to the caller so it is never
+        silent either.
+        """
         db = self.db
-        query = (
-            db.query(Finding, Asset.identifier, Asset.type)
-            .join(Asset)
-            .filter(
-                Asset.tenant_id == self.tenant_id,
-                Asset.is_active.is_(True),
-            )
-        )
+        query = db.query(Finding, Asset.identifier, Asset.type).join(Asset).filter(Asset.tenant_id == self.tenant_id)
 
         if severity:
             try:
@@ -469,6 +471,10 @@ class ReportGenerator:
             # Default: only open findings (exclude fixed/suppressed)
             query = query.filter(Finding.status == FindingStatus.OPEN)
 
+        # Count all matching rows BEFORE applying the limit so truncation is
+        # detectable and can be shown in the report (never silently dropped).
+        total_matching = query.count()
+
         results = (
             query.order_by(
                 Finding.severity.desc(),
@@ -478,6 +484,9 @@ class ReportGenerator:
             .limit(limit)
             .all()
         )
+
+        self._findings_total_matching = total_matching
+        self._findings_truncated = total_matching > len(results)
 
         return [
             {
@@ -489,6 +498,7 @@ class ReportGenerator:
                 "template_id": f.template_id,
                 "source": f.source,
                 "status": f.status.value,
+                "confidence": confidence_from_evidence(f.evidence),
                 "asset_identifier": aid,
                 "asset_type": atype.value if atype else "unknown",
                 "evidence": f.evidence,
@@ -708,7 +718,7 @@ class ReportGenerator:
         report_type: str = "executive",
         severity: Optional[str] = None,
         finding_status: Optional[str] = None,
-        limit: int = 500,
+        limit: int = 5000,
     ) -> bytes:
         """
         Generate a PDF report.
@@ -768,6 +778,10 @@ class ReportGenerator:
             for f in findings:
                 f["evidence_text"] = _format_evidence(f.get("evidence"))
             context["findings"] = findings
+            # Surface truncation so a capped report is never mistaken for complete.
+            context["findings_shown"] = len(findings)
+            context["findings_total"] = getattr(self, "_findings_total_matching", len(findings))
+            context["findings_truncated"] = getattr(self, "_findings_truncated", False)
             # Group findings by name+severity → one card per finding type
             # with a compact list of affected assets underneath
             severity_order = ["critical", "high", "medium", "low", "info"]
@@ -830,7 +844,7 @@ class ReportGenerator:
         report_type: str = "executive",
         severity: Optional[str] = None,
         finding_status: Optional[str] = None,
-        limit: int = 500,
+        limit: int = 5000,
     ) -> bytes:
         """
         Generate a professional DOCX security report.
@@ -1798,8 +1812,25 @@ class ReportGenerator:
         if report_type == "technical":
             doc.add_page_break()
             findings = self._collect_findings(severity, finding_status, limit)
+            total_matching = getattr(self, "_findings_total_matching", len(findings))
 
-            doc.add_heading(f"5. Detailed Findings ({len(findings)})", level=1)
+            heading_count = (
+                f"{len(findings)} of {total_matching}" if total_matching != len(findings) else str(len(findings))
+            )
+            doc.add_heading(f"5. Detailed Findings ({heading_count})", level=1)
+
+            if getattr(self, "_findings_truncated", False):
+                _add_spaced_para(
+                    doc,
+                    text=(
+                        f"Note: this report lists the first {len(findings)} of {total_matching} matching "
+                        "findings. Retrieve the full set via the CSV/JSON export or a higher limit."
+                    ),
+                    before=2,
+                    after=6,
+                    size=Pt(9),
+                    color=DESC_TEXT,
+                )
 
             _add_spaced_para(
                 doc,

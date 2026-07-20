@@ -6,8 +6,10 @@ Pydantic models for vulnerability findings
 
 import json
 from typing import Optional, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 from datetime import datetime
+
+from app.services.scanning.confidence import confidence_from_evidence
 
 
 class FindingResponse(BaseModel):
@@ -25,6 +27,10 @@ class FindingResponse(BaseModel):
     first_seen: datetime = Field(..., description="First seen timestamp")
     last_seen: datetime = Field(..., description="Last seen timestamp")
     status: str = Field(..., description="Finding status (open, suppressed, fixed)")
+    confidence: str = Field(
+        "confirmed",
+        description="Detection confidence: 'presumptive' (version-based, needs validation) or 'confirmed'",
+    )
 
     # Nuclei integration metadata
     matched_at: Optional[str] = Field(None, description="URL where finding was discovered")
@@ -69,6 +75,16 @@ class FindingResponse(BaseModel):
         if hasattr(v, "value"):
             return v.value
         return v
+
+    @model_validator(mode="after")
+    def _derive_confidence(self) -> "FindingResponse":
+        """Derive confidence from the (already-parsed) evidence payload.
+
+        The ORM Finding has no dedicated confidence column; it is stored in
+        evidence by the nuclei parser. Absent → 'confirmed' (the default).
+        """
+        self.confidence = confidence_from_evidence(self.evidence)
+        return self
 
     model_config = ConfigDict(
         from_attributes=True,

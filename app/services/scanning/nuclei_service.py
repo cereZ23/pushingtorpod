@@ -24,6 +24,7 @@ from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
+from app.services.scanning.confidence import derive_confidence
 from app.utils.secure_executor import SecureToolExecutor, ToolExecutionError
 from app.utils.validators import URLValidator
 from app.utils.storage import store_raw_output
@@ -457,6 +458,15 @@ class NucleiService:
                 "reference": info.get("reference", []),
                 "tags": info.get("tags", []),
             }
+
+            # Presumptive (version-based) vs confirmed detection. Version-check
+            # matches assert a vulnerable version banner, not a proven exploit,
+            # so they must be flagged for manual validation before reporting.
+            evidence["confidence"] = derive_confidence(
+                matcher_name=result.get("matcher-name"),
+                template_id=result.get("template-id"),
+                tags=info.get("tags", []),
+            )
 
             # Parse URL to get host
             matched_url = result.get("matched-at") or result.get("host")
