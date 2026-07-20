@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main, develop]
 
+# Serialize deploys on main (queue, never overlap on the server); cancel
+# superseded PR runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 permissions:
   contents: read
   packages: write
