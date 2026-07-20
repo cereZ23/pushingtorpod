@@ -306,8 +306,15 @@
      5. DETAILED FINDINGS
      ======================================================================== -->
 <div class="page-break"></div>
-<h2 id="detailed-findings"><span class="section-number">5</span> Detailed Findings ({{ findings|length }})</h2>
+<h2 id="detailed-findings"><span class="section-number">5</span> Detailed Findings ({{ findings|length }}{% if findings_total and findings_total != findings|length %} of {{ findings_total }}{% endif %})</h2>
 <div class="section-rule"><svg xmlns="http://www.w3.org/2000/svg" width="120" height="16" viewBox="0 0 120 16"><circle cx="4" cy="8" r="2.5" fill="#6366F1" opacity="0.4"/><circle cx="30" cy="4" r="2" fill="#818CF8" opacity="0.3"/><circle cx="58" cy="10" r="2.5" fill="#6366F1" opacity="0.4"/><circle cx="86" cy="6" r="2" fill="#818CF8" opacity="0.3"/><circle cx="114" cy="8" r="2.5" fill="#6366F1" opacity="0.4"/><line x1="4" y1="8" x2="30" y2="4" stroke="#6366F1" stroke-width="1" opacity="0.25"/><line x1="30" y1="4" x2="58" y2="10" stroke="#818CF8" stroke-width="1" opacity="0.25"/><line x1="58" y1="10" x2="86" y2="6" stroke="#6366F1" stroke-width="1" opacity="0.25"/><line x1="86" y1="6" x2="114" y2="8" stroke="#818CF8" stroke-width="1" opacity="0.25"/></svg></div>
+
+{% if findings_truncated %}
+<div style="margin: 8pt 0; padding: 8pt 12pt; background: #FEF2F2; border: 1px solid #FECACA; border-radius: 4px; color: #991B1B; font-size: 8pt;">
+    <strong>Note:</strong> this report lists the first {{ findings|length }} of {{ findings_total }} matching findings.
+    Retrieve the full set via the CSV/JSON export or re-run the report with a higher limit.
+</div>
+{% endif %}
 
 {% if findings %}
 
@@ -335,6 +342,9 @@
         <div class="finding-header">
             <span class="finding-title">{{ f.name }}</span>
             <span class="badge badge-{{ f.severity }}">{{ f.severity|upper }}</span>
+            {% if f.confidence == "presumptive" %}
+            <span class="badge" style="background:#FEF3C7;color:#92400E;border:1px solid #FCD34D;" title="Version-based detection — validate before treating as exploitable">PRESUMPTIVE</span>
+            {% endif %}
             {% if f.cvss_score %}
             <span class="finding-cvss {% if f.cvss_score >= 9.0 %}cvss-critical{% elif f.cvss_score >= 7.0 %}cvss-high{% elif f.cvss_score >= 4.0 %}cvss-medium{% elif f.cvss_score > 0 %}cvss-low{% else %}cvss-none{% endif %}">CVSS {{ "%.1f"|format(f.cvss_score) }}</span>
             {% endif %}

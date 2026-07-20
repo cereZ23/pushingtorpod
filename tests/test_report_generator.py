@@ -17,6 +17,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.models.database import (
+    Asset,
+    AssetType,
+    Finding,
+    FindingSeverity,
+    FindingStatus,
+)
 from app.services.report_generator import (
     ANNEX_A_DOMAINS,
     SEVERITY_WEIGHT,
@@ -172,3 +179,69 @@ class TestComplianceStructure:
     def test_template_compliance_map_has_entries(self):
         """Template compliance map should have reasonable coverage."""
         assert len(_TEMPLATE_COMPLIANCE_MAP) >= 20
+
+
+# ── Technical-report completeness (DB-backed) ────────────────────────
+
+
+class TestCollectFindingsCompleteness:
+    """The detailed findings must match the executive counts and never
+    silently truncate — the client-reported "incomplete report" bug."""
+
+    def _add_asset(self, db, tenant_id, identifier, is_active=True):
+        asset = Asset(
+            tenant_id=tenant_id,
+            identifier=identifier,
+            type=AssetType.SUBDOMAIN,
+            is_active=is_active,
+        )
+        db.add(asset)
+        db.commit()
+        db.refresh(asset)
+        return asset
+
+    def _add_finding(self, db, asset_id, name):
+        finding = Finding(
+            asset_id=asset_id,
+            name=name,
+            severity=FindingSeverity.HIGH,
+            status=FindingStatus.OPEN,
+            source="nuclei",
+        )
+        db.add(finding)
+        db.commit()
+
+    def test_includes_findings_on_inactive_assets(self, db_session, tenant):
+        """Findings on inactive assets must NOT be dropped (they are counted
+        by the executive summary, so the detail must include them too)."""
+        active = self._add_asset(db_session, tenant.id, "active.example.com", is_active=True)
+        inactive = self._add_asset(db_session, tenant.id, "old.example.com", is_active=False)
+        self._add_finding(db_session, active.id, "Finding A")
+        self._add_finding(db_session, inactive.id, "Finding B")
+
+        findings = ReportGenerator(db_session, tenant.id)._collect_findings()
+
+        assert {f["name"] for f in findings} == {"Finding A", "Finding B"}
+
+    def test_truncation_is_tracked(self, db_session, tenant):
+        asset = self._add_asset(db_session, tenant.id, "a.example.com")
+        for i in range(3):
+            self._add_finding(db_session, asset.id, f"F{i}")
+
+        gen = ReportGenerator(db_session, tenant.id)
+        findings = gen._collect_findings(limit=2)
+
+        assert len(findings) == 2
+        assert gen._findings_truncated is True
+        assert gen._findings_total_matching == 3
+
+    def test_no_truncation_when_under_limit(self, db_session, tenant):
+        asset = self._add_asset(db_session, tenant.id, "b.example.com")
+        self._add_finding(db_session, asset.id, "Solo")
+
+        gen = ReportGenerator(db_session, tenant.id)
+        findings = gen._collect_findings(limit=100)
+
+        assert len(findings) == 1
+        assert gen._findings_truncated is False
+        assert gen._findings_total_matching == 1

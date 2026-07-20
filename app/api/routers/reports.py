@@ -29,6 +29,7 @@ from app.models.database import (
     Tenant,
 )
 from app.models.risk import RiskScore
+from app.services.scanning.confidence import confidence_from_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +157,10 @@ class TechnicalFindingItem(BaseModel):
     template_id: Optional[str] = Field(None, description="Nuclei template ID")
     source: str = Field(..., description="Detection source")
     status: str = Field(..., description="Current status")
+    confidence: str = Field(
+        "confirmed",
+        description="Detection confidence: 'presumptive' (version-based, needs validation) or 'confirmed'",
+    )
     asset_identifier: str = Field(..., description="Affected asset identifier")
     asset_type: str = Field(..., description="Asset type")
     evidence: Optional[Dict[str, Any]] = Field(None, description="Evidence payload")
@@ -536,7 +541,7 @@ def generate_technical_report(
     tenant_id: int,
     severity: Optional[str] = Query(None, description="Filter by severity"),
     finding_status: Optional[str] = Query(None, alias="status", description="Filter by status"),
-    limit: int = Query(default=500, ge=1, le=5000, description="Maximum findings to include"),
+    limit: int = Query(default=5000, ge=1, le=5000, description="Maximum findings to include"),
     db: Session = Depends(get_db),
     membership=Depends(verify_tenant_access),
 ) -> TechnicalReportResponse:
@@ -598,6 +603,7 @@ def generate_technical_report(
             template_id=finding.template_id,
             source=finding.source,
             status=finding.status.value,
+            confidence=confidence_from_evidence(finding.evidence),
             asset_identifier=asset_identifier,
             asset_type=asset_type.value if asset_type else "unknown",
             evidence=_parse_evidence(finding.evidence),
@@ -624,7 +630,7 @@ def export_report_pdf(
     ),
     severity: Optional[str] = Query(None, description="Filter by severity (technical only)"),
     finding_status: Optional[str] = Query(None, alias="status", description="Filter by status (technical only)"),
-    limit: int = Query(default=500, ge=1, le=5000, description="Max findings (technical only)"),
+    limit: int = Query(default=5000, ge=1, le=5000, description="Max findings (technical only)"),
     db: Session = Depends(get_db),
     membership=Depends(verify_tenant_access),
 ) -> StreamingResponse:
@@ -690,7 +696,7 @@ def export_report_docx(
     ),
     severity: Optional[str] = Query(None, description="Filter by severity (technical only)"),
     finding_status: Optional[str] = Query(None, alias="status", description="Filter by status (technical only)"),
-    limit: int = Query(default=500, ge=1, le=5000, description="Max findings (technical only)"),
+    limit: int = Query(default=5000, ge=1, le=5000, description="Max findings (technical only)"),
     db: Session = Depends(get_db),
     membership=Depends(verify_tenant_access),
 ) -> StreamingResponse:
@@ -808,6 +814,7 @@ def export_findings_json(
                 "template_id": finding.template_id,
                 "source": finding.source,
                 "status": finding.status.value,
+                "confidence": confidence_from_evidence(finding.evidence),
                 "asset_identifier": asset_identifier,
                 "asset_type": asset_type.value if asset_type else None,
                 "evidence": _parse_evidence(finding.evidence),
@@ -887,6 +894,7 @@ def export_findings_csv(
         "template_id",
         "source",
         "status",
+        "confidence",
         "asset_identifier",
         "asset_type",
         "first_seen",
@@ -908,6 +916,7 @@ def export_findings_csv(
                 finding.template_id or "",
                 finding.source,
                 finding.status.value,
+                confidence_from_evidence(finding.evidence),
                 asset_identifier,
                 asset_type.value if asset_type else "",
                 finding.first_seen.isoformat() if finding.first_seen else "",
