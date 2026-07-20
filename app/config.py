@@ -184,6 +184,7 @@ class Settings(BaseSettings):
     mail_security_enabled: bool = True
     mail_probe_timeout: int = 5  # seconds per banner/STARTTLS probe
     mail_open_relay_timeout: int = 10  # seconds for the smtplib relay test
+    mail_dns_timeout: int = 5  # seconds per DMARC/DKIM/MX DNS lookup
 
     # HTTPx - Web Technology Fingerprinting
     httpx_timeout: int = 600  # 10 minutes (300s was too short for 500+ hosts)
