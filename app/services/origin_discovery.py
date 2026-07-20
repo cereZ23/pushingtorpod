@@ -220,42 +220,141 @@ def _extract_title(html: str) -> str:
     return (match.group(1).strip() if match else "")[:120]
 
 
-def verify_origin(hostname: str, candidate_ip: str, timeout: int = 6) -> dict:
-    """Probe a candidate origin IP directly, carrying the fronted Host header.
+def _parse_http_response(data: bytes) -> dict:
+    """Parse a raw HTTP/1.x response into status/server/title/body."""
+    if not data:
+        return {"reachable": False}
+    try:
+        head, _, body = data.partition(b"\r\n\r\n")
+        lines = head.decode("iso-8859-1", errors="replace").split("\r\n")
+        status_parts = lines[0].split(" ", 2)
+        status = int(status_parts[1]) if len(status_parts) >= 2 and status_parts[1].isdigit() else 0
+        server = ""
+        for header in lines[1:]:
+            if header.lower().startswith("server:"):
+                server = header.split(":", 1)[1].strip()
+                break
+        body_text = body.decode("utf-8", errors="replace")
+        return {
+            "reachable": True,
+            "status": status,
+            "server": server,
+            "title": _extract_title(body_text),
+            "body": body_text[:8000],
+        }
+    except Exception:
+        return {"reachable": False}
 
-    Returns a dict with ``reachable`` and, when reachable, the status/server/title
-    of the direct response. Network errors are swallowed (candidate simply not an
-    origin). TLS verification is disabled because we connect by IP.
+
+def _http_fetch(connect_host: str, hostname: str, timeout: int, scheme: str = "https") -> dict:
+    """Raw HTTP(S) GET of ``/`` on ``connect_host`` presenting SNI/Host = ``hostname``.
+
+    Using a raw socket (not httpx) lets us set the TLS SNI to the fronted
+    hostname while connecting to a different IP — so the origin serves the
+    correct virtual host instead of a default page. TLS verification is off.
+    """
+    import socket
+    import ssl
+
+    port = 443 if scheme == "https" else 80
+    sock = None
+    try:
+        sock = socket.create_connection((connect_host, port), timeout=timeout)
+        if scheme == "https":
+            ctx = ssl._create_unverified_context()
+            sock = ctx.wrap_socket(sock, server_hostname=hostname)
+        request = (
+            f"GET / HTTP/1.1\r\nHost: {hostname}\r\n"
+            "User-Agent: easm-origin-check\r\nAccept: */*\r\n"
+            "Accept-Encoding: identity\r\nConnection: close\r\n\r\n"
+        )
+        sock.sendall(request.encode())
+        sock.settimeout(timeout)
+        data = b""
+        while len(data) < 200_000:
+            try:
+                chunk = sock.recv(8192)
+            except (socket.timeout, OSError):
+                break
+            if not chunk:
+                break
+            data += chunk
+    except (OSError, ValueError):
+        return {"reachable": False}
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+    return _parse_http_response(data)
+
+
+def verify_origin(hostname: str, candidate_ip: str, timeout: int = 6) -> dict:
+    """Probe a candidate origin IP directly (SNI/Host = the fronted hostname).
+
+    Returns ``reachable`` plus status/server/title/body of the direct response.
     """
     if not _is_public_ip(candidate_ip):
         return {"reachable": False, "candidate_ip": candidate_ip}
-
-    import httpx
-
-    headers = {"Host": hostname, "User-Agent": "easm-origin-check"}
     for scheme in ("https", "http"):
-        try:
-            with httpx.Client(verify=False, timeout=timeout, follow_redirects=False) as client:
-                resp = client.get(f"{scheme}://{candidate_ip}/", headers=headers)
-            return {
-                "reachable": True,
-                "scheme": scheme,
-                "status": resp.status_code,
-                "server": resp.headers.get("server", ""),
-                "title": _extract_title(resp.text),
-                "candidate_ip": candidate_ip,
-            }
-        except Exception:
-            continue
+        result = _http_fetch(candidate_ip, hostname, timeout, scheme)
+        if result.get("reachable"):
+            result["scheme"] = scheme
+            result["candidate_ip"] = candidate_ip
+            return result
     return {"reachable": False, "candidate_ip": candidate_ip}
+
+
+def fetch_baseline(hostname: str, timeout: int = 6) -> dict:
+    """Fetch the site the normal way (through the WAF) for content comparison."""
+    for scheme in ("https", "http"):
+        result = _http_fetch(hostname, hostname, timeout, scheme)
+        if result.get("reachable"):
+            return result
+    return {"reachable": False}
+
+
+def _norm(text: str) -> str:
+    return " ".join((text or "").split()).lower()
+
+
+def content_matches(baseline: dict, direct: dict) -> bool:
+    """True if the direct-origin response serves the same site as the baseline.
+
+    Promotes a finding from presumptive to confirmed. Signals: identical
+    (normalised) <title>, or a high body-similarity ratio.
+    """
+    if not baseline.get("reachable") or not direct.get("reachable"):
+        return False
+    base_title, direct_title = _norm(baseline.get("title", "")), _norm(direct.get("title", ""))
+    if base_title and base_title == direct_title:
+        return True
+    import difflib
+
+    base_body, direct_body = baseline.get("body", "") or "", direct.get("body", "") or ""
+    if len(base_body) > 200 and len(direct_body) > 200:
+        return difflib.SequenceMatcher(None, base_body, direct_body).ratio() >= 0.85
+    return False
 
 
 def _looks_like_origin(result: dict) -> bool:
     return bool(result.get("reachable")) and result.get("status") in _ORIGIN_STATUSES
 
 
-def _upsert_finding(db: Any, tenant_id: int, asset: Asset, result: dict, scan_run_id: Optional[int]) -> bool:
-    """Upsert an exposed-origin finding. Returns True if newly created."""
+def _upsert_finding(
+    db: Any,
+    tenant_id: int,
+    asset: Asset,
+    result: dict,
+    scan_run_id: Optional[int],
+    confirmed: bool = False,
+) -> bool:
+    """Upsert an exposed-origin finding. Returns True if newly created.
+
+    ``confirmed`` (content matched the baseline) → high severity + confirmed
+    confidence; otherwise medium + presumptive.
+    """
     ip = result["candidate_ip"]
     finding_key = f"ORIGIN-001:{asset.identifier}:{ip}"
     fingerprint = compute_finding_fingerprint(
@@ -272,18 +371,26 @@ def _upsert_finding(db: Any, tenant_id: int, asset: Asset, result: dict, scan_ru
         "direct_server": result.get("server"),
         "direct_title": result.get("title"),
         "scheme": result.get("scheme"),
-        # Presumptive: a direct answer strongly implies exposure but is not
-        # proof the content matches the protected site — validate manually.
-        "confidence": "presumptive",
+        "content_match": confirmed,
+        # Confirmed only when the origin served the same content as the site
+        # behind the WAF; otherwise a direct answer is merely suggestive.
+        "confidence": "confirmed" if confirmed else "presumptive",
         "scan_run_id": scan_run_id,
     }
-    name = f"Potential origin server exposed behind {asset.waf_name or 'WAF/CDN'} ({asset.identifier} -> {ip})"
+    if confirmed:
+        name = f"Origin server exposed behind {asset.waf_name or 'WAF/CDN'} ({asset.identifier} -> {ip})"
+        severity = FindingSeverity.HIGH
+    else:
+        name = f"Potential origin server exposed behind {asset.waf_name or 'WAF/CDN'} ({asset.identifier} -> {ip})"
+        severity = FindingSeverity.MEDIUM
 
     existing = db.query(Finding).filter(Finding.fingerprint == fingerprint).first()
     now = datetime.now(timezone.utc)
     if existing:
         existing.last_seen = now
         existing.evidence = evidence
+        existing.severity = severity
+        existing.name = name
         existing.occurrence_count = (existing.occurrence_count or 1) + 1
         if existing.status == FindingStatus.FIXED:
             existing.status = FindingStatus.OPEN
@@ -295,7 +402,7 @@ def _upsert_finding(db: Any, tenant_id: int, asset: Asset, result: dict, scan_ru
             source="origin_discovery",
             template_id=finding_key,
             name=name,
-            severity=FindingSeverity.MEDIUM,
+            severity=severity,
             evidence=evidence,
             first_seen=now,
             last_seen=now,
@@ -335,11 +442,16 @@ def run_origin_discovery(tenant_id: int, scan_run_id: Optional[int] = None) -> d
         for asset in fronted:
             stats["assets_checked"] += 1
             candidates = gather_origin_candidates(db, asset, settings.origin_max_candidates)
+            if not candidates:
+                continue
+            # Baseline (through the WAF) fetched once per asset for comparison.
+            baseline = fetch_baseline(asset.identifier, settings.origin_probe_timeout)
             for ip in candidates:
                 stats["candidates_probed"] += 1
                 result = verify_origin(asset.identifier, ip, settings.origin_probe_timeout)
                 if _looks_like_origin(result):
-                    if _upsert_finding(db, tenant_id, asset, result, scan_run_id):
+                    confirmed = content_matches(baseline, result)
+                    if _upsert_finding(db, tenant_id, asset, result, scan_run_id, confirmed=confirmed):
                         stats["findings_created"] += 1
                     else:
                         stats["findings_updated"] += 1
