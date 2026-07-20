@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     debug: bool = False
     environment: str = "development"
 
+    # Tenant-isolation guard: "audit" (log only, default), "enforce" (raise), "off"
+    tenant_guard_mode: str = "audit"
+
     # API Server
     api_host: str = "0.0.0.0"
     api_port: int = 8000
