@@ -112,7 +112,11 @@ def validate_scan_health(
 
         # 3. HTTP probe (httpx)
         if web_hosts > 0 and live_services == 0:
-            add("http_probe", FAIL, f"{web_hosts} web hosts but 0 live HTTP services — httpx likely failed (or all down).")
+            add(
+                "http_probe",
+                FAIL,
+                f"{web_hosts} web hosts but 0 live HTTP services — httpx likely failed (or all down).",
+            )
         else:
             add("http_probe", PASS, f"{live_services} live HTTP services.")
 
@@ -131,7 +135,11 @@ def validate_scan_health(
         # 6. Vulnerability scan (nuclei) — only assert if the run tracked urls_scanned
         if isinstance(urls_scanned, int):
             if urls_scanned == 0 and live_services > 0:
-                add("vuln_scan", FAIL, "nuclei scanned 0 URLs despite live services — template dir or target selection failed.")
+                add(
+                    "vuln_scan",
+                    FAIL,
+                    "nuclei scanned 0 URLs despite live services — template dir or target selection failed.",
+                )
             else:
                 add("vuln_scan", PASS, f"nuclei scanned {urls_scanned} URLs, {finding_count} findings.")
         # if urls_scanned isn't tracked, we don't guess — no check added
