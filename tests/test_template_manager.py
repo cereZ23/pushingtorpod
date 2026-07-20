@@ -119,11 +119,23 @@ class TestListTemplates:
 class TestUpdateTemplates:
     def test_success(self):
         fake = _FakeExecutor(returncode=0, stdout="successfully updated\n")
-        with _patch_executor(fake):
+        # nuclei succeeds AND templates are actually present on disk
+        with _patch_executor(fake), patch.object(TemplateManager, "_count_templates_on_disk", return_value=5000):
             mgr = TemplateManager()
             result = mgr.update_templates()
         assert result["success"] is True
+        assert result["template_count"] == 5000
         assert "timestamp" in result
+
+    def test_success_but_empty_templates_dir_is_failure(self):
+        """returncode 0 but an empty/masked templates dir must NOT be reported as success."""
+        fake = _FakeExecutor(returncode=0, stdout="No new updates found for nuclei templates\n")
+        with _patch_executor(fake), patch.object(TemplateManager, "_count_templates_on_disk", return_value=0):
+            mgr = TemplateManager()
+            result = mgr.update_templates()
+        assert result["success"] is False
+        assert result["template_count"] == 0
+        assert "templates" in result["error"].lower()
 
     def test_failure_returncode(self):
         fake = _FakeExecutor(returncode=2, stdout="", stderr="no connection")
