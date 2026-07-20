@@ -9,6 +9,7 @@ from app.services.origin_discovery import (
     _is_public_ip,
     _looks_like_origin,
     _registrable_domain,
+    content_matches,
     gather_origin_candidates,
     verify_origin,
 )
@@ -137,35 +138,46 @@ class TestGatherCandidates:
         assert "203.0.113.30" in candidates
 
 
-def _mock_client(resp=None, raise_first=False):
-    client = MagicMock()
-    client.__enter__.return_value = client
-    client.__exit__.return_value = False
-    if raise_first:
-        client.get.side_effect = Exception("refused")
-    else:
-        client.get.return_value = resp
-    return client
-
-
 class TestVerifyOrigin:
     def test_reachable_origin(self):
-        resp = MagicMock(status_code=200, headers={"server": "nginx"}, text="<title>My Site</title>")
-        with patch("httpx.Client", return_value=_mock_client(resp)):
+        fetched = {"reachable": True, "status": 200, "server": "nginx", "title": "My Site", "body": "x" * 300}
+        with patch("app.services.origin_discovery._http_fetch", return_value=fetched):
             result = verify_origin("www.example.com", "203.0.113.10", timeout=3)
         assert result["reachable"] is True
         assert result["status"] == 200
         assert result["server"] == "nginx"
         assert result["title"] == "My Site"
         assert result["scheme"] == "https"
+        assert result["candidate_ip"] == "203.0.113.10"
 
     def test_unreachable_origin(self):
-        with patch("httpx.Client", return_value=_mock_client(raise_first=True)):
+        with patch("app.services.origin_discovery._http_fetch", return_value={"reachable": False}):
             result = verify_origin("www.example.com", "203.0.113.10", timeout=3)
         assert result["reachable"] is False
 
     def test_private_ip_never_probed(self):
-        with patch("httpx.Client") as client:
+        with patch("app.services.origin_discovery._http_fetch") as fetch:
             result = verify_origin("www.example.com", "10.0.0.5", timeout=3)
         assert result["reachable"] is False
-        client.assert_not_called()
+        fetch.assert_not_called()
+
+
+class TestContentMatches:
+    def test_matching_title_confirms(self):
+        base = {"reachable": True, "title": "Acme Corp", "body": "aaa"}
+        direct = {"reachable": True, "title": "Acme Corp", "body": "zzz"}
+        assert content_matches(base, direct) is True
+
+    def test_similar_body_confirms(self):
+        body = "The quick brown fox jumps over the lazy dog. " * 20
+        base = {"reachable": True, "title": "", "body": body}
+        direct = {"reachable": True, "title": "", "body": body + "tiny diff"}
+        assert content_matches(base, direct) is True
+
+    def test_different_content_not_confirmed(self):
+        base = {"reachable": True, "title": "Acme Corp", "body": "a" * 300}
+        direct = {"reachable": True, "title": "CDN Error", "body": "b" * 300}
+        assert content_matches(base, direct) is False
+
+    def test_unreachable_baseline_not_confirmed(self):
+        assert content_matches({"reachable": False}, {"reachable": True, "title": "x"}) is False
