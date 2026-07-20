@@ -523,6 +523,23 @@ def run_scan_pipeline(self, scan_run_id: int):
         except Exception as exc:
             tenant_logger.warning("Scan validation error: %s", exc)
 
+        # Tool-invariant health gate: catch silent tool failures (0 certs on live
+        # HTTPS hosts, nuclei scanned 0 URLs, phase failures) on ANY target, even
+        # without a canary. Complements the canary validator above.
+        try:
+            from app.services.scan_health import validate_scan_health
+
+            health = validate_scan_health(tenant_id, scan_run_id, pipeline_stats)
+            pipeline_stats["health"] = health
+            if health["degraded"]:
+                tenant_logger.error(
+                    "SCAN DEGRADED — health invariants failed: %s. Results are unreliable.",
+                    health["failures"],
+                )
+                _update_scan_run(db, scan_run_id, ScanRunStatus.COMPLETED, stats=pipeline_stats)
+        except Exception as exc:
+            tenant_logger.warning("Scan health check error: %s", exc)
+
         return pipeline_stats
 
     except SoftTimeLimitExceeded:

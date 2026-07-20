@@ -33,6 +33,11 @@ class TemplateManager:
     - Template statistics
     """
 
+    # Minimum number of template files expected on disk after a successful
+    # update. The real corpus is ~10k+; anything below this means the templates
+    # directory is empty or masked (a silent-failure guard).
+    MIN_EXPECTED_TEMPLATES = 100
+
     # Template categories (aligned with Nuclei's directory structure)
     CATEGORIES = {
         "cves": {"path": "cves/", "description": "CVE-based vulnerabilities", "risk": "high"},
@@ -134,16 +139,60 @@ class TemplateManager:
                     logger.error(f"Template update failed: {stderr}")
                     return {"success": False, "error": stderr, "timestamp": datetime.now(timezone.utc).isoformat()}
 
-                # Parse output for success indicators
-                success = "successfully updated" in stdout.lower() or returncode == 0
+                # HARDENING: a zero return code is NOT sufficient. nuclei reports
+                # "No new updates" / exit 0 even when the templates directory is
+                # empty (e.g. masked by an empty volume mount) — a silent failure
+                # that makes every subsequent scan a false negative. Verify the
+                # templates actually exist on disk before declaring success.
+                template_count = self._count_templates_on_disk()
+                if template_count < self.MIN_EXPECTED_TEMPLATES:
+                    logger.error(
+                        "Template update reported success but only %d templates are present "
+                        "(expected >= %d) — the templates directory may be empty or masked.",
+                        template_count,
+                        self.MIN_EXPECTED_TEMPLATES,
+                    )
+                    return {
+                        "success": False,
+                        "error": (
+                            f"only {template_count} templates present after update "
+                            f"(expected >= {self.MIN_EXPECTED_TEMPLATES}); templates dir may be empty/masked"
+                        ),
+                        "template_count": template_count,
+                        "output": stdout,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
 
-                logger.info(f"Template update {'succeeded' if success else 'failed'}")
-
-                return {"success": success, "output": stdout, "timestamp": datetime.now(timezone.utc).isoformat()}
+                logger.info("Nuclei templates updated: %d templates present", template_count)
+                return {
+                    "success": True,
+                    "template_count": template_count,
+                    "output": stdout,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
 
         except ToolExecutionError as e:
             logger.error(f"Failed to update templates: {e}")
             return {"success": False, "error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
+    def _count_templates_on_disk(self) -> int:
+        """Count nuclei template files (.yaml/.yml) actually present on disk.
+
+        Robust check independent of nuclei's own output or template-path layout —
+        a masked/empty templates directory yields 0, which the caller treats as a
+        failed update rather than a silent success.
+        """
+        import os
+
+        template_dir = os.environ.get("NUCLEI_TEMPLATES") or os.path.expanduser("~/nuclei-templates")
+        count = 0
+        try:
+            for _root, _dirs, files in os.walk(template_dir):
+                count += sum(1 for f in files if f.endswith((".yaml", ".yml")))
+        except OSError as exc:
+            logger.error("Could not read nuclei templates directory %s: %s", template_dir, exc)
+            return 0
+        return count
 
     def get_template_info(self, template_id: str) -> Optional[Dict]:
         """

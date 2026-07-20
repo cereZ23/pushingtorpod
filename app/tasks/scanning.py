@@ -652,6 +652,39 @@ def update_nuclei_templates():
         return {"success": False, "error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
+@celery.task(name="app.tasks.scanning.check_scanning_tools")
+def check_scanning_tools():
+    """Inventory the scanning toolchain (versions + missing/broken tools).
+
+    A missing or broken scanner binary silently under-reports every scan; this
+    surfaces the state so it can be alerted on. Returns the tool_manager report.
+    """
+    from app.services.scanning.tool_manager import check_tools
+
+    try:
+        result = check_tools()
+        if not result["healthy"]:
+            logger.error("Scanning toolchain unhealthy — missing: %s", result["missing"])
+        return result
+    except Exception as e:
+        logger.error(f"Tool check failed: {e}", exc_info=True)
+        return {"healthy": False, "error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@celery.task(name="app.tasks.scanning.update_scanning_tools")
+def update_scanning_tools(update_binaries: bool = False):
+    """Update the scanning toolchain: nuclei templates (verified) and, if
+    ``update_binaries`` is set, the non-pinned tool binaries.
+    """
+    from app.services.scanning.tool_manager import update_tools
+
+    try:
+        return update_tools(update_binaries=update_binaries)
+    except Exception as e:
+        logger.error(f"Tool update failed: {e}", exc_info=True)
+        return {"success": False, "error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
 @celery.task(name="app.tasks.scanning.calculate_comprehensive_risk_scores")
 def calculate_comprehensive_risk_scores(tenant_id: int):
     """
