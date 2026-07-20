@@ -42,6 +42,7 @@ class TestPipelineStructure:
             "6c",
             "7",
             "8",
+            "8c",
             "9",
             "9b",
             "10",

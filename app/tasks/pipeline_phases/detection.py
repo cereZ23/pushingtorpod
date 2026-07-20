@@ -36,6 +36,23 @@ def _phase_8_misconfig_detection(tenant_id, project_id, scan_run_id, db, tenant_
     return {"findings_created": 0, "status": "unknown"}
 
 
+def _phase_8c_origin_discovery(tenant_id, project_id, scan_run_id, db, tenant_logger):
+    """Phase 8c: Discover origin servers exposed behind a WAF/CDN."""
+    from app.services.origin_discovery import run_origin_discovery
+
+    result = run_origin_discovery(tenant_id, scan_run_id=scan_run_id)
+
+    if isinstance(result, dict):
+        return {
+            "findings_created": result.get("findings_created", 0),
+            "findings_updated": result.get("findings_updated", 0),
+            "assets_checked": result.get("assets_checked", 0),
+            "candidates_probed": result.get("candidates_probed", 0),
+            "status": result.get("status", "unknown"),
+        }
+    return {"findings_created": 0, "status": "unknown"}
+
+
 def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier=1):
     """Phase 9: Vulnerability scanning with Nuclei. Templates/severity depend on scan tier.
 
