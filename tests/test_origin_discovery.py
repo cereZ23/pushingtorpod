@@ -84,7 +84,7 @@ class TestGatherCandidates:
             raw_metadata=json.dumps({"a": ["203.0.113.50"]}),
         )
 
-        candidates = gather_origin_candidates(db_session, fronted)
+        candidates = gather_origin_candidates(db_session, fronted, use_external=False)
         assert candidates == ["203.0.113.10"]
 
     def test_no_candidates_when_no_direct_siblings(self, db_session, tenant):
@@ -95,7 +95,46 @@ class TestGatherCandidates:
             waf_name="sucuri",
             raw_metadata=json.dumps({"a": ["104.16.0.2"]}),
         )
-        assert gather_origin_candidates(db_session, fronted) == []
+        assert gather_origin_candidates(db_session, fronted, use_external=False) == []
+
+    def test_spf_ip_is_candidate(self, db_session, tenant):
+        fronted = self._asset(
+            db_session,
+            tenant.id,
+            "www.spf.com",
+            waf_name="cloudflare",
+            raw_metadata=json.dumps(
+                {
+                    "a": ["104.16.0.3"],
+                    "txt": ["v=spf1 ip4:203.0.113.20 ip4:198.51.100.0/24 include:_spf.google.com -all"],
+                }
+            ),
+        )
+        candidates = gather_origin_candidates(db_session, fronted, use_external=False)
+        # bare ip4 host is a candidate; the /24 range is skipped
+        assert "203.0.113.20" in candidates
+        assert "198.51.100.0" not in candidates
+
+    def test_crtsh_source_merged_when_enabled(self, db_session, tenant):
+        fronted = self._asset(
+            db_session,
+            tenant.id,
+            "www.crt.com",
+            waf_name="sucuri",
+            raw_metadata=json.dumps({"a": ["104.16.0.4"]}),
+        )
+        with (
+            patch(
+                "app.services.origin_discovery._crtsh_hostnames",
+                return_value={"origin.crt.com"},
+            ),
+            patch(
+                "app.services.origin_discovery._resolve_ipv4",
+                return_value=["203.0.113.30"],
+            ),
+        ):
+            candidates = gather_origin_candidates(db_session, fronted, use_external=True)
+        assert "203.0.113.30" in candidates
 
 
 def _mock_client(resp=None, raise_first=False):

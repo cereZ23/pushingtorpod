@@ -79,16 +79,110 @@ def _asset_ips(asset: Asset) -> list[str]:
     return ips
 
 
-def gather_origin_candidates(db: Any, asset: Asset, max_candidates: int = 8) -> list[str]:
-    """Collect candidate origin IPs for a WAF-fronted asset from existing DB data.
+_SPF_IP4_RE = re.compile(r"ip4:(\d+\.\d+\.\d+\.\d+)(?:/(\d+))?")
 
-    Candidates = public A-record IPs of *sibling* assets on the same registrable
-    domain that are NOT themselves behind a WAF/CDN (those direct-resolving
-    siblings frequently point at the shared origin).
+
+def _txt_records(asset: Asset) -> list[str]:
+    raw = asset.raw_metadata
+    if not raw:
+        return []
+    try:
+        record = json.loads(raw) if isinstance(raw, str) else raw
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return record.get("txt", []) or [] if isinstance(record, dict) else []
+
+
+def _spf_candidate_ips(asset: Asset) -> list[str]:
+    """Extract host IPs published in the domain's SPF record.
+
+    ``ip4:`` mechanisms (bare or /32) frequently list the real mail/hosting IP,
+    which is often the same box as the web origin. Ranges (prefix < 32) are
+    skipped — enumerating a whole block is not worth the probe budget.
     """
+    ips: list[str] = []
+    for txt in _txt_records(asset):
+        s = str(txt)
+        if "v=spf1" not in s.lower():
+            continue
+        for match in _SPF_IP4_RE.finditer(s):
+            ip, mask = match.group(1), match.group(2)
+            if mask is None or mask == "32":
+                ips.append(ip)
+    return ips
+
+
+def _crtsh_hostnames(domain: str, timeout: int) -> set[str]:
+    """Enumerate hostnames for a domain from crt.sh certificate transparency."""
+    import httpx
+
+    hosts: set[str] = set()
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.get("https://crt.sh/", params={"q": f"%.{domain}", "output": "json"})
+            data = resp.json()
+    except Exception:
+        return hosts
+    for entry in data if isinstance(data, list) else []:
+        for name in str(entry.get("name_value", "")).splitlines():
+            name = name.strip().lstrip("*.").lower()
+            if name and name.endswith(domain) and "@" not in name:
+                hosts.add(name)
+    return hosts
+
+
+def _resolve_ipv4(hostname: str) -> list[str]:
+    import socket
+
+    try:
+        infos = socket.getaddrinfo(hostname, None, socket.AF_INET)
+    except OSError:
+        return []
+    return list(dict.fromkeys(info[4][0] for info in infos))
+
+
+def _crtsh_candidate_ips(domain: str, timeout: int, max_hosts: int) -> list[str]:
+    """crt.sh hostnames → resolve to A records → candidate IPs."""
+    ips: list[str] = []
+    for host in list(_crtsh_hostnames(domain, timeout))[:max_hosts]:
+        ips.extend(_resolve_ipv4(host))
+    return ips
+
+
+def gather_origin_candidates(
+    db: Any,
+    asset: Asset,
+    max_candidates: int = 8,
+    use_external: Optional[bool] = None,
+) -> list[str]:
+    """Collect candidate origin IPs for a WAF-fronted asset.
+
+    Sources, in order of cost:
+      1. public A-record IPs of *sibling* assets on the same registrable domain
+         that are NOT behind a WAF/CDN (direct-resolving siblings) — from the DB;
+      2. ``ip4:`` hosts in the domain's SPF record — from the DB;
+      3. (optional) hostnames from crt.sh certificate transparency, resolved to
+         A records — external calls, gated by ``use_external``.
+
+    The asset's own (WAF-edge) IPs, reserved/internal IPs, and duplicates are
+    excluded. Capped at ``max_candidates``.
+    """
+    if use_external is None:
+        use_external = settings.origin_use_external_sources
     base = _registrable_domain(asset.identifier)
     fronted_ips = set(_asset_ips(asset))  # exclude the asset's own (WAF) IPs
 
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def _add(ip: str) -> bool:
+        """Add ip if usable; return True once the cap is reached."""
+        if ip not in seen and ip not in fronted_ips and _is_public_ip(ip):
+            seen.add(ip)
+            candidates.append(ip)
+        return len(candidates) >= max_candidates
+
+    # 1. Direct-resolving sibling assets on the same registrable domain.
     siblings = (
         db.query(Asset)
         .filter(
@@ -100,19 +194,24 @@ def gather_origin_candidates(db: Any, asset: Asset, max_candidates: int = 8) -> 
         )
         .all()
     )
-
-    candidates: list[str] = []
-    seen: set[str] = set()
     for sib in siblings:
         if _registrable_domain(sib.identifier) != base:
             continue
         for ip in _asset_ips(sib):
-            if ip in seen or ip in fronted_ips or not _is_public_ip(ip):
-                continue
-            seen.add(ip)
-            candidates.append(ip)
-            if len(candidates) >= max_candidates:
+            if _add(ip):
                 return candidates
+
+    # 2. SPF ip4 hosts published by the domain itself.
+    for ip in _spf_candidate_ips(asset):
+        if _add(ip):
+            return candidates
+
+    # 3. crt.sh certificate-transparency hostnames, resolved (external).
+    if use_external:
+        for ip in _crtsh_candidate_ips(base, settings.origin_crtsh_timeout, settings.origin_crtsh_max_hosts):
+            if _add(ip):
+                return candidates
+
     return candidates
 
 

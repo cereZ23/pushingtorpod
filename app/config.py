@@ -171,6 +171,9 @@ class Settings(BaseSettings):
     waf_origin_discovery_enabled: bool = True
     origin_probe_timeout: int = 6  # seconds per direct origin probe
     origin_max_candidates: int = 8  # max candidate IPs probed per fronted asset
+    origin_use_external_sources: bool = True  # query crt.sh + resolve for extra candidates
+    origin_crtsh_timeout: int = 15  # seconds for the crt.sh lookup
+    origin_crtsh_max_hosts: int = 40  # cap hostnames resolved from crt.sh
 
     # Enrichment Pipeline (Sprint 2)
     enrichment_enabled: bool = True
