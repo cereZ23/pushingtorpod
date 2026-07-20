@@ -167,6 +167,11 @@ class Settings(BaseSettings):
     puredns_resolvers_path: str = "/app/data/resolvers.txt"
     puredns_wordlist_path: str = "/app/data/dns-wordlist.txt"
 
+    # WAF origin discovery (Phase 8c) — find origin IPs exposed behind a WAF/CDN
+    waf_origin_discovery_enabled: bool = True
+    origin_probe_timeout: int = 6  # seconds per direct origin probe
+    origin_max_candidates: int = 8  # max candidate IPs probed per fronted asset
+
     # Enrichment Pipeline (Sprint 2)
     enrichment_enabled: bool = True
     enrichment_auto_trigger: bool = True  # Automatically trigger enrichment after discovery

@@ -67,6 +67,7 @@ from app.tasks.pipeline_phases.reconnaissance import (
 )
 from app.tasks.pipeline_phases.detection import (
     _phase_8_misconfig_detection,
+    _phase_8c_origin_discovery,
     _phase_9_vuln_scanning,
     _phase_9b_dnstwist,
     _phase_10_correlation,
@@ -130,6 +131,7 @@ PHASE_DEFS = {
     "6c": {"name": "Sensitive Path Discovery", "required": False},
     "7": {"name": "Visual Recon", "required": False},
     "8": {"name": "Misconfiguration Detection", "required": True},
+    "8c": {"name": "WAF Origin Discovery", "required": False},
     "9": {"name": "Vulnerability Scanning", "required": True},
     "9b": {"name": "DNSTwist Typosquatting", "required": False},
     "10": {"name": "Correlation & Dedup", "required": True},
@@ -157,7 +159,7 @@ EXECUTION_PLAN = [
     # - 7: Playwright screenshots add no security findings, cost 2-3 min +
     #   ~1GB RAM. HTTPx title + tech detection (phase 4) provides the same
     #   metadata. Katana endpoints (6b) replace the "see what's there" value.
-    ["8", "9", "9b"],  # Misconfig + Nuclei + DNSTwist in parallel
+    ["8", "8c", "9", "9b"],  # Misconfig + Origin discovery + Nuclei + DNSTwist in parallel
     ["10", "11"],  # Correlation + Risk scoring in parallel
     "12",  # Diff & alerting
 ]
@@ -659,6 +661,8 @@ def _execute_phase(
         return _phase_7_visual_recon(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == "8":
         return _phase_8_misconfig_detection(tenant_id, project_id, scan_run_id, db, tenant_logger)
+    elif phase_id == "8c":
+        return _phase_8c_origin_discovery(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == "9":
         return _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier)
     elif phase_id == "9b":

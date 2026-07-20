@@ -28,6 +28,7 @@ celery = Celery(
         "app.tasks.diff_alert",
         "app.tasks.fingerprint",
         "app.tasks.misconfig",
+        "app.tasks.origin_discovery",
         "app.tasks.dnstwist_scan",
         "app.tasks.network_enrichment",
         "app.tasks.visual_recon",
