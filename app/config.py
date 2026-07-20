@@ -172,6 +172,11 @@ class Settings(BaseSettings):
     enrichment_auto_trigger: bool = True  # Automatically trigger enrichment after discovery
     enrichment_batch_size: int = 100  # Max assets to enrich per run
 
+    # Mail security probing (SMTP/POP3/IMAP/FTP cleartext + open relay)
+    mail_security_enabled: bool = True
+    mail_probe_timeout: int = 5  # seconds per banner/STARTTLS probe
+    mail_open_relay_timeout: int = 10  # seconds for the smtplib relay test
+
     # HTTPx - Web Technology Fingerprinting
     httpx_timeout: int = 600  # 10 minutes (300s was too short for 500+ hosts)
     httpx_rate_limit: int = 150  # Requests per second

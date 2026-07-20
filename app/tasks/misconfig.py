@@ -1,7 +1,7 @@
 """
 Misconfiguration Detection Engine - Phase 8
 
-Implements 19 security controls across 7 categories using a decorator-based
+Implements 21 security controls across 7 categories using a decorator-based
 control registry. Each control function inspects asset data (services, certificates,
 HTTP headers, DNS records) and produces structured findings.
 
@@ -15,12 +15,13 @@ Categories and control IDs:
   - TLS Certificate Intelligence  (TLS-001, TLS-005, TLS-009, TLS-010)
   - Security Headers              (HDR-004, HDR-007, HDR-008, HDR-009, HDR-010)
   - Information Disclosure        (INF-009)
-  - Email Security                (EML-001, EML-002, EML-003, EML-006, EML-007)
+  - Email Security                (EML-001, EML-002, EML-003, EML-006, EML-007, EML-008)
   - DNS Security                  (DNS-001)
   - Authentication                (AUTH-001, AUTH-002)
-  - Service Exposure              (EXP-006)
+  - Service Exposure              (EXP-006, EML-009)
 """
 
+import ipaddress
 import json
 import logging
 import re
@@ -29,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from app.celery_app import celery
+from app.config import settings
 from app.database import SessionLocal
 from app.models.database import (
     Asset,
@@ -40,6 +42,7 @@ from app.models.database import (
 from app.models.enrichment import Certificate
 from app.services.dedup import compute_finding_fingerprint
 from app.utils.logger import TenantLoggerAdapter
+from app.utils.validators import DomainValidator
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +152,29 @@ def _is_web_service(service: Service) -> bool:
     if proto in _NON_HTTP_PROTOCOLS:
         return False
     return True
+
+
+def _is_safe_probe_target(host: str) -> bool:
+    """Return False for hosts a scanner must not open a socket to.
+
+    Mail/FTP probes connect directly to ``asset.identifier``. This guard keeps
+    them from being pointed at internal/metadata targets (SSRF): it rejects IP
+    literals in reserved ranges, cloud-metadata endpoints, and internal TLDs.
+    Public hostnames pass (no DNS resolution here — they were discovered
+    externally and the probe itself is a plain banner grab).
+    """
+    if not host or not isinstance(host, str):
+        return False
+    host = host.strip().lower().rstrip(".")
+    if host in DomainValidator.METADATA_ENDPOINTS:
+        return False
+    if any(host.endswith(tld) for tld in DomainValidator.BLOCKED_TLDS):
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return True  # hostname, not an IP literal
+    return not any(ip in net for net in DomainValidator.RESERVED_NETWORKS)
 
 
 def _get_http_headers(service: Service) -> dict[str, str]:
@@ -918,7 +944,9 @@ def check_eml_001(
     """
     findings: list[dict] = []
     metadata = _parse_raw_metadata(asset)
-    dns_txt = metadata.get("dns_txt", [])
+    # dnsx stores apex TXT records under "txt"; older code read "dns_txt"
+    # (never populated), which left this check dormant. Read both.
+    dns_txt = metadata.get("txt") or metadata.get("dns_txt") or []
 
     has_spf = any("v=spf1" in str(txt).lower() for txt in dns_txt)
 
@@ -960,7 +988,7 @@ def check_eml_002(
     """Detect SPF records ending with +all (allows any sender)."""
     findings: list[dict] = []
     metadata = _parse_raw_metadata(asset)
-    dns_txt = metadata.get("dns_txt", [])
+    dns_txt = metadata.get("txt") or metadata.get("dns_txt") or []
 
     for txt in dns_txt:
         txt_str = str(txt).lower()
@@ -1047,12 +1075,14 @@ def check_eml_006(
     import socket
 
     findings: list[dict] = []
+    if not settings.mail_security_enabled or not _is_safe_probe_target(asset.identifier):
+        return findings
     smtp_ports = {25, 465, 587}
     for svc in services:
         if svc.port not in smtp_ports:
             continue
         try:
-            with socket.create_connection((asset.identifier, svc.port), timeout=5) as sock:
+            with socket.create_connection((asset.identifier, svc.port), timeout=settings.mail_probe_timeout) as sock:
                 banner = sock.recv(1024).decode("utf-8", errors="replace").strip()
                 sock.sendall(b"EHLO easm-scanner\r\n")
                 ehlo_resp = sock.recv(4096).decode("utf-8", errors="replace")
@@ -1099,11 +1129,13 @@ def check_eml_007(
     import socket
 
     findings: list[dict] = []
+    if not settings.mail_security_enabled or not _is_safe_probe_target(asset.identifier):
+        return findings
     for svc in services:
         if svc.port not in {25, 587}:
             continue
         try:
-            with smtplib.SMTP(asset.identifier, svc.port, timeout=10) as smtp:
+            with smtplib.SMTP(asset.identifier, svc.port, timeout=settings.mail_open_relay_timeout) as smtp:
                 smtp.ehlo("easm-scanner")
                 # Try STARTTLS if available
                 try:
@@ -1139,6 +1171,156 @@ def check_eml_007(
                     smtp.rset()
         except (smtplib.SMTPException, socket.timeout, OSError):
             pass  # Connection failed or SMTP error
+    return findings
+
+
+@register(
+    control_id="EML-008",
+    name="POP3/IMAP service accepts cleartext connections",
+    severity="medium",
+    confidence=0.75,
+    category="Email Security",
+    asset_types=["domain", "subdomain"],
+)
+def check_eml_008(
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
+) -> list[dict]:
+    """Detect POP3 (110) / IMAP (143) mailbox services exposed in cleartext.
+
+    A reachable plaintext mailbox port means credentials can traverse the
+    network unencrypted; it is worse when STARTTLS is not even offered. The
+    implicit-TLS ports (995/993) are intentionally not flagged.
+    """
+    import socket
+
+    findings: list[dict] = []
+    if not settings.mail_security_enabled or not _is_safe_probe_target(asset.identifier):
+        return findings
+
+    # port -> (protocol, capability probe, STARTTLS token, graceful close)
+    probes = {
+        110: ("pop3", b"CAPA\r\n", "STLS", b"QUIT\r\n"),
+        143: ("imap", b"a1 CAPABILITY\r\n", "STARTTLS", b"a2 LOGOUT\r\n"),
+    }
+    for svc in services:
+        probe = probes.get(svc.port)
+        if not probe:
+            continue
+        protocol, cap_cmd, starttls_token, close_cmd = probe
+        try:
+            with socket.create_connection((asset.identifier, svc.port), timeout=settings.mail_probe_timeout) as sock:
+                banner = sock.recv(1024).decode("utf-8", errors="replace").strip()
+                sock.sendall(cap_cmd)
+                caps = sock.recv(4096).decode("utf-8", errors="replace")
+                has_starttls = starttls_token in caps.upper()
+                implicit_tls_port = 995 if svc.port == 110 else 993
+                findings.append(
+                    {
+                        "name": f"{protocol.upper()} on port {svc.port} accepts cleartext connections",
+                        "severity": "medium" if has_starttls else "high",
+                        "confidence": 0.75,
+                        "evidence": {
+                            "port": svc.port,
+                            "protocol": protocol,
+                            "banner": banner[:200],
+                            "starttls_offered": has_starttls,
+                        },
+                        "control_id": "EML-008",
+                        "finding_key": f"EML-008:{asset.identifier}:{svc.port}",
+                        "remediation": (
+                            f"Require TLS for {protocol.upper()}: offer STARTTLS and reject plaintext "
+                            f"authentication, or move clients to the implicit-TLS port ({implicit_tls_port})."
+                        ),
+                    }
+                )
+                try:
+                    sock.sendall(close_cmd)
+                except OSError:
+                    pass
+        except (socket.timeout, OSError):
+            pass  # Port not reachable or connection refused
+    return findings
+
+
+@register(
+    control_id="EML-009",
+    name="FTP service exposes cleartext or anonymous access",
+    severity="medium",
+    confidence=0.80,
+    category="Service Exposure",
+    asset_types=["domain", "subdomain"],
+)
+def check_eml_009(
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
+) -> list[dict]:
+    """Detect FTP (21) exposing credentials in cleartext and/or anonymous login.
+
+    FTP's control channel is unencrypted, so any login transmits credentials in
+    the clear. The anonymous-login check is read-only and non-destructive: it
+    attempts the standard anonymous credentials, then immediately disconnects
+    without any file operation.
+    """
+    import ftplib
+
+    findings: list[dict] = []
+    if not settings.mail_security_enabled or not _is_safe_probe_target(asset.identifier):
+        return findings
+
+    for svc in services:
+        if svc.port != 21:
+            continue
+        ftp = ftplib.FTP()
+        banner = ""
+        anonymous = False
+        connected = False
+        try:
+            ftp.connect(asset.identifier, svc.port, timeout=settings.mail_probe_timeout)
+            connected = True
+            banner = (ftp.getwelcome() or "").strip()
+            try:
+                ftp.login()  # defaults to anonymous / anonymous@
+                anonymous = True
+            except ftplib.error_perm:
+                anonymous = False
+        except ftplib.all_errors:
+            pass
+        finally:
+            try:
+                ftp.close()
+            except Exception:
+                pass
+
+        if not connected:
+            continue
+
+        findings.append(
+            {
+                "name": (
+                    f"FTP on port {svc.port} allows anonymous login"
+                    if anonymous
+                    else f"FTP on port {svc.port} transmits credentials in cleartext"
+                ),
+                "severity": "high" if anonymous else "medium",
+                "confidence": 0.80,
+                "evidence": {
+                    "port": svc.port,
+                    "banner": banner[:200],
+                    "anonymous_login": anonymous,
+                },
+                "control_id": "EML-009",
+                "finding_key": f"EML-009:{asset.identifier}:{svc.port}",
+                "remediation": (
+                    "Replace plaintext FTP with SFTP (over SSH) or FTPS with enforced TLS, and disable "
+                    "anonymous access unless it is an intentional public file service."
+                ),
+            }
+        )
     return findings
 
 
