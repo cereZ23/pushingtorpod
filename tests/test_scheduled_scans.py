@@ -46,14 +46,20 @@ class TestIsDue:
         profile.project_id = 1
         profile.id = 1
 
+        # Fixed 'now' at :30s so the last-scan timestamp stays within the same
+        # cron minute as the trigger point. Using datetime.now() here is flaky:
+        # in the first 10s of a minute, now-10s falls into the PREVIOUS minute
+        # (before prev_trigger) and the retrigger guard would not fire.
+        now = datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc)
+
         last_scan = MagicMock()
-        # Scan completed 10 seconds ago — after this minute's trigger point
-        last_scan.completed_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+        # Scan completed 10 seconds ago — after this minute's trigger point (12:00:00)
+        last_scan.completed_at = now - timedelta(seconds=10)
 
         db = MagicMock()
         db.query.return_value.filter.return_value.order_by.return_value.first.return_value = last_scan
 
-        assert _is_due(profile, datetime.now(timezone.utc), db) is False
+        assert _is_due(profile, now, db) is False
 
     def test_invalid_cron_not_due(self):
         from app.tasks.scheduled_scans import _is_due
