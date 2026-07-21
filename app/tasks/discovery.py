@@ -255,6 +255,22 @@ def collect_seeds(tenant_id: int):
             f"{len(seed_data['keywords'])} keywords"
         )
 
+        # Scope-authorization gate: verify seed targets are within an active
+        # authorization before actively scanning them. Audit mode (default)
+        # only logs; enforce mode raises to stop the scan.
+        scan_targets = seed_data["domains"] + seed_data["ip_ranges"]
+        if scan_targets:
+            try:
+                from app.services.scope_authorization import assert_targets_authorized
+
+                assert_targets_authorized(db, tenant_id, scan_targets)
+            except Exception as exc:
+                from app.services.scope_authorization import ScopeViolationError
+
+                if isinstance(exc, ScopeViolationError):
+                    raise
+                logger.warning("Scope-auth check skipped for tenant %d: %s", tenant_id, exc)
+
         # Run uncover if keywords are present and API keys configured
         if seed_data["keywords"] and tenant.api_keys:
             try:
