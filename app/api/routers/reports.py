@@ -836,6 +836,22 @@ def export_findings_json(
     )
 
 
+def _csv_safe(value) -> str:
+    """Neutralize CSV / spreadsheet formula injection.
+
+    Scan-derived fields (finding names, asset identifiers, banners) are
+    attacker-controlled. A cell starting with = + - @ or a tab/CR is executed
+    as a formula by Excel/Sheets, so prefix it with a single quote to force
+    text. See OWASP "CSV Injection".
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    if text[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + text
+    return text
+
+
 @router.get("/export/csv")
 def export_findings_csv(
     tenant_id: int,
@@ -907,7 +923,8 @@ def export_findings_csv(
 
     for finding, asset_identifier, asset_type in results:
         writer.writerow(
-            [
+            _csv_safe(v)
+            for v in [
                 finding.id,
                 finding.name,
                 finding.severity.value,
@@ -978,7 +995,8 @@ def export_assets_csv(
 
     for asset in results:
         writer.writerow(
-            [
+            _csv_safe(v)
+            for v in [
                 asset.id,
                 asset.identifier,
                 asset.type.value if asset.type else "",
