@@ -94,3 +94,10 @@ async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
             logger.error(f"Async database session error: {e}")
             await session.rollback()
             raise
+
+
+# ─── Tenant isolation guard ──────────────────────────────────────
+# Importing registers the do_orm_execute listener (audit mode by default).
+from app.core.tenant_guard import register_tenant_guard  # noqa: E402
+
+register_tenant_guard()

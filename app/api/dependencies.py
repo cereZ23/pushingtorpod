@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, selectinload
 import logging
 
 from app.database import SessionLocal, AsyncSessionLocal
+from app.core.tenant_context import set_current_tenant
 from app.security.jwt_auth import jwt_manager
 from app.models.auth import User, TenantMembership
 
@@ -73,6 +74,8 @@ async def verify_tenant_access(
     required_permission: str = "read",
 ) -> TenantMembership:
     """Verify user has tenant access with required permission (sync)."""
+    # Scope the DB session to this tenant for the isolation guard / RLS.
+    set_current_tenant(tenant_id)
     if current_user.is_superuser:
         return TenantMembership(user_id=current_user.id, tenant_id=tenant_id, role="admin")
 
@@ -156,6 +159,7 @@ async def verify_tenant_access_async(
     required_permission: str = "read",
 ) -> TenantMembership:
     """Verify user has tenant access with required permission (async)."""
+    set_current_tenant(tenant_id)
     if current_user.is_superuser:
         return TenantMembership(user_id=current_user.id, tenant_id=tenant_id, role="admin")
 

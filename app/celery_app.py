@@ -100,15 +100,54 @@ celery.conf.beat_schedule = {
 }
 
 
+def _extract_task_tenant_id(task, args, kwargs):
+    """Best-effort tenant_id for a task, from kwargs or its positional signature."""
+    if isinstance(kwargs, dict) and kwargs.get("tenant_id") is not None:
+        return kwargs["tenant_id"]
+    try:
+        import inspect
+
+        params = list(inspect.signature(task.run).parameters)
+        if "tenant_id" in params:
+            idx = params.index("tenant_id")
+            if params and params[0] == "self":  # bound task: 'self' not in args
+                idx -= 1
+            if args and 0 <= idx < len(args):
+                return args[idx]
+    except (ValueError, TypeError):
+        pass
+    return None
+
+
+# Tasks that legitimately run cross-tenant end to end (global caches, retention
+# cleanup, all-tenant sync). They bypass the tenant-isolation guard by design.
+_CROSS_TENANT_TASKS = {
+    "app.tasks.cleanup.cleanup_old_scan_data",
+    "app.tasks.threat_intel_sync.refresh_threat_intel",
+    "app.tasks.ticket_sync.sync_all_tenant_tickets",
+}
+
+
 @signals.task_prerun.connect
 def task_prerun_handler(sender=None, task_id=None, task=None, args=None, kwargs=None, **extra):
-    """Log task start"""
+    """Log task start and scope the tenant context for the isolation guard."""
+    from app.core.tenant_context import mark_cross_tenant, set_current_tenant
+
+    if task is not None and task.name in _CROSS_TENANT_TASKS:
+        mark_cross_tenant()
+    else:
+        tenant_id = _extract_task_tenant_id(task, args or (), kwargs or {})
+        if tenant_id is not None:
+            set_current_tenant(tenant_id)
     logger.info(f"Task {task.name} started with ID {task_id}")
 
 
 @signals.task_postrun.connect
 def task_postrun_handler(sender=None, task_id=None, task=None, args=None, kwargs=None, retval=None, **extra):
-    """Log task completion"""
+    """Log task completion and clear the tenant context."""
+    from app.core.tenant_context import reset_tenant_context
+
+    reset_tenant_context()
     logger.info(f"Task {task.name} completed with ID {task_id}")
 
 
