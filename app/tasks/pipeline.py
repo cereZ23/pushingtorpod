@@ -381,12 +381,24 @@ def run_scan_pipeline(self, scan_run_id: int):
         }
 
         # Execute phases following the execution plan (sequential + parallel groups)
+        from app.services import kill_switch
+
         for step in EXECUTION_PLAN:
             # Check if scan was cancelled
             db.refresh(scan_run)
             if scan_run.status == ScanRunStatus.CANCELLED:
                 tenant_logger.info(f"Scan {scan_run_id} was cancelled, stopping pipeline")
                 break
+
+            # Blast-radius kill switch: halt the scan (new or in-flight) on demand.
+            if settings.scan_kill_switch_enabled:
+                killed, reason = kill_switch.is_active(tenant_id)
+                if killed:
+                    tenant_logger.warning("Scan %s halted by kill-switch: %s", scan_run_id, reason)
+                    _update_scan_run(
+                        db, scan_run_id, ScanRunStatus.CANCELLED, error=f"Stopped by kill-switch: {reason}"
+                    )
+                    break
 
             # Normalize step to a list of phase IDs
             phase_ids = step if isinstance(step, list) else [step]
