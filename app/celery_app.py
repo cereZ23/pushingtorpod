@@ -125,6 +125,9 @@ _CROSS_TENANT_TASKS = {
     "app.tasks.cleanup.cleanup_old_scan_data",
     "app.tasks.threat_intel_sync.refresh_threat_intel",
     "app.tasks.ticket_sync.sync_all_tenant_tickets",
+    # Beat scheduler: iterates scan profiles across all tenants to decide which
+    # scans are due (confirmed via the isolation-guard audit log in prod).
+    "app.tasks.scheduled_scans.dispatch_scheduled_scans",
 }
 
 
