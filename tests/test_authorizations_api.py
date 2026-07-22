@@ -29,7 +29,8 @@ class TestScanAuthorizationApi:
         assert any(a["id"] == auth_id for a in listed.json())
 
         revoked = authenticated_client.delete(f"{_url(tid)}/{auth_id}")
-        assert revoked.status_code == 204
+        assert revoked.status_code == 200
+        assert revoked.json()["revoked"] is True
 
         # After revoke it is inactive (still listed, is_active False)
         after = authenticated_client.get(_url(tid)).json()

@@ -84,13 +84,13 @@ def create_scan_authorization(
     return auth
 
 
-@router.delete("/{auth_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{auth_id}")
 def revoke_scan_authorization(
     tenant_id: int,
     auth_id: int,
     db: Session = Depends(get_db),
     membership=Depends(verify_tenant_access),
-) -> None:
+) -> dict:
     """Revoke (deactivate) a scan authorization."""
     _verify_tenant_exists(db, tenant_id)
     auth = (
@@ -111,3 +111,4 @@ def revoke_scan_authorization(
         user_id=membership.user_id,
         tenant_id=tenant_id,
     )
+    return {"id": auth_id, "revoked": True}
