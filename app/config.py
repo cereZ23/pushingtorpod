@@ -65,14 +65,19 @@ class Settings(BaseSettings):
     postgres_max_overflow: int = 40
     postgres_pool_pre_ping: bool = True
     postgres_pool_recycle: int = 3600
+    # Optional dedicated non-owner role for the SYNC runtime engine, so Postgres
+    # RLS applies (the owner bypasses RLS). Migrations still run as postgres_user
+    # (owner, needs DDL) and the async engine stays on postgres_user. Empty =
+    # use postgres_user (no RLS enforcement — current default).
+    app_db_user: Optional[str] = None
+    app_db_password: Optional[str] = None
 
     @property
     def database_url(self) -> str:
-        """Construct PostgreSQL connection URL"""
-        return (
-            f"postgresql://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-        )
+        """Sync runtime connection URL (uses the dedicated app role if set)."""
+        user = self.app_db_user or self.postgres_user
+        password = self.app_db_password or self.postgres_password
+        return f"postgresql://{user}:{password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
 
     @property
     def async_database_url(self) -> str:
