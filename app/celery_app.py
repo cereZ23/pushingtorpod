@@ -35,6 +35,7 @@ celery = Celery(
         "app.tasks.threat_intel_sync",
         "app.tasks.ticket_sync",
         "app.tasks.report_delivery",
+        "app.tasks.exposure_digest",
         "app.tasks.alert_evaluation",
         "app.tasks.cleanup",
         "app.tasks.scheduled_scans",
@@ -97,6 +98,11 @@ celery.conf.beat_schedule = {
         "schedule": crontab(minute="*/1"),  # Every minute — checks cron expressions
         "options": {"expires": 55},
     },
+    "weekly-exposure-digest": {
+        "task": "app.tasks.exposure_digest.send_weekly_exposure_digests",
+        "schedule": crontab(hour=8, minute=0, day_of_week=1),  # Mondays 08:00 UTC
+        "options": {"expires": 3600},
+    },
 }
 
 
@@ -128,6 +134,7 @@ _CROSS_TENANT_TASKS = {
     # Beat scheduler: iterates scan profiles across all tenants to decide which
     # scans are due (confirmed via the isolation-guard audit log in prod).
     "app.tasks.scheduled_scans.dispatch_scheduled_scans",
+    "app.tasks.exposure_digest.send_weekly_exposure_digests",
 }
 
 
