@@ -572,3 +572,21 @@ def _verify_tenant_exists(db: Session, tenant_id: int) -> None:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Tenant not found",
         )
+
+
+@router.get("/digest")
+def get_exposure_digest(
+    tenant_id: int,
+    days: int = Query(7, ge=1, le=90, description="Look-back window in days"),
+    db: Session = Depends(get_db),
+    membership=Depends(verify_tenant_access),
+) -> dict:
+    """Composed exposure digest for the dashboard hero card / weekly email.
+
+    Exposure score + week-over-week delta, new findings by severity, resolved
+    count, and newly discovered assets over the window.
+    """
+    _verify_tenant_exists(db, tenant_id)
+    from app.services.exposure_digest import build_digest
+
+    return build_digest(db, tenant_id, days)
