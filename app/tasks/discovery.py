@@ -172,14 +172,18 @@ def watch_critical_assets():
         # 3. Can be parallelized per tenant if needed
         asset_repo = AssetRepository(db)
 
+        from app.core.tenant_context import tenant_scope
+
         for tenant in tenants:
             # Get critical assets for this tenant using indexed query
-            # The composite index (tenant_id, risk_score, is_active) makes this very fast
-            critical_assets = asset_repo.get_critical_assets(
-                tenant_id=tenant.id,
-                risk_threshold=50.0,
-                eager_load_relations=False,  # We only need IDs, not relationships
-            )
+            # The composite index (tenant_id, risk_score, is_active) makes this very fast.
+            # Scope to the tenant so the isolation guard recognises this per-tenant read.
+            with tenant_scope(tenant.id):
+                critical_assets = asset_repo.get_critical_assets(
+                    tenant_id=tenant.id,
+                    risk_threshold=50.0,
+                    eager_load_relations=False,  # We only need IDs, not relationships
+                )
 
             if critical_assets:
                 asset_ids = [asset.id for asset in critical_assets]
