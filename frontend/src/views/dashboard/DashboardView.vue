@@ -412,6 +412,33 @@ const heatmapAssetTypeLabels: Record<string, string> = {
 
 // -- API calls --
 
+interface ExposureDigest {
+  score: number | null;
+  score_delta: number | null;
+  grade: string | null;
+  new_findings_total: number;
+  new_dangerous: number;
+  resolved_count: number;
+  new_assets: number;
+  top_new: { name: string; severity: string; cve_id: string | null }[];
+  has_noteworthy: boolean;
+}
+
+const digest = ref<ExposureDigest | null>(null);
+
+async function loadDigest(): Promise<void> {
+  if (!currentTenantId.value) return;
+  try {
+    const resp = await apiClient.get(
+      `/api/v1/tenants/${currentTenantId.value}/exposure/digest`,
+      { params: { days: 7 } },
+    );
+    digest.value = resp.data as ExposureDigest;
+  } catch {
+    digest.value = null;
+  }
+}
+
 async function loadDashboard(): Promise<void> {
   if (!currentTenantId.value) {
     error.value = "No tenant selected";
@@ -474,6 +501,7 @@ async function loadDashboard(): Promise<void> {
       loadChanges(),
       loadExpiringCerts(),
       loadSeverityTrends(),
+      loadDigest(),
     ]);
   } catch (err: unknown) {
     if (
@@ -689,6 +717,102 @@ onUnmounted(() => {
         </svg>
         Refresh
       </button>
+    </div>
+
+    <!-- Exposure digest hero card -->
+    <div
+      v-if="digest"
+      class="rounded-lg border border-gray-200 dark:border-dark-border bg-gradient-to-r from-primary-50 to-white dark:from-dark-bg-secondary dark:to-dark-bg-secondary p-6"
+    >
+      <div
+        class="flex flex-col md:flex-row md:items-center md:justify-between gap-4"
+      >
+        <div>
+          <div
+            class="text-xs uppercase tracking-wide text-gray-500 dark:text-dark-text-tertiary"
+          >
+            Exposure — last 7 days
+          </div>
+          <div class="flex items-baseline gap-2">
+            <span
+              class="text-4xl font-bold text-gray-900 dark:text-dark-text-primary"
+            >
+              {{ digest.score ?? "—" }}
+            </span>
+            <span v-if="digest.grade" class="text-sm font-semibold text-gray-500">
+              {{ digest.grade }}
+            </span>
+          </div>
+          <div
+            class="text-sm mt-1"
+            :class="
+              digest.score_delta != null && digest.score_delta < 0
+                ? 'text-green-600 dark:text-green-400'
+                : digest.score_delta && digest.score_delta > 0
+                  ? 'text-red-600 dark:text-red-400'
+                  : 'text-gray-500'
+            "
+          >
+            <template v-if="digest.score_delta == null">no prior data to compare</template>
+            <template v-else-if="digest.score_delta < 0">▼ {{ Math.abs(digest.score_delta) }} — exposure down</template>
+            <template v-else-if="digest.score_delta > 0">▲ {{ digest.score_delta }} — exposure up</template>
+            <template v-else>unchanged</template>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-6 text-center">
+          <div>
+            <div class="text-2xl font-bold text-red-600 dark:text-red-400">
+              {{ digest.new_dangerous }}
+            </div>
+            <div class="text-xs text-gray-500 dark:text-dark-text-tertiary">
+              new critical/high
+            </div>
+          </div>
+          <div>
+            <div class="text-2xl font-bold text-green-600 dark:text-green-400">
+              {{ digest.resolved_count }}
+            </div>
+            <div class="text-xs text-gray-500 dark:text-dark-text-tertiary">
+              resolved
+            </div>
+          </div>
+          <div>
+            <div
+              class="text-2xl font-bold text-gray-900 dark:text-dark-text-primary"
+            >
+              {{ digest.new_assets }}
+            </div>
+            <div class="text-xs text-gray-500 dark:text-dark-text-tertiary">
+              new assets
+            </div>
+          </div>
+        </div>
+      </div>
+      <div
+        v-if="digest.top_new.length"
+        class="mt-4 pt-4 border-t border-gray-100 dark:border-dark-border"
+      >
+        <div
+          class="text-xs uppercase tracking-wide text-gray-500 dark:text-dark-text-tertiary mb-2"
+        >
+          New this week
+        </div>
+        <ul class="space-y-1">
+          <li
+            v-for="(f, i) in digest.top_new"
+            :key="i"
+            class="text-sm text-gray-700 dark:text-dark-text-secondary"
+          >
+            <span
+              class="uppercase text-xs font-semibold"
+              :style="{ color: SEVERITY_HEX[f.severity] || '#888' }"
+            >
+              {{ f.severity }}
+            </span>
+            · {{ f.name }}<span v-if="f.cve_id" class="text-gray-400"> ({{ f.cve_id }})</span>
+          </li>
+        </ul>
+      </div>
     </div>
 
     <!-- Error State -->
