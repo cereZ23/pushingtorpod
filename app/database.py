@@ -107,8 +107,11 @@ AsyncSessionLocal = async_sessionmaker(
     expire_on_commit=False,
 )
 
-# Apply the same tenant GUC on the async engine (runs in SQLAlchemy's greenlet).
-event.listen(async_engine.sync_engine, "before_cursor_execute", _apply_tenant_guc)
+# NOTE: the tenant GUC is NOT wired on the async engine — running set_config via
+# before_cursor_execute breaks asyncpg's prepared-statement / transaction state
+# (InFailedSQLTransactionError). RLS relies on the SYNC engine (worker + most
+# API); async endpoints keep their app-level isolation-guard protection, and the
+# async GUC path will be handled explicitly at DB-role cutover time.
 
 
 async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
