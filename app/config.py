@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     # Scope-authorization enforcement: "audit" (log only, default), "enforce", "off"
     scope_enforcement_mode: str = "audit"
 
+    # Weekly exposure digest email (retention). OFF by default — enabling it
+    # starts emailing tenants, so it is an explicit opt-in.
+    weekly_digest_enabled: bool = False
+
     # Blast-radius controls
     scan_kill_switch_enabled: bool = True  # honor the kill switch in the pipeline
     circuit_breaker_threshold: int = 5  # consecutive failures before a host's circuit opens
