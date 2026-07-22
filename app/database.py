@@ -51,6 +51,29 @@ def receive_checkout(dbapi_conn, connection_record, connection_proxy):
     logger.debug("Database connection checked out from pool")
 
 
+@event.listens_for(engine, "before_cursor_execute")
+def _apply_tenant_guc(conn, cursor, statement, parameters, context, executemany):
+    """Push the active tenant into a transaction-local GUC for Postgres RLS.
+
+    RLS policies read ``app.current_tenant_id`` / ``app.cross_tenant``. Setting
+    them (transaction-local) before every statement keeps them in sync with the
+    request/task tenant context even when the context is set mid-transaction
+    (e.g. the scan pipeline). No-op behaviour while the app connects as the DB
+    owner (which bypasses RLS); it becomes load-bearing after the cutover to the
+    non-owner role. Fail-open: never break a query if the GUC set fails.
+    """
+    try:
+        from app.core.tenant_context import get_current_tenant, is_cross_tenant_allowed
+
+        tid = get_current_tenant()
+        cursor.execute("SELECT set_config('app.current_tenant_id', %s, true)", ("" if tid is None else str(tid),))
+        cursor.execute(
+            "SELECT set_config('app.cross_tenant', %s, true)", ("on" if is_cross_tenant_allowed() else "off",)
+        )
+    except Exception:  # pragma: no cover - defensive
+        pass
+
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -83,6 +106,9 @@ AsyncSessionLocal = async_sessionmaker(
     class_=AsyncSession,
     expire_on_commit=False,
 )
+
+# Apply the same tenant GUC on the async engine (runs in SQLAlchemy's greenlet).
+event.listen(async_engine.sync_engine, "before_cursor_execute", _apply_tenant_guc)
 
 
 async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
