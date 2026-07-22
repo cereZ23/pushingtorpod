@@ -20,6 +20,7 @@ intentionally excluded for now — they have cross-tenant access flows.
 from __future__ import annotations
 
 from alembic import op
+import sqlalchemy as sa
 
 revision = "022"
 down_revision = "021"
@@ -65,8 +66,17 @@ _TRANSITIVE = {
 }
 
 
+def _table_exists(table: str) -> bool:
+    # Some tables are created by the models (create_all), not by migrations, so
+    # a pure-migration DB (CI) may not have them yet. Prod has them all.
+    return op.get_bind().execute(sa.text("SELECT to_regclass(:t)"), {"t": f"public.{table}"}).scalar() is not None
+
+
 def _enable(table: str, using: str) -> None:
+    if not _table_exists(table):
+        return
     op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+    op.execute(f"DROP POLICY IF EXISTS tenant_isolation ON {table}")
     op.execute(f"CREATE POLICY tenant_isolation ON {table} USING ({using}) WITH CHECK ({using})")
 
 
@@ -83,5 +93,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     tables = list(_DIRECT) + list(_DIRECT_NULLABLE) + list(_TRANSITIVE.keys())
     for t in tables:
+        if not _table_exists(t):
+            continue
         op.execute(f"DROP POLICY IF EXISTS tenant_isolation ON {t}")
         op.execute(f"ALTER TABLE {t} DISABLE ROW LEVEL SECURITY")
