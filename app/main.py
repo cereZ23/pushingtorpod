@@ -78,6 +78,7 @@ from app.api.routers import (
 )
 from app.api.routers.risk_summary import router as risk_summary_router
 from app.api.routers.compliance import router as compliance_router
+from app.api.routers.authorizations import router as authorizations_router
 
 logger = logging.getLogger(__name__)
 
@@ -410,6 +411,7 @@ app.include_router(users_router)
 app.include_router(invitations_router)
 app.include_router(search_router)
 app.include_router(audit_router)
+app.include_router(authorizations_router)
 app.include_router(exposure_router)
 app.include_router(geomap_router)
 app.include_router(retest_router)
