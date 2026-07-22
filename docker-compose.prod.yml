@@ -128,6 +128,8 @@ services:
         condition: service_healthy
     environment:
       ENVIRONMENT: production
+      TENANT_GUARD_MODE: ${TENANT_GUARD_MODE:-audit}
+      SCOPE_ENFORCEMENT_MODE: ${SCOPE_ENFORCEMENT_MODE:-audit}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: easm
@@ -233,6 +235,8 @@ services:
         condition: service_healthy
     environment:
       ENVIRONMENT: production
+      TENANT_GUARD_MODE: ${TENANT_GUARD_MODE:-audit}
+      SCOPE_ENFORCEMENT_MODE: ${SCOPE_ENFORCEMENT_MODE:-audit}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: easm
@@ -300,6 +304,8 @@ services:
         condition: service_healthy
     environment:
       ENVIRONMENT: production
+      TENANT_GUARD_MODE: ${TENANT_GUARD_MODE:-audit}
+      SCOPE_ENFORCEMENT_MODE: ${SCOPE_ENFORCEMENT_MODE:-audit}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: easm
