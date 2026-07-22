@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     # Scope-authorization enforcement: "audit" (log only, default), "enforce", "off"
     scope_enforcement_mode: str = "audit"
 
+    # Blast-radius controls
+    scan_kill_switch_enabled: bool = True  # honor the kill switch in the pipeline
+    circuit_breaker_threshold: int = 5  # consecutive failures before a host's circuit opens
+    circuit_breaker_ttl: int = 900  # seconds a host circuit stays open
+
     # API Server
     api_host: str = "0.0.0.0"
     api_port: int = 8000

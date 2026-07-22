@@ -297,12 +297,22 @@ def verify_origin(hostname: str, candidate_ip: str, timeout: int = 6) -> dict:
     """
     if not _is_public_ip(candidate_ip):
         return {"reachable": False, "candidate_ip": candidate_ip}
+
+    from app.services.circuit_breaker import is_open, record_failure, record_success
+
+    # Skip candidates whose circuit is open (repeatedly unreachable) to avoid
+    # re-hammering dead IPs across assets/scans.
+    if is_open(candidate_ip):
+        return {"reachable": False, "candidate_ip": candidate_ip, "circuit_open": True}
+
     for scheme in ("https", "http"):
         result = _http_fetch(candidate_ip, hostname, timeout, scheme)
         if result.get("reachable"):
+            record_success(candidate_ip)
             result["scheme"] = scheme
             result["candidate_ip"] = candidate_ip
             return result
+    record_failure(candidate_ip)
     return {"reachable": False, "candidate_ip": candidate_ip}
 
 
