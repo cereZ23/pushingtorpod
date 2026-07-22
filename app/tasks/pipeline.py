@@ -293,7 +293,12 @@ def run_scan_pipeline(self, scan_run_id: int):
     db = SessionLocal()
 
     try:
-        scan_run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
+        # Bootstrap lookup by primary key before the tenant is known — a
+        # legitimately cross-tenant read used to derive the tenant itself.
+        from app.core.tenant_context import allow_cross_tenant, set_current_tenant
+
+        with allow_cross_tenant():
+            scan_run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
         if not scan_run:
             logger.error(f"ScanRun {scan_run_id} not found")
             return {"error": "ScanRun not found"}
@@ -321,6 +326,9 @@ def run_scan_pipeline(self, scan_run_id: int):
 
         tenant_id = scan_run.tenant_id
         project_id = scan_run.project_id
+        # Scope the whole in-process pipeline (phases are called as functions,
+        # not dispatched tasks) to this tenant for the isolation guard.
+        set_current_tenant(tenant_id)
         tenant_logger = TenantLoggerAdapter(logger, {"tenant_id": tenant_id})
 
         # Get project for seeds/settings
@@ -741,11 +749,15 @@ def run_single_phase(self, scan_run_id: int, phase_id: str):
 )
 def cancel_scan(self, scan_run_id: int):
     """Cancel a running scan."""
+    from app.core.tenant_context import allow_cross_tenant, set_current_tenant
+
     db = SessionLocal()
     try:
-        scan_run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
+        with allow_cross_tenant():
+            scan_run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
         if not scan_run:
             return {"error": "ScanRun not found"}
+        set_current_tenant(scan_run.tenant_id)
 
         if scan_run.status != ScanRunStatus.RUNNING:
             return {"error": f"Cannot cancel scan in status {scan_run.status.value}"}
