@@ -3,21 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ScopeEntry(BaseModel):
-    type: str = Field(..., description="Scope entry type: 'domain', 'ip', or 'cidr'")
+    type: Literal["domain", "ip", "cidr"] = Field(..., description="Scope entry type")
     value: str = Field(..., min_length=1, max_length=253, description="Domain, IP, or CIDR")
-
-    @field_validator("type")
-    @classmethod
-    def _valid_type(cls, v: str) -> str:
-        if v not in ("domain", "ip", "cidr"):
-            raise ValueError("type must be one of: domain, ip, cidr")
-        return v
 
 
 class ScanAuthorizationCreate(BaseModel):
