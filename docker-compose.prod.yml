@@ -128,7 +128,12 @@ services:
         condition: service_healthy
     environment:
       ENVIRONMENT: production
-      TENANT_GUARD_MODE: ${TENANT_GUARD_MODE:-audit}
+      # API is the internet-facing request path (a cross-tenant leak here is
+      # externally exploitable) and runs 0 tenant-guard violations, so it is pinned
+      # to enforce. The worker still has background queries without tenant context
+      # (tracked separately) and is defended by Postgres RLS regardless, so it stays
+      # on the .env default (audit) until those are wrapped — then restore ${...}.
+      TENANT_GUARD_MODE: enforce
       SCOPE_ENFORCEMENT_MODE: ${SCOPE_ENFORCEMENT_MODE:-audit}
       APP_DB_USER: ${APP_DB_USER:-}
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:-}
