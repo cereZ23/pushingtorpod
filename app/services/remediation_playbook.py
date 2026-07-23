@@ -412,7 +412,9 @@ def build_verify_command(control_id: Optional[str], host: str, evidence: Optiona
     if cid == "ORIGIN-001":  # origin IP behind a WAF/CDN
         return f"dig +short {host}"
     if cid.startswith("TLS-"):
-        return f"echo | openssl s_client -connect {host}:443 -servername {host} 2>/dev/null | openssl x509 -noout -dates"
+        return (
+            f"echo | openssl s_client -connect {host}:443 -servername {host} 2>/dev/null | openssl x509 -noout -dates"
+        )
     if port:  # unknown control but we know a port — a reachability probe still helps
         return f"nc -zvw3 {host} {port}"
     return None
