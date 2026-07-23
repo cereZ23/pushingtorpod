@@ -378,7 +378,6 @@ def get_finding_playbook(
             name=finding.name,
             host=host,
             evidence=evidence,
-            risk=finding.description or "",
         )
         return {"playbook": synthesized, "finding_id": finding_id, "host": host}
     pb = {**playbook}
@@ -451,7 +450,6 @@ def get_finding(
             name=finding.name,
             host=host,
             evidence=evidence,
-            risk=finding.description or "",
         )
 
     response_data["remediation"] = evidence.get("remediation") or None
