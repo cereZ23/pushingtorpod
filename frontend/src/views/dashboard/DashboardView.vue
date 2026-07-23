@@ -467,15 +467,27 @@ async function loadDashboard(): Promise<void> {
         total_assets: stats.total_assets || 0,
         asset_delta: stats.asset_delta ?? d.asset_delta ?? 0,
         open_findings: stats.open_findings ?? stats.total_findings ?? 0,
+        // Read the backend's OPEN-only, active-asset breakdown (`severity_breakdown`).
+        // The `findings_by_severity` fallbacks are legacy field names and count ALL
+        // statuses (incl. FIXED) — never use them for an "action required" card.
         severity_breakdown: {
           critical:
+            stats.severity_breakdown?.critical ??
             stats.findings_by_severity?.critical ??
             stats.critical_findings ??
             0,
-          high: stats.findings_by_severity?.high ?? stats.high_findings ?? 0,
-          medium: stats.findings_by_severity?.medium ?? 0,
-          low: stats.findings_by_severity?.low ?? 0,
-          info: stats.findings_by_severity?.info ?? 0,
+          high:
+            stats.severity_breakdown?.high ??
+            stats.findings_by_severity?.high ??
+            stats.high_findings ??
+            0,
+          medium:
+            stats.severity_breakdown?.medium ??
+            stats.findings_by_severity?.medium ??
+            0,
+          low: stats.severity_breakdown?.low ?? stats.findings_by_severity?.low ?? 0,
+          info:
+            stats.severity_breakdown?.info ?? stats.findings_by_severity?.info ?? 0,
         },
         risk_score: stats.average_risk_score ?? stats.risk_score ?? 0,
         active_scans: stats.active_scans ?? 0,
