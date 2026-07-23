@@ -379,3 +379,71 @@ def get_playbook(template_id: Optional[str] = None, name: Optional[str] = None) 
 def get_all_playbook_titles() -> list[dict]:
     """List all available playbooks (for documentation/UI)."""
     return [{"pattern": p.pattern, "title": pb["title"]} for p, pb in _PLAYBOOKS]
+
+
+def build_verify_command(control_id: Optional[str], host: str, evidence: Optional[dict] = None) -> Optional[str]:
+    """Return a *control-appropriate* verification command for a misconfig finding.
+
+    The regex ``_PLAYBOOKS`` table is entirely web-oriented (``curl https://...``),
+    so non-web controls (mail/DNS/service-exposure) get no verify surface — or, worse,
+    a bogus HTTP curl. This maps each control family to how you actually reproduce it:
+    ``dig`` for DNS/mail records, ``openssl`` for STARTTLS/TLS, ``nc`` for raw ports,
+    ``whois`` for registration. Returns None when there is nothing meaningful to run.
+    """
+    cid = (control_id or "").upper()
+    port = evidence.get("port") if isinstance(evidence, dict) else None
+
+    if cid in ("EXP-011", "EXP-006", "EML-008", "EML-009") and port:
+        return f"nc -zvw3 {host} {port}"
+    if cid in ("EML-001", "EML-002"):  # SPF lives in the domain's TXT records
+        return f"dig +short TXT {host}"
+    if cid == "EML-003":  # DMARC
+        return f"dig +short TXT _dmarc.{host}"
+    if cid == "EML-004":  # DKIM — selector-specific
+        return f"dig +short TXT <selector>._domainkey.{host}   # replace <selector> with your DKIM selector"
+    if cid == "EML-006":  # SMTP STARTTLS
+        return f"openssl s_client -starttls smtp -connect {host}:{port or 25} -crlf"
+    if cid == "EML-007":  # open relay
+        return f"swaks --to test@example.org --from probe@{host} --server {host}"
+    if cid == "DNS-001":  # zone transfer
+        return f"dig AXFR {host} @<nameserver>"
+    if cid == "DOM-001":  # registration expiry
+        return f"whois {host} | grep -i expir"
+    if cid == "ORIGIN-001":  # origin IP behind a WAF/CDN
+        return f"dig +short {host}"
+    if cid.startswith("TLS-"):
+        return f"echo | openssl s_client -connect {host}:443 -servername {host} 2>/dev/null | openssl x509 -noout -dates"
+    if port:  # unknown control but we know a port — a reachability probe still helps
+        return f"nc -zvw3 {host} {port}"
+    return None
+
+
+def synthesize_playbook(
+    control_id: Optional[str],
+    name: Optional[str],
+    host: str,
+    evidence: Optional[dict] = None,
+    risk: str = "",
+) -> Optional[dict]:
+    """Build a minimal playbook from a misconfig control's OWN remediation text.
+
+    Each control in ``app/tasks/misconfig.py`` authors a correct ``remediation``
+    string that is persisted into ``evidence['remediation']`` but was never surfaced
+    (the API only returned the regex playbook, which matches no non-web control).
+    This turns that authored text plus a control-appropriate verify command into the
+    same shape the UI already renders, so non-web findings stop showing nothing.
+    """
+    remediation = evidence.get("remediation") if isinstance(evidence, dict) else None
+    verify = build_verify_command(control_id, host, evidence)
+    if not remediation and not verify:
+        return None
+    steps = []
+    if remediation:
+        steps.append({"title": "Come rimediare", "description": remediation})
+    return {
+        "title": name or control_id or "Remediation",
+        "risk": risk or "",
+        "steps": steps,
+        "verify": verify,
+        "synthesized": True,
+    }

@@ -840,12 +840,15 @@ onMounted(() => {
           class="text-sm text-gray-700 dark:text-dark-text-secondary"
         >
           <p class="font-semibold">{{ (finding as any).playbook.title }}</p>
-          <p class="mt-1 text-xs">{{ (finding as any).playbook.risk }}</p>
+          <p v-if="(finding as any).playbook.risk" class="mt-1 text-xs">
+            {{ (finding as any).playbook.risk }}
+          </p>
         </div>
 
         <div v-if="showPlaybook" class="space-y-4">
           <!-- Risk -->
           <div
+            v-if="(finding as any).playbook.risk"
             class="bg-red-50 dark:bg-red-900/20 border-l-4 border-red-500 p-3 rounded"
           >
             <p
@@ -859,7 +862,7 @@ onMounted(() => {
           </div>
 
           <!-- Steps -->
-          <div>
+          <div v-if="(finding as any).playbook.steps?.length">
             <p
               class="text-xs font-semibold text-gray-700 dark:text-dark-text-secondary uppercase tracking-wider mb-2"
             >
