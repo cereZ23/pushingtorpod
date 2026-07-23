@@ -43,6 +43,11 @@ _TRANSITIVE_SCOPED_NAMES: Set[str] = {
     "IssueActivity",
 }
 
+# Access-control tables: they carry tenant_id but are governed by the auth flow
+# (a user's memberships/keys legitimately span tenants), not by tenant-data
+# isolation. Excluded from the guard — consistent with their RLS exclusion.
+_EXCLUDED_NAMES: Set[str] = {"TenantMembership", "APIKey", "UserInvitation"}
+
 _scoped_classes: Optional[Set[type]] = None
 
 
@@ -57,6 +62,8 @@ def _build_scoped_registry() -> Set[type]:
     scoped: Set[type] = set()
     for mapper in Base.registry.mappers:
         cls = mapper.class_
+        if cls.__name__ in _EXCLUDED_NAMES:
+            continue
         if "tenant_id" in mapper.columns or cls.__name__ in _TRANSITIVE_SCOPED_NAMES:
             scoped.add(cls)
     return scoped
