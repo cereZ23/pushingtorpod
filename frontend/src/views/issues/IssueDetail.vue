@@ -282,6 +282,43 @@ const firstFindingUrl = computed((): string | null => {
   }
   return null;
 });
+
+// A finding-appropriate verification command. Non-web findings (EXP-011 SSH/RDP/
+// DB, SPF/DMARC/DKIM, DNS, domain expiry, ...) must NOT be "verified" with an HTTP
+// curl — mirror the backend's control-aware mapping (remediation_playbook.py).
+const verifyCommand = computed((): string | null => {
+  const f = issueStore.currentIssue?.findings?.[0] as any;
+  if (!f) return null;
+  const host = f.asset_identifier;
+  const ev = f.evidence || {};
+  const cid: string = (ev.control_id || "").toUpperCase();
+  // Port from evidence, else parsed from a "CTRL:host:port" template id.
+  const portMatch =
+    typeof f.template_id === "string" ? f.template_id.match(/:(\d{1,5})$/) : null;
+  const port = ev.port ?? (portMatch ? Number(portMatch[1]) : null);
+
+  if (["EXP-011", "EXP-006", "EML-008", "EML-009"].includes(cid) && port)
+    return `nc -zvw3 ${host} ${port}`;
+  if (cid === "EML-001" || cid === "EML-002") return `dig +short TXT ${host}`;
+  if (cid === "EML-003") return `dig +short TXT _dmarc.${host}`;
+  if (cid === "EML-004")
+    return `dig +short TXT <selector>._domainkey.${host}   # replace <selector> with your DKIM selector`;
+  if (cid === "EML-006")
+    return `openssl s_client -starttls smtp -connect ${host}:${port || 25} -crlf`;
+  if (cid === "EML-007")
+    return `swaks --to test@example.org --from probe@${host} --server ${host}`;
+  if (cid === "DNS-001") return `dig AXFR ${host} @<nameserver>`;
+  if (cid === "DOM-001") return `whois ${host} | grep -i expir`;
+  if (cid === "ORIGIN-001") return `dig +short ${host}`;
+  if (cid.startsWith("TLS-"))
+    return `echo | openssl s_client -connect ${host}:443 -servername ${host} 2>/dev/null | openssl x509 -noout -dates`;
+
+  // Web findings: verify against the discovered URL.
+  if (firstFindingUrl.value) return `curl -skL "${firstFindingUrl.value}"`;
+  if (port) return `nc -zvw3 ${host} ${port}`;
+  if (host) return `curl -skL "https://${host}/"`;
+  return null;
+});
 </script>
 
 <template>
@@ -663,17 +700,8 @@ const firstFindingUrl = computed((): string | null => {
           <div
             class="bg-gray-50 dark:bg-dark-bg-tertiary rounded-md p-3 font-mono text-xs text-gray-800 dark:text-dark-text-primary"
           >
-            <span v-if="firstFindingUrl"
-              >curl -skL "{{ firstFindingUrl }}"</span
-            >
-            <span
-              v-else-if="issueStore.currentIssue.findings[0]?.asset_identifier"
-            >
-              curl -skL "https://{{
-                issueStore.currentIssue.findings[0].asset_identifier
-              }}/"
-            </span>
-            <span v-else>No URL available for verification</span>
+            <span v-if="verifyCommand">{{ verifyCommand }}</span>
+            <span v-else>No verification available</span>
           </div>
         </div>
       </div>

@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from app.services.remediation_playbook import get_playbook, get_all_playbook_titles
+from app.services.remediation_playbook import (
+    build_verify_command,
+    get_all_playbook_titles,
+    get_playbook,
+    synthesize_playbook,
+)
 
 
 class TestGetPlaybook:
@@ -86,3 +91,61 @@ class TestPlaybookStructure:
         pb = get_playbook(template_id="exposed-docker-compose-credentials")
         assert "verify" in pb
         assert pb["verify"]
+
+
+class TestBuildVerifyCommand:
+    """Non-web controls must NOT be verified with an HTTP curl."""
+
+    def test_service_exposure_uses_nc(self):
+        cmd = build_verify_command("EXP-011", "host.example.com", {"port": 22})
+        assert cmd == "nc -zvw3 host.example.com 22"
+
+    def test_spf_uses_dig_txt(self):
+        assert build_verify_command("EML-001", "example.com", {}) == "dig +short TXT example.com"
+
+    def test_dmarc_uses_dig_dmarc(self):
+        assert build_verify_command("EML-003", "example.com", {}) == "dig +short TXT _dmarc.example.com"
+
+    def test_starttls_uses_openssl(self):
+        cmd = build_verify_command("EML-006", "mail.example.com", {"port": 25})
+        assert "openssl s_client -starttls smtp" in cmd
+        assert "mail.example.com:25" in cmd
+
+    def test_domain_expiry_uses_whois(self):
+        assert build_verify_command("DOM-001", "example.com", {}).startswith("whois example.com")
+
+    def test_tls_uses_openssl_dates(self):
+        cmd = build_verify_command("TLS-005", "example.com", {})
+        assert "openssl s_client -connect example.com:443" in cmd
+
+    def test_no_curl_for_non_web_controls(self):
+        for cid in ("EML-001", "EML-003", "EML-004", "DNS-001", "DOM-001", "ORIGIN-001"):
+            cmd = build_verify_command(cid, "example.com", {})
+            assert cmd is not None
+            assert "curl" not in cmd
+
+    def test_unknown_control_without_port_returns_none(self):
+        assert build_verify_command("WHATEVER", "example.com", {}) is None
+
+
+class TestSynthesizePlaybook:
+    def test_surfaces_authored_remediation(self):
+        pb = synthesize_playbook(
+            control_id="EXP-011",
+            name="SSH exposed on port 22",
+            host="host.example.com",
+            evidence={"port": 22, "remediation": "Restrict SSH to a VPN."},
+        )
+        assert pb is not None
+        assert pb["steps"][0]["description"] == "Restrict SSH to a VPN."
+        assert pb["verify"] == "nc -zvw3 host.example.com 22"
+        assert pb["synthesized"] is True
+
+    def test_none_when_no_remediation_and_no_verify(self):
+        assert synthesize_playbook("WHATEVER", "x", "example.com", {}) is None
+
+    def test_verify_only_still_synthesizes(self):
+        pb = synthesize_playbook("EML-003", "No DMARC", "example.com", {})
+        assert pb is not None
+        assert pb["steps"] == []
+        assert pb["verify"] == "dig +short TXT _dmarc.example.com"

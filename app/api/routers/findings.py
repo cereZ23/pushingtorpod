@@ -362,17 +362,24 @@ def get_finding_playbook(
     Returns step-by-step remediation instructions with verification commands,
     or null if no playbook is available for this finding type.
     """
-    from app.services.remediation_playbook import get_playbook
+    from app.services.remediation_playbook import get_playbook, synthesize_playbook
 
     finding = db.query(Finding).join(Asset).filter(Finding.id == finding_id, Asset.tenant_id == tenant_id).first()
     if not finding:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finding not found")
 
+    host = finding.asset.identifier if finding.asset else ""
     playbook = get_playbook(template_id=finding.template_id, name=finding.name)
     if not playbook:
-        return {"playbook": None, "finding_id": finding_id}
-
-    host = finding.asset.identifier if finding.asset else ""
+        # Fall back to the control's own remediation text (non-web findings).
+        evidence = finding.evidence if isinstance(finding.evidence, dict) else {}
+        synthesized = synthesize_playbook(
+            control_id=evidence.get("control_id"),
+            name=finding.name,
+            host=host,
+            evidence=evidence,
+        )
+        return {"playbook": synthesized, "finding_id": finding_id, "host": host}
     pb = {**playbook}
     if "steps" in pb:
         pb["steps"] = [{**s, "command": (s.get("command") or "").replace("{host}", host)} for s in pb["steps"]]
@@ -420,8 +427,9 @@ def get_finding(
     }
 
     # Remediation playbook (italian-language step-by-step fix guide)
-    from app.services.remediation_playbook import get_playbook
+    from app.services.remediation_playbook import get_playbook, synthesize_playbook
 
+    evidence = finding.evidence if isinstance(finding.evidence, dict) else {}
     playbook = get_playbook(template_id=finding.template_id, name=finding.name)
     host = finding.asset.identifier
     if playbook:
@@ -435,9 +443,16 @@ def get_finding(
             pb["email_template"] = pb["email_template"].replace("{host}", host)
         response_data["playbook"] = pb
     else:
-        response_data["playbook"] = None
+        # No web playbook — synthesize from the control's own remediation text so
+        # non-web findings (mail/DNS/service exposure) still get a fix + verify.
+        response_data["playbook"] = synthesize_playbook(
+            control_id=evidence.get("control_id"),
+            name=finding.name,
+            host=host,
+            evidence=evidence,
+        )
 
-    response_data["remediation"] = None
+    response_data["remediation"] = evidence.get("remediation") or None
     response_data["references"] = []
     response_data["tags"] = []
 
