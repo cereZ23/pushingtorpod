@@ -212,46 +212,52 @@ def _build_tokens_and_response(user: "User", db: Session) -> dict:
 
     Raises HTTPException 403 if the user has no active tenant membership.
     """
-    # Resolve tenant from memberships — never fall back to a hardcoded ID
-    active_memberships = [m for m in user.tenant_memberships if m.is_active]
-    if not active_memberships:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No active tenant membership. Contact your administrator.",
+    from app.core.tenant_context import allow_cross_tenant
+
+    # A user's memberships legitimately span tenants, and this whole token-build
+    # is cross-tenant auth logic — run it under the cross-tenant allowance so the
+    # isolation guard (enforce) permits the TenantMembership reads.
+    with allow_cross_tenant():
+        # Resolve tenant from memberships — never fall back to a hardcoded ID
+        active_memberships = [m for m in user.tenant_memberships if m.is_active]
+        if not active_memberships:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No active tenant membership. Contact your administrator.",
+            )
+
+        tenant_id = active_memberships[0].tenant_id
+        tenant_role = active_memberships[0].role
+
+        roles = [tenant_role]
+        if user.is_superuser:
+            roles.append("admin")
+
+        access_token = jwt_manager.create_access_token(
+            subject=str(user.id),
+            tenant_id=tenant_id,
+            roles=roles,
+        )
+        refresh_token = jwt_manager.create_refresh_token(
+            subject=str(user.id),
+            tenant_id=tenant_id,
         )
 
-    tenant_id = active_memberships[0].tenant_id
-    tenant_role = active_memberships[0].role
+        user.last_login = datetime.now(timezone.utc)
+        db.commit()
 
-    roles = [tenant_role]
-    if user.is_superuser:
-        roles.append("admin")
+        tenant_roles = {m.tenant_id: m.role for m in user.tenant_memberships if m.is_active}
 
-    access_token = jwt_manager.create_access_token(
-        subject=str(user.id),
-        tenant_id=tenant_id,
-        roles=roles,
-    )
-    refresh_token = jwt_manager.create_refresh_token(
-        subject=str(user.id),
-        tenant_id=tenant_id,
-    )
+        user_response = UserResponse.model_validate(user)
+        user_response.tenant_roles = tenant_roles
 
-    user.last_login = datetime.now(timezone.utc)
-    db.commit()
-
-    tenant_roles = {m.tenant_id: m.role for m in user.tenant_memberships if m.is_active}
-
-    user_response = UserResponse.model_validate(user)
-    user_response.tenant_roles = tenant_roles
-
-    return LoginResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        token_type="bearer",
-        expires_in=settings.jwt_access_token_expire_minutes * 60,
-        user=user_response,
-    )
+        return LoginResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_type="bearer",
+            expires_in=settings.jwt_access_token_expire_minutes * 60,
+            user=user_response,
+        )
 
 
 @router.post("/login", response_model=LoginResponse)
