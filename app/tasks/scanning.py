@@ -13,10 +13,12 @@ Sprint 3: Implements comprehensive Nuclei vulnerability scanning:
 
 import logging
 import asyncio
+import re
 from typing import List, Optional, Dict
 from datetime import datetime, timezone
 
 from app.celery_app import celery
+from app.config import settings
 from app.models.database import Asset, AssetType, FindingSeverity
 from app.services.scanning.nuclei_service import NucleiService, calculate_risk_score_from_findings
 from app.services.scanning.suppression_service import SuppressionService
@@ -25,6 +27,26 @@ from app.repositories.service_repository import ServiceRepository
 from app.utils.logger import TenantLoggerAdapter
 
 logger = logging.getLogger(__name__)
+
+# High-cardinality path/query segments (numeric or long hex/hash ids) collapse so
+# that /user/1, /user/2 and ?id=5, ?id=6 fold into a single representative shape.
+_ID_SEGMENT_RE = re.compile(r"^\d+$|^[0-9a-f]{8,}$")
+
+
+def endpoint_shape_key(url: str) -> tuple:
+    """A URL's "shape": (host, id-collapsed path, sorted query param names).
+
+    Two URLs that differ only in id/hash path segments or query VALUES share a
+    shape, so the Nuclei target set keeps one representative instead of testing
+    every /user/{n} or ?id={n} variant (duplicate work). Query param *names* are
+    kept because a different parameter set is a genuinely different surface.
+    """
+    from urllib.parse import urlparse, parse_qs
+
+    p = urlparse(url)
+    host = (p.hostname or "").lower()
+    segs = ["{id}" if _ID_SEGMENT_RE.match(s) else s.lower() for s in p.path.split("/")]
+    return (host, "/".join(segs), tuple(sorted(parse_qs(p.query).keys())))
 
 
 @celery.task(name="app.tasks.scanning.run_nuclei_scan")
@@ -223,7 +245,6 @@ def run_nuclei_scan(
                 "/xmlrpc",
             }
 
-            endpoint_urls = set()
             endpoints = (
                 db.query(Endpoint.url, Endpoint.endpoint_type)
                 .join(Asset, Asset.id == Endpoint.asset_id)
@@ -235,19 +256,48 @@ def run_nuclei_scan(
                 .all()
             )
 
+            # Rank endpoints so the per-host cap keeps the highest-value ones:
+            # api/form and interesting paths first, then parameterised URLs, then
+            # the rest (plain deep pages — still worth a representative sample).
+            def _priority(url_lower: str, ep_type: str, has_query: bool) -> int:
+                if ep_type in ("api", "form") or any(p in url_lower for p in INTERESTING_PATHS):
+                    return 0
+                if has_query:
+                    return 1
+                return 2
+
+            candidates = []
             for ep_url, ep_type in endpoints:
-                if not ep_url:
+                if not ep_url or ep_url in url_to_asset:
                     continue
-                url_lower = ep_url.lower()
-
-                # Skip static assets
-                if any(url_lower.endswith(ext) for ext in STATIC_EXTENSIONS):
+                try:
+                    parsed = urlparse(ep_url)
+                except Exception:
                     continue
+                # Check the extension on the PATH, not the whole URL: a handler
+                # URL like /download.php/backup.zip?id=1 ends (as a full string)
+                # in the query, hiding the .zip — which produced backup-file
+                # false positives. The path component reveals the real extension.
+                if any(parsed.path.lower().endswith(ext) for ext in STATIC_EXTENSIONS):
+                    continue
+                candidates.append((_priority(ep_url.lower(), ep_type, bool(parsed.query)), ep_url, parsed))
 
-                # Include if: api/form type, interesting path, or has query params
-                include = ep_type in ("api", "form") or any(p in url_lower for p in INTERESTING_PATHS) or "?" in ep_url
-                if include and ep_url not in url_to_asset:
-                    endpoint_urls.add(ep_url)
+            candidates.sort(key=lambda c: c[0])
+
+            max_per_host = getattr(settings, "nuclei_max_endpoints_per_host", 200)
+            endpoint_urls: list[str] = []
+            seen_shapes: set = set()
+            per_host_count: dict = {}
+            for _prio, ep_url, parsed in candidates:
+                key = endpoint_shape_key(ep_url)
+                if key in seen_shapes:
+                    continue
+                host = (parsed.hostname or "").lower()
+                if per_host_count.get(host, 0) >= max_per_host:
+                    continue
+                seen_shapes.add(key)
+                per_host_count[host] = per_host_count.get(host, 0) + 1
+                endpoint_urls.append(ep_url)
 
             if endpoint_urls:
                 scan_targets.extend(endpoint_urls)
@@ -268,8 +318,9 @@ def run_nuclei_scan(
                     except Exception:
                         pass
                 tenant_logger.info(
-                    f"Added {len(endpoint_urls)} high-value Katana endpoints to Nuclei targets "
-                    f"(from {len(endpoints)} total endpoints, filtered by type/path/params)"
+                    f"Added {len(endpoint_urls)} Katana endpoints to Nuclei targets "
+                    f"(from {len(endpoints)} crawled; shape-deduped, static-filtered, "
+                    f"capped at {max_per_host}/host)"
                 )
         except Exception as exc:
             tenant_logger.warning(f"Failed to load Katana endpoints for Nuclei: {exc}")
