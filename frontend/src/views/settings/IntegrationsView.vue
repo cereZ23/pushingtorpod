@@ -77,11 +77,9 @@ async function handleSave() {
       is_active: true,
     }
 
-    if (config.value) {
-      await apiClient.put(`/api/v1/tenants/${tid.value}/integrations/ticketing`, payload)
-    } else {
-      await apiClient.post(`/api/v1/tenants/${tid.value}/integrations/ticketing`, payload)
-    }
+    // Backend POST handler is create-or-update (upsert); there is no PUT route,
+    // so a PUT on an existing config returned 405. Always POST.
+    await apiClient.post(`/api/v1/tenants/${tid.value}/integrations/ticketing`, payload)
 
     showSuccess('Configuration saved')
     await fetchConfig()
