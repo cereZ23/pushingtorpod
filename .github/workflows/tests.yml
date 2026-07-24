@@ -32,7 +32,10 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - run: pip install ruff
+      # Pin ruff: unpinned pulls the latest on every run, and 0.16.0 (2026-07-24)
+      # started formatting Markdown, which fails the format check on pre-existing
+      # docs unrelated to the PR. Bump deliberately.
+      - run: pip install 'ruff==0.15.22'
       - name: Ruff check
         run: ruff check app/ tests/ --output-format=github
       - name: Ruff format

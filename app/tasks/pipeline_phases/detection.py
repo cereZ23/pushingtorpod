@@ -389,7 +389,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     # interfere with each other.  This eliminates sequential startup
     # overhead (~20s per Nuclei process) and overlaps I/O-bound work.
     # ---------------------------------------------------------------
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import as_completed
 
     def _run_pass_1():
         """Pass 1: HTTP + SSL templates on direct (non-CDN) assets."""
@@ -475,7 +475,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     # different protocols so they don't compete for bandwidth. The HTTP-live
     # filter on pass 1 eliminated the 88% error rate that made parallel
     # execution problematic before.
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from app.core.concurrency import ContextThreadPoolExecutor
 
     passes = {"pass_1": _run_pass_1, "pass_2": _run_pass_2, "pass_3": _run_pass_3}
     active_passes = {
@@ -486,7 +486,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
 
     tenant_logger.info(f"Nuclei: running {len(active_passes)} passes concurrently: {', '.join(active_passes.keys())}")
 
-    with ThreadPoolExecutor(max_workers=len(active_passes) or 1) as executor:
+    with ContextThreadPoolExecutor(max_workers=len(active_passes) or 1) as executor:
         futures = {executor.submit(fn): name for name, fn in active_passes.items()}
         for future in as_completed(futures):
             pass_name = futures[future]

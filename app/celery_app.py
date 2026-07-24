@@ -135,6 +135,9 @@ _CROSS_TENANT_TASKS = {
     # scans are due (confirmed via the isolation-guard audit log in prod).
     "app.tasks.scheduled_scans.dispatch_scheduled_scans",
     "app.tasks.exposure_digest.send_weekly_exposure_digests",
+    # Beat scheduler: iterates report schedules across all tenants to deliver
+    # those that are due (queries ReportSchedule with no single-tenant scope).
+    "app.tasks.report_delivery.deliver_scheduled_reports",
 }
 
 

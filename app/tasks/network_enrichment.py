@@ -18,7 +18,9 @@ Storage:
 import json
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
+
+from app.core.concurrency import ContextThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -196,7 +198,7 @@ def run_network_enrichment(
                 )
 
             results = {}
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            with ContextThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
                 futures = {pool.submit(_enrich_one, a): a for a in batch}
                 for future in as_completed(futures):
                     asset = futures[future]
@@ -397,7 +399,7 @@ def phase_1c_network_enrichment(
 
         # Run enrichment in parallel threads
         results: list[tuple[int, dict | None, str | None]] = []
-        with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(batch))) as executor:
+        with ContextThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(batch))) as executor:
             futures = {
                 executor.submit(_enrich_one, asset.id, asset.identifier, asset.type.value): asset.id for asset in batch
             }
