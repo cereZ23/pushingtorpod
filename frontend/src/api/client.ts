@@ -1,6 +1,7 @@
 import axios from 'axios'
 import type { AxiosInstance } from 'axios'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toast'
 import router from '@/router'
 
 const apiClient: AxiosInstance = axios.create({
@@ -53,6 +54,22 @@ apiClient.interceptors.response.use(
         authStore.clearTokens()
         router.push('/login')
         return Promise.reject(refreshError)
+      }
+    }
+
+    // Surface the failures that individual views typically DON'T handle, so a
+    // background/async action can't fail completely silently. 4xx (incl. 403)
+    // are left to callers to avoid double messaging; cancellations are ignored.
+    if (!axios.isCancel(error) && originalRequest?._toastSilent !== true) {
+      const status = error.response?.status
+      if (!error.response) {
+        useToastStore().error(
+          error.code === 'ECONNABORTED'
+            ? 'Request timed out — please retry.'
+            : 'Network error — could not reach the server.',
+        )
+      } else if (typeof status === 'number' && status >= 500) {
+        useToastStore().error(`Server error (${status}) — please try again.`)
       }
     }
 

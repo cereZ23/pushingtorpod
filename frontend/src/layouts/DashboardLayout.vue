@@ -13,6 +13,7 @@ import {
   ChevronRightIcon,
 } from "@heroicons/vue/24/outline";
 import ErrorBoundary from "@/components/ErrorBoundary.vue";
+import ToastContainer from "@/components/ToastContainer.vue";
 
 // --- Types ---
 
@@ -811,5 +812,6 @@ function toggleSidebar() {
         </ErrorBoundary>
       </main>
     </div>
+    <ToastContainer />
   </div>
 </template>

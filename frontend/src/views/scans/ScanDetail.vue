@@ -4,17 +4,20 @@ import { useRoute, useRouter } from "vue-router";
 import { useTenantStore } from "@/stores/tenant";
 import { useScanStore } from "@/stores/scans";
 import type { PhaseStatus, ScanHealth } from "@/stores/scans";
+import { useToastStore } from "@/stores/toast";
 import { formatDate } from "@/utils/formatters";
 
 const route = useRoute();
 const router = useRouter();
 const tenantStore = useTenantStore();
 const scanStore = useScanStore();
+const toast = useToastStore();
 
 const currentTenantId = computed(() => tenantStore.currentTenantId);
 const runId = computed(() => Number(route.params.runId));
 
 let refreshInterval: ReturnType<typeof setInterval> | null = null;
+let pollFailures = 0;
 
 const isRunning = computed(() => {
   return (
@@ -64,11 +67,17 @@ async function loadScanData(): Promise<void> {
 function startAutoRefresh(): void {
   stopAutoRefresh();
   if (isRunning.value) {
+    pollFailures = 0;
     refreshInterval = setInterval(async () => {
-      await loadScanData();
-      // Stop polling on error (e.g. 401 expired token)
-      if (scanStore.error) {
+      // Silent poll: a transient blip must not flash a "Network Error" banner
+      // or stop live updates. Only give up after several consecutive failures,
+      // and then with a gentle toast rather than tearing down the view.
+      const ok = await scanStore.fetchProgress(runId.value, true);
+      if (ok) {
+        pollFailures = 0;
+      } else if (++pollFailures >= 3) {
         stopAutoRefresh();
+        toast.warning("Live scan updates paused (connection issue). Refresh to resume.");
       }
     }, 4000);
   }

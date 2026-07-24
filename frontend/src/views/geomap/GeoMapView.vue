@@ -236,30 +236,47 @@ function updateMarkers(): void {
     const location =
       locationParts.length > 0 ? locationParts.join(", ") : "Unknown";
 
+    // Popup content is injected as raw HTML into Leaflet, so every value that
+    // originates from recon data (identifier, ASN org, CDN/WAF/cloud banners,
+    // geo strings) MUST be HTML-escaped to prevent stored XSS in the analyst's
+    // browser. Numbers are coerced through the same escape for safety.
+    const esc = (v: unknown): string =>
+      String(v ?? "").replace(
+        /[&<>"']/g,
+        (c) =>
+          ({
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;",
+          })[c] as string,
+      );
+
     let popupHtml = `
       <div style="font-family: system-ui, -apple-system, sans-serif; min-width: 220px; font-size: 13px;">
         <div style="font-weight: 700; font-size: 14px; margin-bottom: 6px; color: #111827; word-break: break-all;">
-          ${props.identifier}
+          ${esc(props.identifier)}
         </div>
         <div style="display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; color: #374151;">
           <span style="color: #6b7280;">Type:</span>
-          <span style="text-transform: capitalize;">${props.type}</span>
+          <span style="text-transform: capitalize;">${esc(props.type)}</span>
     `;
 
     if (props.ip) {
       popupHtml += `
           <span style="color: #6b7280;">IP:</span>
-          <span style="font-family: monospace; font-size: 12px;">${props.ip}</span>
+          <span style="font-family: monospace; font-size: 12px;">${esc(props.ip)}</span>
       `;
     }
 
     popupHtml += `
           <span style="color: #6b7280;">Location:</span>
-          <span>${props.country_code ? countryCodeToFlag(props.country_code) + " " : ""}${location}</span>
+          <span>${props.country_code ? countryCodeToFlag(props.country_code) + " " : ""}${esc(location)}</span>
           <span style="color: #6b7280;">Risk:</span>
           <span>
             <span style="display: inline-block; padding: 1px 8px; border-radius: 9999px; font-size: 11px; font-weight: 600; color: #fff; background: ${color};">
-              ${props.risk_score} - ${riskLabel}
+              ${esc(props.risk_score)} - ${esc(riskLabel)}
             </span>
           </span>
     `;
@@ -267,28 +284,28 @@ function updateMarkers(): void {
     if (props.asn_org) {
       popupHtml += `
           <span style="color: #6b7280;">ASN:</span>
-          <span>${props.asn ? "AS" + props.asn + " " : ""}${props.asn_org}</span>
+          <span>${props.asn ? "AS" + esc(props.asn) + " " : ""}${esc(props.asn_org)}</span>
       `;
     }
 
     if (props.cdn) {
       popupHtml += `
           <span style="color: #6b7280;">CDN:</span>
-          <span>${props.cdn}</span>
+          <span>${esc(props.cdn)}</span>
       `;
     }
 
     if (props.waf) {
       popupHtml += `
           <span style="color: #6b7280;">WAF:</span>
-          <span>${props.waf}</span>
+          <span>${esc(props.waf)}</span>
       `;
     }
 
     if (props.cloud_provider) {
       popupHtml += `
           <span style="color: #6b7280;">Cloud:</span>
-          <span>${props.cloud_provider}</span>
+          <span>${esc(props.cloud_provider)}</span>
       `;
     }
 
