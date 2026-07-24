@@ -299,26 +299,39 @@ export const useScanStore = defineStore("scans", () => {
     }
   }
 
-  async function fetchProgress(runId: number): Promise<void> {
+  // `silent` is used by the polling loop: a transient network blip during a
+  // 4s poll must not blow the whole view away with an error banner nor wipe the
+  // last-good data. In silent mode failures are swallowed (caller decides when
+  // enough consecutive failures warrant giving up); a success clears any prior
+  // error (recovery).
+  async function fetchProgress(runId: number, silent = false): Promise<boolean> {
     if (!tenantId.value) {
-      error.value = "No tenant selected";
-      return;
+      if (!silent) error.value = "No tenant selected";
+      return false;
     }
 
     isLoadingProgress.value = true;
-    error.value = "";
+    if (!silent) error.value = "";
 
     try {
-      const response = await apiClient.get<{
-        scan_run: ScanRun;
-        phases: PhaseProgress[];
-      }>(`/api/v1/tenants/${tenantId.value}/scans/${runId}/progress`);
+      const url = `/api/v1/tenants/${tenantId.value}/scans/${runId}/progress`;
+      // Silent polls suppress the global network/5xx toast; the caller handles
+      // consecutive failures. Only pass the config arg when silent so the
+      // non-silent call shape is unchanged.
+      const response = silent
+        ? await apiClient.get<{ scan_run: ScanRun; phases: PhaseProgress[] }>(url, {
+            _toastSilent: true,
+          } as unknown as Parameters<typeof apiClient.get>[1])
+        : await apiClient.get<{ scan_run: ScanRun; phases: PhaseProgress[] }>(url);
       currentScanRun.value = response.data.scan_run;
       phaseProgress.value = response.data.phases;
+      error.value = "";
+      return true;
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : "Failed to fetch progress";
-      error.value = message;
+      if (!silent) error.value = message;
+      return false;
     } finally {
       isLoadingProgress.value = false;
     }

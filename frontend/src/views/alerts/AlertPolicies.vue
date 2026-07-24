@@ -87,7 +87,10 @@ const availableChannelTypes: { value: ChannelType; label: string }[] = [
   { value: 'pagerduty', label: 'PagerDuty' },
 ]
 
-const channelConfigFields: Record<ChannelType, { key: string; label: string; placeholder: string }[]> = {
+const channelConfigFields: Record<
+  ChannelType,
+  { key: string; label: string; placeholder: string; secret?: boolean }[]
+> = {
   slack: [
     { key: 'webhook_url', label: 'Webhook URL', placeholder: 'https://hooks.slack.com/services/...' },
     { key: 'channel', label: 'Channel', placeholder: '#security-alerts' },
@@ -98,13 +101,13 @@ const channelConfigFields: Record<ChannelType, { key: string; label: string; pla
   ],
   webhook: [
     { key: 'url', label: 'URL', placeholder: 'https://api.example.com/webhook' },
-    { key: 'secret', label: 'Secret (optional)', placeholder: 'hmac-secret-key' },
+    { key: 'secret', label: 'Secret (optional)', placeholder: 'hmac-secret-key', secret: true },
   ],
   teams: [
     { key: 'webhook_url', label: 'Webhook URL', placeholder: 'https://outlook.office.com/webhook/...' },
   ],
   pagerduty: [
-    { key: 'routing_key', label: 'Routing Key', placeholder: 'Events API v2 integration key' },
+    { key: 'routing_key', label: 'Routing Key', placeholder: 'Events API v2 integration key', secret: true },
   ],
 }
 
@@ -688,7 +691,8 @@ function clearSuccessAfterDelay(): void {
                       </label>
                       <input
                         v-model="channel.config[field.key]"
-                        type="text"
+                        :type="field.secret ? 'password' : 'text'"
+                        autocomplete="off"
                         :placeholder="field.placeholder"
                         class="w-full px-3 py-1.5 border border-gray-300 dark:border-dark-border rounded-md text-sm text-gray-900 dark:text-dark-text-primary dark:bg-dark-bg-secondary focus:outline-none focus:ring-2 focus:ring-primary-500"
                       />
