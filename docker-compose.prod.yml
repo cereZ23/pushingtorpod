@@ -128,11 +128,10 @@ services:
         condition: service_healthy
     environment:
       ENVIRONMENT: production
-      # API is the internet-facing request path (a cross-tenant leak here is
-      # externally exploitable) and runs 0 tenant-guard violations, so it is pinned
-      # to enforce. The worker still has background queries without tenant context
-      # (tracked separately) and is defended by Postgres RLS regardless, so it stays
-      # on the .env default (audit) until those are wrapped — then restore ${...}.
+      # Tenant-isolation guard is enforced on every service (api/worker/beat). The
+      # worker's background thread-pool queries now propagate the tenant scope via
+      # ContextThreadPoolExecutor; Postgres RLS backstops isolation regardless.
+      # To roll back a service to observe-only, set its value to `audit`.
       TENANT_GUARD_MODE: enforce
       SCOPE_ENFORCEMENT_MODE: ${SCOPE_ENFORCEMENT_MODE:-audit}
       APP_DB_USER: ${APP_DB_USER:-}
@@ -242,7 +241,7 @@ services:
         condition: service_healthy
     environment:
       ENVIRONMENT: production
-      TENANT_GUARD_MODE: ${TENANT_GUARD_MODE:-audit}
+      TENANT_GUARD_MODE: enforce
       SCOPE_ENFORCEMENT_MODE: ${SCOPE_ENFORCEMENT_MODE:-audit}
       APP_DB_USER: ${APP_DB_USER:-}
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:-}
@@ -313,7 +312,7 @@ services:
         condition: service_healthy
     environment:
       ENVIRONMENT: production
-      TENANT_GUARD_MODE: ${TENANT_GUARD_MODE:-audit}
+      TENANT_GUARD_MODE: enforce
       SCOPE_ENFORCEMENT_MODE: ${SCOPE_ENFORCEMENT_MODE:-audit}
       APP_DB_USER: ${APP_DB_USER:-}
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:-}
