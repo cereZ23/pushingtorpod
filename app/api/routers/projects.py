@@ -682,6 +682,49 @@ def add_scope_rule(
     return ScopeResponse.model_validate(scope)
 
 
+@router.delete(
+    "/projects/{project_id}/scopes/{scope_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_scope_rule(
+    tenant_id: int,
+    project_id: int,
+    scope_id: int,
+    db: Session = Depends(get_db),
+    membership=Depends(verify_tenant_access),
+):
+    """Delete a scope rule from a project.
+
+    Raises:
+        404: Project or scope not found
+        403: Insufficient permissions
+    """
+    if not membership.has_permission("write"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Write permission required",
+        )
+
+    project = _get_project_or_404(db, tenant_id, project_id)
+
+    scope = db.query(Scope).filter(Scope.id == scope_id, Scope.project_id == project_id).first()
+    if not scope:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scope rule not found")
+
+    scope_pattern = scope.pattern
+    db.delete(scope)
+    db.commit()
+
+    log_data_modification(
+        action="delete",
+        resource="scope",
+        resource_id=str(scope_id),
+        user_id=membership.user_id,
+        tenant_id=tenant_id,
+        details={"pattern": scope_pattern, "project_id": project_id},
+    )
+
+
 @router.get("/projects/{project_id}/scopes", response_model=list[ScopeResponse])
 def list_scopes(
     tenant_id: int,
