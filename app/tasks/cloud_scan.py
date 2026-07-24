@@ -662,9 +662,9 @@ def run_cloud_bucket_scan(
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                import concurrent.futures
+                from app.core.concurrency import ContextThreadPoolExecutor
 
-                with concurrent.futures.ThreadPoolExecutor() as pool:
+                with ContextThreadPoolExecutor() as pool:
                     cloud_findings = pool.submit(asyncio.run, _run_with_timeout()).result()
             else:
                 cloud_findings = loop.run_until_complete(_run_with_timeout())

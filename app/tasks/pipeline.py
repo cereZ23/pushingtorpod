@@ -31,7 +31,9 @@ Helper functions are in app.tasks.pipeline_helpers.
 """
 
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
+
+from app.core.concurrency import ContextThreadPoolExecutor
 from datetime import datetime, timezone
 
 from celery.exceptions import SoftTimeLimitExceeded
@@ -464,7 +466,7 @@ def run_scan_pipeline(self, scan_run_id: int):
                 # can take up to 2.5h on large tenants; see resource_scaler).
                 group_timeout = {1: 1800, 2: 3600, 3: 10800}.get(scan_tier, 3600)
 
-                with ThreadPoolExecutor(max_workers=len(phases_to_run)) as executor:
+                with ContextThreadPoolExecutor(max_workers=len(phases_to_run)) as executor:
                     futures = {executor.submit(_run_parallel_phase, pid): pid for pid in phases_to_run}
                     completed_pids = set()
                     try:

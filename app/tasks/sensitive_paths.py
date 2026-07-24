@@ -1541,7 +1541,9 @@ def run_sensitive_path_scan(
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 # Running inside an existing event loop (e.g. Celery with asyncio)
-                with concurrent.futures.ThreadPoolExecutor() as pool:
+                from app.core.concurrency import ContextThreadPoolExecutor
+
+                with ContextThreadPoolExecutor() as pool:
                     asset_findings = pool.submit(asyncio.run, _run_scan_async(targets, max_paths=max_paths)).result(
                         timeout=hard_timeout
                     )
