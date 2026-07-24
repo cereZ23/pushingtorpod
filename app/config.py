@@ -176,6 +176,12 @@ class Settings(BaseSettings):
     discovery_naabu_timeout: int = 600
     discovery_nuclei_timeout: int = 1800
 
+    # Max Katana endpoints (after shape-dedup) fed to Nuclei per host. Endpoints
+    # are deduplicated by URL "shape" (numeric/hash path segments and query
+    # values collapsed) so /user/1..N and ?id=1..N fold into one representative;
+    # this caps the per-host target set without dropping distinct surface.
+    nuclei_max_endpoints_per_host: int = 200
+
     # New tool timeouts
     alterx_timeout: int = 300  # 5 min
     puredns_timeout: int = 1800  # 30 min (174k+ candidates at 200/s)
