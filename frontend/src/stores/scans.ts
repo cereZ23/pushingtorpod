@@ -314,15 +314,15 @@ export const useScanStore = defineStore("scans", () => {
     if (!silent) error.value = "";
 
     try {
-      const response = await apiClient.get<{
-        scan_run: ScanRun;
-        phases: PhaseProgress[];
-      }>(
-        `/api/v1/tenants/${tenantId.value}/scans/${runId}/progress`,
-        // Silent polls suppress the global network/5xx toast; the caller
-        // handles consecutive failures.
-        silent ? ({ _toastSilent: true } as unknown as Parameters<typeof apiClient.get>[1]) : undefined,
-      );
+      const url = `/api/v1/tenants/${tenantId.value}/scans/${runId}/progress`;
+      // Silent polls suppress the global network/5xx toast; the caller handles
+      // consecutive failures. Only pass the config arg when silent so the
+      // non-silent call shape is unchanged.
+      const response = silent
+        ? await apiClient.get<{ scan_run: ScanRun; phases: PhaseProgress[] }>(url, {
+            _toastSilent: true,
+          } as unknown as Parameters<typeof apiClient.get>[1])
+        : await apiClient.get<{ scan_run: ScanRun; phases: PhaseProgress[] }>(url);
       currentScanRun.value = response.data.scan_run;
       phaseProgress.value = response.data.phases;
       error.value = "";
