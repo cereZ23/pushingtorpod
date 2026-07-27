@@ -25,9 +25,26 @@ logger = logging.getLogger(__name__)
 
 
 class ToolExecutionError(Exception):
-    """Raised when tool execution fails"""
+    """Raised when tool execution fails.
 
-    pass
+    On a wall-clock timeout the process group is killed, but whatever the tool
+    already streamed to stdout/stderr is preserved on the exception so callers
+    can salvage partial results (and flag incomplete coverage) instead of
+    silently losing everything the tool produced before the kill.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        partial_stdout: str = "",
+        partial_stderr: str = "",
+        timed_out: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.partial_stdout = partial_stdout
+        self.partial_stderr = partial_stderr
+        self.timed_out = timed_out
 
 
 class SecureToolExecutor:
@@ -264,7 +281,14 @@ class SecureToolExecutor:
                 timer.cancel()
 
             if timed_out:
-                raise ToolExecutionError(f"Execution timed out after {timeout}s")
+                # Preserve whatever the tool streamed before the SIGKILL so the
+                # caller can salvage partial results instead of discarding them.
+                raise ToolExecutionError(
+                    f"Execution timed out after {timeout}s",
+                    partial_stdout=stdout or "",
+                    partial_stderr=stderr or "",
+                    timed_out=True,
+                )
 
             return proc.returncode, stdout or "", stderr or ""
 

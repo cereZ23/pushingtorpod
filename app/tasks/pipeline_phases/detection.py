@@ -486,6 +486,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
 
     tenant_logger.info(f"Nuclei: running {len(active_passes)} passes concurrently: {', '.join(active_passes.keys())}")
 
+    truncated_passes: list[str] = []
     with ContextThreadPoolExecutor(max_workers=len(active_passes) or 1) as executor:
         futures = {executor.submit(fn): name for name, fn in active_passes.items()}
         for future in as_completed(futures):
@@ -497,9 +498,17 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
                     total_updated += result.get("findings_updated", 0)
                     total_scanned += result.get("assets_scanned", 0)
                     total_urls += result.get("urls_scanned", 0)
+                    if result.get("truncated"):
+                        truncated_passes.append(pass_name)
                     tenant_logger.info(f"Nuclei {pass_name} complete: {result.get('findings_created', 0)} findings")
             except Exception as exc:
                 tenant_logger.error(f"Nuclei {pass_name} failed: {exc}")
+
+    if truncated_passes:
+        tenant_logger.warning(
+            f"Nuclei coverage INCOMPLETE: passes {truncated_passes} hit their timeout; "
+            "some templates did not run (partial findings were salvaged)"
+        )
 
     mem_after = proc.memory_info().rss / (1024 * 1024)
     tenant_logger.info(f"Nuclei memory: {mem_after:.0f} MB RSS after scan (delta: +{mem_after - mem_before:.0f} MB)")
@@ -517,6 +526,10 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         "memory_before_mb": round(mem_before),
         "memory_after_mb": round(mem_after),
         "memory_delta_mb": round(mem_after - mem_before),
+        # Incomplete coverage is recorded on the phase result so a truncated scan
+        # is visible (never silently treated as a full run).
+        "coverage_complete": not truncated_passes,
+        "truncated_passes": truncated_passes,
     }
 
 

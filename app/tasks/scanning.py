@@ -543,6 +543,10 @@ def run_nuclei_scan(
             "findings_updated": upsert_result["updated"],
             "assets_risk_updated": assets_updated,
             "stats": stats,
+            # Surface an incomplete (timed-out) nuclei pass upstream so the phase
+            # result — and anyone reading it — can tell a truncated scan from a
+            # clean one instead of a silent partial.
+            "truncated": bool(scan_result.get("truncated")),
             "status": "success",
         }
 

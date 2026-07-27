@@ -84,8 +84,13 @@ _Consistenza UX, salute del codice, qualità dei finding._
   tenant con molti IP: EXP-011 probava le porte sensibili **serialmente** per asset (681 IP × 3s
   ≈ 34 min). Fix: pre-warm concorrente dei probe prima del loop (cache per-processo) → ~1-2 min.
   Resta: `fingerprintx` timeout 300s (`config.py:184`, target 60s); profiling memoria nuclei.
-- [ ] **Copertura nuclei** — verificare che TUTTI i template rientrino nel timeout; template
-  custom davvero Italy-specific (oggi 1 su 16).
+- [~] **Copertura nuclei** — **[PARZIALE, PR #47]** Scoperto: al timeout il subprocess veniva
+  SIGKILLato e **tutto l'output del pass buttato** (findings: []) — perdita **silenziosa** di
+  vuln. Fix sistemico: l'executor conserva l'output parziale nell'eccezione (vale per **tutti** i
+  tool), nuclei recupera i finding già emessi + segna `truncated`, e la fase espone
+  `coverage_complete`/`truncated_passes` → una scansione troncata è **visibile**, non scambiata per
+  pulita. Resta: far rientrare davvero tutti i template nel budget (ridurre carico / tier-scalare i
+  300s fissi di Pass 2/3); template custom davvero Italy-specific (oggi 1 su 16).
 - [ ] **Feature enterprise** (grandi, su richiesta): authenticated crawling, k8s/etcd exposure,
   Slack bot interattivo, Terraform provider, GDPR PII mapping, ISO 27001 completo (15/93 → 93),
   NIS2/AgID mapping, SSO SAML end-to-end, RBAC per progetto, white-label, multi-region.

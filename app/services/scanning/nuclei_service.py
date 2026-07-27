@@ -159,11 +159,39 @@ class NucleiService:
                             logger.info(f"Nuclei stats: {line.strip()}")
 
             except ToolExecutionError as e:
+                # On a wall-clock timeout the process is SIGKILLed, but nuclei
+                # streams JSONL findings as it goes — salvage whatever it emitted
+                # before the kill instead of losing the whole pass, and flag the
+                # coverage as incomplete so a truncated scan is never mistaken
+                # for a clean one.
+                partial = getattr(e, "partial_stdout", "") or ""
+                if getattr(e, "timed_out", False) and partial:
+                    findings = self._parse_nuclei_output(partial)
+                    logger.warning(
+                        f"Nuclei timed out for tenant {self.tenant_id} after {timeout}s — "
+                        f"salvaged {len(findings)} partial finding(s); TEMPLATE COVERAGE INCOMPLETE"
+                    )
+                    stats = self._calculate_stats(valid_urls, findings)
+                    stats["truncated"] = True
+                    stats["timed_out"] = True
+                    return {
+                        "findings": findings,
+                        "stats": stats,
+                        "errors": [str(e)] + validation_errors,
+                        "truncated": True,
+                    }
                 logger.error(f"Nuclei execution failed for tenant {self.tenant_id}: {e}")
+                truncated = bool(getattr(e, "timed_out", False))
                 return {
                     "findings": [],
-                    "stats": {"urls_scanned": len(valid_urls), "findings_count": 0, "by_severity": {}},
+                    "stats": {
+                        "urls_scanned": len(valid_urls),
+                        "findings_count": 0,
+                        "by_severity": {},
+                        "truncated": truncated,
+                    },
                     "errors": [str(e)] + validation_errors,
+                    "truncated": truncated,
                 }
 
             # Parse results
