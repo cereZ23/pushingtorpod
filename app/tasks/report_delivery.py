@@ -218,11 +218,26 @@ def deliver_scheduled_reports(self) -> dict:
                 failed += 1
                 continue
 
+            # Compliance reports have no DOCX layout (Annex A / TSC mapping is
+            # PDF-only). For a scheduled compliance report set to DOCX there is
+            # no user in the loop to correct the choice, so deliver the correct
+            # PDF rather than a misleading executive-layout DOCX or a silent
+            # non-delivery. New DOCX+compliance schedules are blocked in the UI;
+            # this only rescues legacy ones.
+            effective_fmt = schedule.format
+            if schedule.report_type in ("soc2", "iso27001") and effective_fmt == "docx":
+                logger.warning(
+                    "Schedule %d requests %s as DOCX, which has no compliance layout; delivering PDF instead.",
+                    schedule.id,
+                    schedule.report_type,
+                )
+                effective_fmt = "pdf"
+
             # Generate report
             report_bytes = _generate_report(
                 tenant_id=schedule.tenant_id,
                 report_type=schedule.report_type,
-                fmt=schedule.format,
+                fmt=effective_fmt,
             )
 
             if report_bytes is None:
@@ -231,7 +246,7 @@ def deliver_scheduled_reports(self) -> dict:
 
             # Build filename and subject
             timestamp = datetime.now(timezone.utc).strftime("%Y%m%d")
-            ext = _EXTENSIONS.get(schedule.format, schedule.format)
+            ext = _EXTENSIONS.get(effective_fmt, effective_fmt)
             filename = f"easm_{schedule.report_type}_tenant_{schedule.tenant_id}_{timestamp}.{ext}"
             subject = f"[EASM] Scheduled {schedule.report_type.capitalize()} Report - {schedule.name}"
             body = (
@@ -240,7 +255,7 @@ def deliver_scheduled_reports(self) -> dict:
                 f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}.\n\n"
                 "This is an automated delivery from the EASM Platform."
             )
-            mime_type = _MIME_TYPES.get(schedule.format, "application/octet-stream")
+            mime_type = _MIME_TYPES.get(effective_fmt, "application/octet-stream")
 
             # Send email
             success = _send_email(
