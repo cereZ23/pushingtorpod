@@ -36,10 +36,10 @@ _Cose che possono causare perdita dati, incidenti, o vendere un artefatto sbagli
 - [ ] **Backup off-site** — oggi `scripts/backup.sh` fa solo `pg_dump` locale via cron,
   retention 7 giorni, **nessun upload S3/MinIO**. Un guasto del box = perdita totale.
   → aggiungere upload verso MinIO/S3 con retention 30gg e restore testato.
-- [ ] **DOCX di compliance degrada in silenzio** — `report_generator.py:872-874`:
-  `if report_type in ("soc2","iso27001"): report_type = "executive"`. Un report ISO/SOC2
-  richiesto in DOCX perde tutto il mapping Annex A senza avvisare l'utente.
-  → o implementare il DOCX di compliance, o bloccare la scelta DOCX per quei tipi in UI+API.
+- [x] **DOCX di compliance degrada in silenzio** — ~~`report_generator.py:872-874`~~ **[FATTO,
+  PR #39]** `generate_docx` ora alza `ValueError` invece del downgrade silenzioso; `/export/docx`
+  risponde 400 per soc2/iso27001; la delivery schedulata forza PDF (contenuto corretto) con
+  warning; la UI di scheduling disabilita DOCX per i tipi compliance.
 - [ ] **Secrets fuori dal filesystem** — `app/utils/secrets.py` usa un `SecretManager`
   custom (file Fernet + env), non Vault/Docker secrets. Accettabile per il PoC, rischioso
   con dati cliente reali. → migrazione a Docker secrets (minimo) o Vault.
