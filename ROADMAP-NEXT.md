@@ -48,13 +48,12 @@ _Cose che possono causare perdita dati, incidenti, o vendere un artefatto sbagli
 
 _Consistenza UX, salute del codice, qualità dei finding._
 
-- [ ] **Rollout del sistema di toast** — oggi `stores/toast.ts` è usato da **1 view su 38**;
-  le altre 32+ con gestione errori usano ancora banner inline artigianali → stesso errore,
-  aspetto diverso a seconda della pagina. → migrare le view al toast (o deprecarlo con una
-  scelta esplicita). Il singolo cambiamento di coerenza più grosso dell'app.
-- [ ] **Paginazione lista endpoint asset** — `AssetDetailView.vue:1268,1317` taglia a 50
-  senza paginazione/ricerca/"carica altri": su target reali (308 endpoint filtrati su un
-  progetto) la maggior parte dei dati è irraggiungibile. → paginazione o lista virtualizzata.
+- [x] **Rollout del sistema di toast** — **[FATTO, PR #40]** 10 view settings/form migrate dai
+  banner inline al toast store (success→`toast.success`, errori load/azione→`toast.error`),
+  validazione form tenuta inline. Restano le view read-only (solo `error` di load) → follow-up.
+- [x] **Paginazione lista endpoint asset** — **[FATTO, PR #41]** `AssetDetailView` ora ha
+  ricerca su path/method + paginazione client-side (50/pagina, Prev/Next) invece del cap fisso
+  a 50: tutti gli endpoint sono raggiungibili.
 - [ ] **ESLint ratchet** — `.github/workflows/tests.yml:169-170` ha `continue-on-error: true`;
   **92 errori** oggi invisibili in CI. → far fallire sui *nuovi* errori subito, smaltire i 92
   esistenti a lotti, poi togliere il flag.
