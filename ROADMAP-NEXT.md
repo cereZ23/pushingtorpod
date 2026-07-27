@@ -86,13 +86,16 @@ _Consistenza UX, salute del codice, qualità dei finding._
   #48 (principio *scan solo i vivi*): misconfig ora **scarta gli IP morti** (CIDR-expanded,
   `is_active` ma zero righe Service = nessuna porta aperta) → non li scansiona affatto, alla fonte.
   Resta: `fingerprintx` timeout 300s (`config.py:184`, target 60s); profiling memoria nuclei.
-- [~] **Copertura nuclei** — **[PARZIALE, PR #47]** Scoperto: al timeout il subprocess veniva
-  SIGKILLato e **tutto l'output del pass buttato** (findings: []) — perdita **silenziosa** di
-  vuln. Fix sistemico: l'executor conserva l'output parziale nell'eccezione (vale per **tutti** i
-  tool), nuclei recupera i finding già emessi + segna `truncated`, e la fase espone
-  `coverage_complete`/`truncated_passes` → una scansione troncata è **visibile**, non scambiata per
-  pulita. Resta: far rientrare davvero tutti i template nel budget (ridurre carico / tier-scalare i
-  300s fissi di Pass 2/3); template custom davvero Italy-specific (oggi 1 su 16).
+- [x] **Copertura nuclei — completa** — **[FATTO, PR #47 + #49]** Al timeout il subprocess veniva
+  SIGKILLato e **tutto l'output del pass buttato** (findings: []) — perdita **silenziosa** di vuln.
+  - #47: l'executor conserva l'output parziale nell'eccezione (vale per **tutti** i tool), nuclei
+    recupera i finding già emessi + segna `truncated`, la fase espone `coverage_complete`.
+  - #49 (la garanzia vera): `scan_urls_batched` spezza i target in lotti che rientrano nel timeout;
+    un lotto che tronca viene **rispezzato e ritentato** (parziale scartato per non duplicare) fino
+    a entrare → **ogni template gira su ogni target vivo**. Solo un singolo target genuinamente
+    non-scannabile o l'esaurimento del budget di fase lascia un residuo, ed è **visibile**.
+  Combinato con lo scan-solo-vivi (nuclei filtra già http-live; misconfig #48 scarta IP morti) il
+  set è realistico e rientra. Resta minore: template custom davvero Italy-specific (oggi 1 su 16).
 - [ ] **Feature enterprise** (grandi, su richiesta): authenticated crawling, k8s/etcd exposure,
   Slack bot interattivo, Terraform provider, GDPR PII mapping, ISO 27001 completo (15/93 → 93),
   NIS2/AgID mapping, SSO SAML end-to-end, RBAC per progetto, white-label, multi-region.
