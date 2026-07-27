@@ -42,6 +42,7 @@ from app.models.database import (
 from app.models.enrichment import Certificate
 from app.services.dedup import compute_finding_fingerprint
 from app.services.dns_lookup import has_mx, resolve_txt
+from app.utils.domains import registrable_domain
 from app.utils.logger import TenantLoggerAdapter
 from app.utils.validators import DomainValidator
 
@@ -61,6 +62,7 @@ def register(
     confidence: float,
     category: str,
     asset_types: list[str],
+    dedup_scope: str = "asset",
 ) -> Callable:
     """Decorator to register a misconfiguration control.
 
@@ -71,6 +73,11 @@ def register(
         confidence: Default confidence score 0.0 - 1.0.
         category: Category grouping string.
         asset_types: List of applicable AssetType values (e.g. ["domain", "subdomain"]).
+        dedup_scope: ``"asset"`` (default) persists one finding per asset, as
+            returned by the check. ``"root_domain"`` buffers this control's
+            findings and collapses all subdomains under the same registrable
+            domain into a single finding (e.g. HSTS across 43 subdomains ->
+            1 finding listing the affected hosts).
 
     Returns:
         The original check function, unmodified.
@@ -84,6 +91,7 @@ def register(
             "confidence": confidence,
             "category": category,
             "asset_types": asset_types,
+            "dedup_scope": dedup_scope,
             "check_fn": func,
         }
         return func
@@ -320,6 +328,143 @@ def _severity_enum(value: str) -> FindingSeverity:
         "critical": FindingSeverity.CRITICAL,
     }
     return mapping.get(value.lower(), FindingSeverity.INFO)
+
+
+_SEVERITY_RANK = {
+    FindingSeverity.INFO: 0,
+    FindingSeverity.LOW: 1,
+    FindingSeverity.MEDIUM: 2,
+    FindingSeverity.HIGH: 3,
+    FindingSeverity.CRITICAL: 4,
+}
+
+
+def _persist_finding(
+    db: Any,
+    *,
+    tenant_id: int,
+    asset_id: int,
+    fingerprint_identifier: str,
+    host: str,
+    finding_key: str,
+    name: str,
+    severity_enum: FindingSeverity,
+    evidence: dict,
+    stats: dict,
+    category: str,
+) -> None:
+    """Upsert a misconfig finding by its dedup fingerprint.
+
+    ``fingerprint_identifier`` is what the fingerprint is keyed on (the asset
+    identifier for per-asset findings, or the registrable domain for
+    root-scoped ones so the fingerprint stays stable regardless of which
+    physical asset the consolidated finding is attached to).
+    """
+    fp = compute_finding_fingerprint(
+        tenant_id=tenant_id,
+        asset_identifier=fingerprint_identifier,
+        template_id=finding_key,
+        source="misconfig",
+    )
+    existing = db.query(Finding).filter(Finding.fingerprint == fp).first()
+    now = datetime.now(timezone.utc)
+    if existing:
+        existing.last_seen = now
+        existing.evidence = evidence
+        existing.severity = severity_enum
+        existing.occurrence_count = (existing.occurrence_count or 1) + 1
+        if existing.status == FindingStatus.FIXED:
+            existing.status = FindingStatus.OPEN
+        stats["findings_updated"] += 1
+    else:
+        db.add(
+            Finding(
+                asset_id=asset_id,
+                source="misconfig",
+                template_id=finding_key,
+                name=name,
+                severity=severity_enum,
+                evidence=evidence,
+                first_seen=now,
+                last_seen=now,
+                status=FindingStatus.OPEN,
+                host=host,
+                fingerprint=fp,
+                occurrence_count=1,
+            )
+        )
+        stats["findings_created"] += 1
+    stats["controls_by_category"][category]["findings"] += 1
+
+
+def _consolidate_root_scoped(
+    db: Any,
+    *,
+    tenant_id: int,
+    control: dict,
+    by_root: dict,
+    assets_by_identifier: dict,
+    stats: dict,
+) -> None:
+    """Emit one consolidated finding per registrable domain for a root-scoped
+    control, collapsing all affected subdomains into a single finding.
+
+    ``by_root`` maps ``root_domain -> list[member]`` where each member is
+    ``{"asset", "name", "severity_enum", "evidence"}`` from the per-asset check.
+    """
+    control_id = control["id"]
+    for root, members in by_root.items():
+        if not members:
+            continue
+        affected_hosts = []
+        for m in sorted(members, key=lambda x: x["asset"].identifier):
+            ev = m["evidence"]
+            is_weak = ev.get("max_age_seconds") is not None
+            entry = {
+                "host": m["asset"].identifier,
+                "ports": ev.get("ports"),
+                "status": "weak_max_age" if is_weak else "missing",
+            }
+            if is_weak:
+                entry["max_age_seconds"] = ev.get("max_age_seconds")
+                entry["hsts_value"] = ev.get("hsts_value")
+            affected_hosts.append(entry)
+
+        worst = max(members, key=lambda m: _SEVERITY_RANK.get(m["severity_enum"], 0))
+        severity_enum = worst["severity_enum"]
+
+        evidence = {
+            "root_domain": root,
+            "affected_count": len(members),
+            "affected_hosts": affected_hosts,
+            "control_id": control_id,
+            "category": control["category"],
+            "confidence": min(m["evidence"].get("confidence", control["confidence"]) for m in members),
+            "remediation": members[0]["evidence"].get("remediation", ""),
+        }
+        if any(m["evidence"].get("needs_review") for m in members):
+            evidence["needs_review"] = True
+        scan_run_id = members[0]["evidence"].get("scan_run_id")
+        if scan_run_id:
+            evidence["scan_run_id"] = scan_run_id
+
+        # Attach to the registrable-domain asset if it exists, else to a
+        # representative affected subdomain (the root asset is not guaranteed).
+        target_asset = assets_by_identifier.get(root) or members[0]["asset"]
+
+        _persist_finding(
+            db,
+            tenant_id=tenant_id,
+            asset_id=target_asset.id,
+            fingerprint_identifier=root,
+            host=root,
+            finding_key=f"{control_id}:root:{root}",
+            name=f"Missing or weak HSTS on {len(members)} host(s) under {root}",
+            severity_enum=severity_enum,
+            evidence=evidence,
+            stats=stats,
+            category=control["category"],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -573,6 +718,9 @@ def check_tls_010(
     confidence=0.85,
     category="Security Headers",
     asset_types=["domain", "subdomain"],
+    # Roll every affected subdomain up into one finding per registrable domain
+    # instead of one MEDIUM per host (43 subdomains -> 1 actionable finding).
+    dedup_scope="root_domain",
 )
 def check_hdr_004(
     asset: Asset,
@@ -1859,6 +2007,12 @@ def run_misconfig_detection(
             f"Starting misconfiguration detection: {len(assets)} assets, {len(_CONTROLS)} controls registered"
         )
 
+        assets_by_identifier = {a.identifier: a for a in assets}
+        # Buffer for root-scoped controls: control_id -> {root_domain -> [member]}.
+        # Their findings are collapsed into one-per-registrable-domain after the
+        # per-asset loop instead of being persisted inline.
+        root_scoped: dict[str, dict[str, list]] = {}
+
         for asset in assets:
             asset_type_value = asset.type.value if asset.type else ""
 
@@ -1906,43 +2060,38 @@ def run_misconfig_detection(
                         if scan_run_id:
                             evidence["scan_run_id"] = scan_run_id
 
-                        # Compute dedup fingerprint
-                        fp = compute_finding_fingerprint(
+                        # Root-scoped controls (e.g. HSTS): buffer now, collapse
+                        # per registrable domain after the loop. Others persist
+                        # one finding per asset inline.
+                        if control.get("dedup_scope") == "root_domain":
+                            root = registrable_domain(asset.identifier)
+                            if root:
+                                root_scoped.setdefault(control_id, {}).setdefault(root, []).append(
+                                    {
+                                        "asset": asset,
+                                        "name": finding_data.get("name", control["name"]),
+                                        "severity_enum": severity_enum,
+                                        "evidence": evidence,
+                                    }
+                                )
+                                stats["controls_by_category"][category]["findings"] += 1
+                                continue
+                            # No registrable domain (bare host): fall through to
+                            # per-asset persistence rather than dropping it.
+
+                        _persist_finding(
+                            db,
                             tenant_id=tenant_id,
-                            asset_identifier=asset.identifier,
-                            template_id=finding_key,
-                            source="misconfig",
+                            asset_id=asset.id,
+                            fingerprint_identifier=asset.identifier,
+                            host=asset.identifier,
+                            finding_key=finding_key,
+                            name=finding_data.get("name", control["name"]),
+                            severity_enum=severity_enum,
+                            evidence=evidence,
+                            stats=stats,
+                            category=category,
                         )
-
-                        existing = db.query(Finding).filter(Finding.fingerprint == fp).first()
-
-                        if existing:
-                            existing.last_seen = datetime.now(timezone.utc)
-                            existing.evidence = evidence
-                            existing.severity = severity_enum
-                            existing.occurrence_count = (existing.occurrence_count or 1) + 1
-                            if existing.status == FindingStatus.FIXED:
-                                existing.status = FindingStatus.OPEN
-                            stats["findings_updated"] += 1
-                        else:
-                            finding = Finding(
-                                asset_id=asset.id,
-                                source="misconfig",
-                                template_id=finding_key,
-                                name=finding_data.get("name", control["name"]),
-                                severity=severity_enum,
-                                evidence=evidence,
-                                first_seen=datetime.now(timezone.utc),
-                                last_seen=datetime.now(timezone.utc),
-                                status=FindingStatus.OPEN,
-                                host=asset.identifier,
-                                fingerprint=fp,
-                                occurrence_count=1,
-                            )
-                            db.add(finding)
-                            stats["findings_created"] += 1
-
-                        stats["controls_by_category"][category]["findings"] += 1
 
                 except Exception as exc:
                     stats["errors"] += 1
@@ -1952,6 +2101,25 @@ def run_misconfig_detection(
                     )
 
             stats["assets_checked"] += 1
+
+        # Collapse buffered root-scoped controls into one finding per
+        # registrable domain (e.g. HSTS across many subdomains -> 1 finding).
+        for control_id, by_root in root_scoped.items():
+            try:
+                _consolidate_root_scoped(
+                    db,
+                    tenant_id=tenant_id,
+                    control=_CONTROLS[control_id],
+                    by_root=by_root,
+                    assets_by_identifier=assets_by_identifier,
+                    stats=stats,
+                )
+            except Exception as exc:
+                stats["errors"] += 1
+                tenant_logger.warning(
+                    f"Root-domain consolidation failed for {control_id}: {exc}",
+                    exc_info=True,
+                )
 
         db.commit()
 
