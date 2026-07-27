@@ -20,6 +20,7 @@ Architecture:
 
 import json
 import logging
+import time
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -220,6 +221,96 @@ class NucleiService:
             )
 
             return {"findings": findings, "stats": stats, "errors": validation_errors}
+
+    async def scan_urls_batched(
+        self,
+        urls: List[str],
+        templates: Optional[List[str]] = None,
+        severity: Optional[List[str]] = None,
+        rate_limit: int = 150,
+        concurrency: int = 50,
+        timeout: int = 300,
+        interactsh_server: Optional[str] = None,
+        exclude_tags: Optional[str] = None,
+        chunk_size: int = 50,
+        min_chunk: int = 5,
+        max_total_seconds: Optional[int] = None,
+    ) -> Dict:
+        """Scan URLs in bounded batches so every template runs on every target.
+
+        A single oversized nuclei run that exceeds ``timeout`` is SIGKILLed and
+        the tail of the ~6000-template list silently never runs. Instead, split
+        the targets into batches that each fit within ``timeout``; a batch that
+        still times out is split in half and retried (its partial findings
+        discarded to avoid duplicating them on the re-scan), down to
+        ``min_chunk``. Only a floor-size batch that STILL times out — or hitting
+        the overall ``max_total_seconds`` budget — leaves coverage truncated,
+        and that is reported via ``truncated``. This turns "lose the tail of
+        everything" into full coverage of every live target.
+        """
+        kwargs = dict(
+            templates=templates,
+            severity=severity,
+            rate_limit=rate_limit,
+            concurrency=concurrency,
+            timeout=timeout,
+            interactsh_server=interactsh_server,
+            exclude_tags=exclude_tags,
+        )
+        # Small enough to run in one shot — no batching overhead.
+        if len(urls) <= chunk_size:
+            return await self.scan_urls(urls, **kwargs)
+
+        from collections import deque
+
+        queue: deque = deque(urls[i : i + chunk_size] for i in range(0, len(urls), chunk_size))
+        all_findings: List[Dict] = []
+        all_errors: List[str] = []
+        truncated = False
+        batches_run = 0
+        deadline = (time.monotonic() + max_total_seconds) if max_total_seconds is not None else None
+
+        while queue:
+            if deadline and time.monotonic() > deadline:
+                truncated = True
+                logger.warning(
+                    f"Nuclei batching hit the overall budget ({max_total_seconds}s) for tenant "
+                    f"{self.tenant_id} with {len(queue)} batch(es) unscanned — coverage TRUNCATED"
+                )
+                break
+
+            batch = queue.popleft()
+            result = await self.scan_urls(batch, **kwargs)
+            batches_run += 1
+
+            if result.get("truncated") and len(batch) > min_chunk:
+                # This batch didn't fit. Discard its partial findings (the
+                # re-scan of the smaller halves will re-find them) and retry.
+                mid = len(batch) // 2 or 1
+                queue.appendleft(batch[mid:])
+                queue.appendleft(batch[:mid])
+                logger.warning(
+                    f"Nuclei batch of {len(batch)} URLs timed out for tenant {self.tenant_id}; "
+                    "splitting and retrying to keep coverage complete"
+                )
+                continue
+
+            all_findings.extend(result.get("findings", []))
+            all_errors.extend(result.get("errors", []))
+            if result.get("truncated"):
+                # A floor-size batch still timed out — keep its salvaged partial
+                # but flag incomplete coverage.
+                truncated = True
+
+        stats = self._calculate_stats(urls, all_findings)
+        stats["truncated"] = truncated
+        stats["batches"] = batches_run
+        return {
+            "findings": all_findings,
+            "stats": stats,
+            "errors": all_errors,
+            "truncated": truncated,
+        }
 
     async def scan_asset(
         self, asset_id: int, asset_url: str, templates: Optional[List[str]] = None, severity: Optional[List[str]] = None

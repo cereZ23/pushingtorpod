@@ -60,6 +60,7 @@ def run_nuclei_scan(
     timeout: int = 1800,
     interactsh_server: Optional[str] = None,
     exclude_tags: Optional[str] = None,
+    batch_deadline_seconds: Optional[int] = None,
 ):
     """
     Execute Nuclei vulnerability scan on assets
@@ -328,9 +329,13 @@ def run_nuclei_scan(
         # Execute Nuclei scan
         nuclei_service = NucleiService(tenant_id)
 
-        # Use asyncio to run async method
+        # Use asyncio to run async method. Batched so every template runs on
+        # every target: an oversized run that would exceed `timeout` is split
+        # into batches (with split-and-retry) instead of being SIGKILLed and
+        # losing the tail of the template list. `batch_deadline_seconds` caps the
+        # total so it never runs past the phase budget.
         scan_result = asyncio.run(
-            nuclei_service.scan_urls(
+            nuclei_service.scan_urls_batched(
                 urls=scan_targets,
                 templates=templates,
                 severity=severity or ["critical", "high", "medium"],
@@ -339,6 +344,7 @@ def run_nuclei_scan(
                 timeout=timeout,
                 interactsh_server=interactsh_server,
                 exclude_tags=exclude_tags,
+                max_total_seconds=batch_deadline_seconds,
             )
         )
 

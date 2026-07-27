@@ -220,6 +220,10 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     concurrency = params.nuclei_concurrency
     rate_limit = params.nuclei_rate_limit
     timeout = params.nuclei_timeout
+    # Overall budget for a pass's target-batching, matched to the phase-9 group
+    # wall-clock ({1:1800, 2:3600, 3:10800}s) with margin, so a batched pass
+    # self-terminates before the phase timeout would mark it failed.
+    nuclei_group_budget = int({1: 1800, 2: 3600, 3: 10800}.get(scan_tier, 3600) * 0.9)
 
     # Tier-aware exclude-tags: T1 is very conservative (no active payloads),
     # T2/T3 allow detection-based checks but still exclude intrusive templates.
@@ -405,6 +409,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             timeout=timeout,
             interactsh_server=interactsh_server if use_interactsh else None,
             exclude_tags=exclude_tags,
+            batch_deadline_seconds=nuclei_group_budget,
         )
 
     def _run_pass_2():
@@ -421,6 +426,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             concurrency=concurrency,
             timeout=300,
             exclude_tags=tier_exclude_tags[1],  # CDN pass always uses T1 (conservative)
+            batch_deadline_seconds=nuclei_group_budget,
         )
 
     def _run_pass_3():
@@ -439,6 +445,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             concurrency=concurrency,
             timeout=300,
             exclude_tags=exclude_tags,
+            batch_deadline_seconds=nuclei_group_budget,
         )
 
     # Pass 0: custom templates FIRST (sequential, fast ~10s).
