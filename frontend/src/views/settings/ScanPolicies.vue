@@ -2,6 +2,7 @@
 import { ref, onMounted, computed, watch } from "vue";
 import { useTenantStore } from "@/stores/tenant";
 import { useScanStore } from "@/stores/scans";
+import { useToastStore } from "@/stores/toast";
 import apiClient from "@/api/client";
 import type { Project } from "@/stores/scans";
 import ConfirmDeleteDialog from "@/components/scans/ConfirmDeleteDialog.vue";
@@ -37,12 +38,11 @@ interface ScopeRule {
 
 const tenantStore = useTenantStore();
 const scanStore = useScanStore();
+const toast = useToastStore();
 const currentTenantId = computed(() => tenantStore.currentTenantId);
 
 const isLoadingProfiles = ref(false);
 const isLoadingScopes = ref(false);
-const error = ref("");
-const successMessage = ref("");
 
 // Projects & selection
 const selectedProjectId = ref<number | null>(null);
@@ -169,7 +169,6 @@ function getTierLabel(tier: number): string {
 async function fetchProfiles(): Promise<void> {
   if (!currentTenantId.value || !selectedProjectId.value) return;
   isLoadingProfiles.value = true;
-  error.value = "";
 
   try {
     const response = await apiClient.get(
@@ -183,7 +182,7 @@ async function fetchProfiles(): Promise<void> {
     } else {
       const message =
         err instanceof Error ? err.message : "Failed to load profiles";
-      error.value = message;
+      toast.error(message);
     }
   } finally {
     isLoadingProfiles.value = false;
@@ -206,7 +205,7 @@ async function fetchScopes(): Promise<void> {
     } else {
       const message =
         err instanceof Error ? err.message : "Failed to load scopes";
-      error.value = message;
+      toast.error(message);
     }
   } finally {
     isLoadingScopes.value = false;
@@ -218,7 +217,6 @@ async function handleCreateProfile(): Promise<void> {
   if (!newProfile.value.name.trim()) return;
 
   isSavingProfile.value = true;
-  error.value = "";
 
   try {
     const payload = {
@@ -232,11 +230,11 @@ async function handleCreateProfile(): Promise<void> {
     profiles.value.push(response.data);
     showCreateProfile.value = false;
     resetProfileForm();
-    showSuccess("Profile created successfully");
+    toast.success("Profile created successfully");
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : "Failed to create profile";
-    error.value = message;
+    toast.error(message);
   } finally {
     isSavingProfile.value = false;
   }
@@ -256,12 +254,12 @@ async function handleDeleteProfile(): Promise<void> {
       `/api/v1/tenants/${currentTenantId.value}/projects/${selectedProjectId.value}/profiles/${profileToDelete.value.id}`,
     );
     profiles.value = profiles.value.filter((p) => p.id !== profileToDelete.value!.id);
-    showSuccess("Profile deleted");
+    toast.success("Profile deleted");
     profileToDelete.value = null;
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : "Failed to delete profile";
-    error.value = message;
+    toast.error(message);
   } finally {
     isDeletingProfile.value = false;
   }
@@ -279,11 +277,11 @@ async function handleUpdateSchedule(
       { schedule_cron: cron },
     );
     profile.schedule_cron = cron;
-    showSuccess("Schedule updated");
+    toast.success("Schedule updated");
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : "Failed to update schedule";
-    error.value = message;
+    toast.error(message);
   }
 }
 
@@ -292,7 +290,6 @@ async function handleAddScope(): Promise<void> {
   if (!newScope.value.pattern.trim()) return;
 
   isSavingScope.value = true;
-  error.value = "";
 
   try {
     const payload = {
@@ -306,11 +303,11 @@ async function handleAddScope(): Promise<void> {
     scopes.value.push(response.data);
     showAddScope.value = false;
     resetScopeForm();
-    showSuccess("Scope rule added");
+    toast.success("Scope rule added");
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : "Failed to add scope rule";
-    error.value = message;
+    toast.error(message);
   } finally {
     isSavingScope.value = false;
   }
@@ -330,13 +327,13 @@ async function handleRemoveScope(): Promise<void> {
       `/api/v1/tenants/${currentTenantId.value}/projects/${selectedProjectId.value}/scopes/${scopeToDelete.value.id}`,
     );
     scopes.value = scopes.value.filter((s) => s.id !== scopeToDelete.value!.id);
-    showSuccess("Scope rule removed");
+    toast.success("Scope rule removed");
     scopeToDelete.value = null;
   } catch (err: unknown) {
     if (!isNotFoundError(err)) {
       const message =
         err instanceof Error ? err.message : "Failed to remove scope rule";
-      error.value = message;
+      toast.error(message);
     }
   } finally {
     isRemovingScope.value = false;
@@ -373,13 +370,6 @@ function resetScopeForm(): void {
     pattern: "",
     description: "",
   };
-}
-
-function showSuccess(msg: string): void {
-  successMessage.value = msg;
-  setTimeout(() => {
-    successMessage.value = "";
-  }, 3000);
 }
 
 function selectProject(project: Project): void {
@@ -427,43 +417,6 @@ onMounted(async () => {
           Configure scan profiles, scheduling, and scope rules
         </p>
       </div>
-    </div>
-
-    <!-- Success Message -->
-    <div
-      v-if="successMessage"
-      class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-3 rounded-md flex items-center gap-2"
-    >
-      <svg
-        class="w-5 h-5 text-green-600 dark:text-green-400"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-          d="M5 13l4 4L19 7"
-        />
-      </svg>
-      <p class="text-green-800 dark:text-green-200 text-sm">
-        {{ successMessage }}
-      </p>
-    </div>
-
-    <!-- Error Banner -->
-    <div
-      v-if="error"
-      class="bg-red-50 dark:bg-red-900/20 p-4 rounded-md flex items-center justify-between"
-    >
-      <p class="text-red-800 dark:text-red-200">{{ error }}</p>
-      <button
-        @click="error = ''"
-        class="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 text-sm"
-      >
-        Dismiss
-      </button>
     </div>
 
     <!-- Main Layout -->

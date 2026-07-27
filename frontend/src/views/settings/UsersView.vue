@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
 import { useTenantStore } from '@/stores/tenant'
+import { useToastStore } from '@/stores/toast'
 import apiClient from '@/api/client'
 import AppDialog from '@/components/AppDialog.vue'
 
@@ -26,13 +27,12 @@ interface Invitation {
 }
 
 const tenantStore = useTenantStore()
+const toast = useToastStore()
 const tid = computed(() => tenantStore.currentTenantId)
 
 const users = ref<TenantUser[]>([])
 const invitations = ref<Invitation[]>([])
 const isLoading = ref(true)
-const error = ref('')
-const successMessage = ref('')
 
 // Create user modal state
 const showCreateModal = ref(false)
@@ -68,7 +68,6 @@ function getRoleBadgeClass(role: string): string {
 async function fetchData() {
   if (!tid.value) return
   isLoading.value = true
-  error.value = ''
 
   try {
     const [usersRes, invitationsRes] = await Promise.all([
@@ -79,7 +78,7 @@ async function fetchData() {
     invitations.value = invitationsRes.data
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
-    error.value = axiosErr.response?.data?.detail || axiosErr.message || 'Failed to load users'
+    toast.error(axiosErr.response?.data?.detail || axiosErr.message || 'Failed to load users')
   } finally {
     isLoading.value = false
   }
@@ -88,7 +87,6 @@ async function fetchData() {
 async function handleCreateUser() {
   if (!tid.value || !createEmail.value.trim() || !createUsername.value.trim() || !createPassword.value) return
   isCreating.value = true
-  error.value = ''
 
   try {
     await apiClient.post(`/api/v1/tenants/${tid.value}/users`, {
@@ -104,11 +102,11 @@ async function handleCreateUser() {
     createPassword.value = ''
     createFullName.value = ''
     createRole.value = 'analyst'
-    showSuccess('User created successfully')
+    toast.success('User created successfully')
     await fetchData()
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
-    error.value = axiosErr.response?.data?.detail || axiosErr.message || 'Failed to create user'
+    toast.error(axiosErr.response?.data?.detail || axiosErr.message || 'Failed to create user')
   } finally {
     isCreating.value = false
   }
@@ -117,7 +115,6 @@ async function handleCreateUser() {
 async function handleInvite() {
   if (!tid.value || !inviteEmail.value.trim()) return
   isInviting.value = true
-  error.value = ''
 
   try {
     await apiClient.post(`/api/v1/tenants/${tid.value}/invitations`, {
@@ -127,11 +124,11 @@ async function handleInvite() {
     showInviteModal.value = false
     inviteEmail.value = ''
     inviteRole.value = 'analyst'
-    showSuccess('Invitation sent')
+    toast.success('Invitation sent')
     await fetchData()
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
-    error.value = axiosErr.response?.data?.detail || axiosErr.message || 'Failed to send invitation'
+    toast.error(axiosErr.response?.data?.detail || axiosErr.message || 'Failed to send invitation')
   } finally {
     isInviting.value = false
   }
@@ -143,11 +140,11 @@ async function handleUpdateRole(userId: number, role: string) {
   try {
     await apiClient.patch(`/api/v1/tenants/${tid.value}/users/${userId}`, { role })
     editingUserId.value = null
-    showSuccess('Role updated')
+    toast.success('Role updated')
     await fetchData()
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
-    error.value = axiosErr.response?.data?.detail || axiosErr.message || 'Failed to update role'
+    toast.error(axiosErr.response?.data?.detail || axiosErr.message || 'Failed to update role')
   }
 }
 
@@ -158,11 +155,11 @@ async function handleToggleActive(user: TenantUser) {
     await apiClient.patch(`/api/v1/tenants/${tid.value}/users/${user.id}`, {
       is_active: !user.membership_active,
     })
-    showSuccess(user.membership_active ? 'User deactivated' : 'User reactivated')
+    toast.success(user.membership_active ? 'User deactivated' : 'User reactivated')
     await fetchData()
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
-    error.value = axiosErr.response?.data?.detail || axiosErr.message || 'Failed to update user'
+    toast.error(axiosErr.response?.data?.detail || axiosErr.message || 'Failed to update user')
   }
 }
 
@@ -171,22 +168,17 @@ async function handleRevokeInvitation(id: number) {
 
   try {
     await apiClient.delete(`/api/v1/tenants/${tid.value}/invitations/${id}`)
-    showSuccess('Invitation revoked')
+    toast.success('Invitation revoked')
     await fetchData()
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
-    error.value = axiosErr.response?.data?.detail || axiosErr.message || 'Failed to revoke invitation'
+    toast.error(axiosErr.response?.data?.detail || axiosErr.message || 'Failed to revoke invitation')
   }
 }
 
 function startEditRole(user: TenantUser) {
   editingUserId.value = user.id
   editingRole.value = user.role
-}
-
-function showSuccess(msg: string) {
-  successMessage.value = msg
-  setTimeout(() => { successMessage.value = '' }, 3000)
 }
 
 function formatDate(dateStr: string | null): string {
@@ -225,14 +217,6 @@ watch(tid, () => {
           Invite via Email
         </button>
       </div>
-    </div>
-
-    <!-- Success / Error -->
-    <div v-if="successMessage" class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-3 rounded-md">
-      <p class="text-green-800 dark:text-green-200 text-sm">{{ successMessage }}</p>
-    </div>
-    <div v-if="error" role="alert" class="bg-red-50 dark:bg-red-900/20 p-4 rounded-md">
-      <p class="text-red-800 dark:text-red-200 text-sm">{{ error }}</p>
     </div>
 
     <!-- Loading -->
