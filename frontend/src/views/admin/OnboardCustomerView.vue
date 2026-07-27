@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import apiClient from '@/api/client'
+import { useToastStore } from '@/stores/toast'
+
+const toast = useToastStore()
 
 // Form state
 const isLoading = ref(false)
-const error = ref('')
-const successMessage = ref('')
 const showForm = ref(true)
 
 // Form data
@@ -37,8 +38,6 @@ const resetForm = () => {
     password: '',
     domains: []
   }
-  error.value = ''
-  successMessage.value = ''
 }
 
 const isValidEmail = (email: string) => {
@@ -124,8 +123,6 @@ const submitOnboarding = async () => {
   }
 
   isLoading.value = true
-  error.value = ''
-  successMessage.value = ''
 
   try {
     // Filter out empty domains
@@ -142,23 +139,21 @@ const submitOnboarding = async () => {
     )
 
     // Success!
-    successMessage.value = response.data.message
-    showForm.value = false
+    toast.success(response.data.message)
 
     // Reset form after 3 seconds
     setTimeout(() => {
       resetForm()
-      showForm.value = true
     }, 3000)
 
   } catch (err: unknown) {
     const axiosErr = err as { response?: { status?: number; data?: { detail?: string } }; message?: string }
     if (axiosErr.response?.status === 403) {
-      error.value = 'You must be an admin to onboard customers'
+      toast.error('You must be an admin to onboard customers')
     } else if (axiosErr.response?.data?.detail) {
-      error.value = axiosErr.response.data.detail
+      toast.error(axiosErr.response.data.detail)
     } else {
-      error.value = 'Failed to onboard customer. Please try again.'
+      toast.error('Failed to onboard customer. Please try again.')
     }
   } finally {
     isLoading.value = false
@@ -173,31 +168,6 @@ const submitOnboarding = async () => {
       <p class="mt-1 text-sm text-gray-500 dark:text-dark-text-secondary">
         Add a new organization to the EASM platform
       </p>
-    </div>
-
-    <!-- Success Message -->
-    <div v-if="successMessage" class="mb-6 rounded-md bg-green-50 dark:bg-green-900/20 p-4">
-      <div class="flex">
-        <div class="flex-shrink-0">
-          <svg class="h-5 w-5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
-          </svg>
-        </div>
-        <div class="ml-3">
-          <h3 class="text-sm font-medium text-green-800 dark:text-green-200">
-            Customer onboarded successfully!
-          </h3>
-          <div class="mt-2 text-sm text-green-700 dark:text-green-300">
-            <p>{{ successMessage }}</p>
-            <p class="mt-1">The customer can now log in and their initial scan is running.</p>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Error Message -->
-    <div v-if="error" class="mb-6 rounded-md bg-red-50 dark:bg-red-900/20 p-4">
-      <p class="text-sm text-red-800 dark:text-red-200">{{ error }}</p>
     </div>
 
     <!-- Onboarding Form -->

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
 import { useTenantStore } from '@/stores/tenant'
+import { useToastStore } from '@/stores/toast'
 import apiClient from '@/api/client'
 import ConfirmDeleteDialog from '@/components/scans/ConfirmDeleteDialog.vue'
 
@@ -40,12 +41,11 @@ interface AlertPolicyCreatePayload {
 // --- Store and state ---
 
 const tenantStore = useTenantStore()
+const toast = useToastStore()
 const currentTenantId = computed(() => tenantStore.currentTenantId)
 
 const policies = ref<AlertPolicy[]>([])
 const isLoading = ref(false)
-const error = ref('')
-const successMessage = ref('')
 
 // Dialog state
 const showDialog = ref(false)
@@ -129,12 +129,11 @@ watch(currentTenantId, async () => {
 
 async function loadPolicies(): Promise<void> {
   if (!currentTenantId.value) {
-    error.value = 'No tenant selected'
+    toast.error('No tenant selected')
     return
   }
 
   isLoading.value = true
-  error.value = ''
 
   try {
     const response = await apiClient.get<AlertPolicy[]>(
@@ -143,7 +142,7 @@ async function loadPolicies(): Promise<void> {
     policies.value = response.data
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to load alert policies'
-    error.value = message
+    toast.error(message)
   } finally {
     isLoading.value = false
   }
@@ -154,7 +153,6 @@ async function savePolicy(): Promise<void> {
   if (!formName.value.trim()) return
 
   isSaving.value = true
-  error.value = ''
 
   const payload: AlertPolicyCreatePayload = {
     name: formName.value.trim(),
@@ -172,20 +170,19 @@ async function savePolicy(): Promise<void> {
         `/api/v1/tenants/${currentTenantId.value}/alert-policies/${editingPolicyId.value}`,
         payload
       )
-      successMessage.value = 'Policy updated successfully'
+      toast.success('Policy updated successfully')
     } else {
       await apiClient.post(
         `/api/v1/tenants/${currentTenantId.value}/alert-policies`,
         payload
       )
-      successMessage.value = 'Policy created successfully'
+      toast.success('Policy created successfully')
     }
     closeDialog()
     await loadPolicies()
-    clearSuccessAfterDelay()
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to save policy'
-    error.value = message
+    toast.error(message)
   } finally {
     isSaving.value = false
   }
@@ -198,7 +195,6 @@ function confirmDeletePolicy(policy: AlertPolicy): void {
 async function deletePolicy(): Promise<void> {
   if (!currentTenantId.value || !policyToDelete.value) return
 
-  error.value = ''
   isDeletingPolicy.value = true
 
   try {
@@ -206,12 +202,11 @@ async function deletePolicy(): Promise<void> {
       `/api/v1/tenants/${currentTenantId.value}/alert-policies/${policyToDelete.value.id}`
     )
     policyToDelete.value = null
-    successMessage.value = 'Policy deleted successfully'
+    toast.success('Policy deleted successfully')
     await loadPolicies()
-    clearSuccessAfterDelay()
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to delete policy'
-    error.value = message
+    toast.error(message)
   } finally {
     isDeletingPolicy.value = false
   }
@@ -221,7 +216,6 @@ async function testPolicy(policyId: number): Promise<void> {
   if (!currentTenantId.value) return
 
   testingPolicyId.value = policyId
-  error.value = ''
 
   try {
     const response = await apiClient.post<{
@@ -230,14 +224,13 @@ async function testPolicy(policyId: number): Promise<void> {
       message: string
     }>(`/api/v1/tenants/${currentTenantId.value}/alert-policies/${policyId}/test`)
     if (response.data.success) {
-      successMessage.value = response.data.message
-      clearSuccessAfterDelay()
+      toast.success(response.data.message)
     } else {
-      error.value = response.data.message
+      toast.error(response.data.message)
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to send test notification'
-    error.value = message
+    toast.error(message)
   } finally {
     testingPolicyId.value = null
   }
@@ -245,8 +238,6 @@ async function testPolicy(policyId: number): Promise<void> {
 
 async function toggleEnabled(policy: AlertPolicy): Promise<void> {
   if (!currentTenantId.value) return
-
-  error.value = ''
 
   try {
     await apiClient.patch(
@@ -256,7 +247,7 @@ async function toggleEnabled(policy: AlertPolicy): Promise<void> {
     policy.enabled = !policy.enabled
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to toggle policy'
-    error.value = message
+    toast.error(message)
   }
 }
 
@@ -264,18 +255,16 @@ async function seedDefaults(): Promise<void> {
   if (!currentTenantId.value) return
 
   isSeedingDefaults.value = true
-  error.value = ''
 
   try {
     await apiClient.post(
       `/api/v1/tenants/${currentTenantId.value}/alert-policies/seed-defaults`
     )
-    successMessage.value = 'Default policies created successfully'
+    toast.success('Default policies created successfully')
     await loadPolicies()
-    clearSuccessAfterDelay()
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to seed default policies'
-    error.value = message
+    toast.error(message)
   } finally {
     isSeedingDefaults.value = false
   }
@@ -352,14 +341,6 @@ function toggleEventType(eventType: EventType): void {
 function isEventTypeSelected(eventType: EventType): boolean {
   return formEventTypes.value.includes(eventType)
 }
-
-// --- Utility methods ---
-
-function clearSuccessAfterDelay(): void {
-  setTimeout(() => {
-    successMessage.value = ''
-  }, 4000)
-}
 </script>
 
 <template>
@@ -382,34 +363,6 @@ function clearSuccessAfterDelay(): void {
           Create Policy
         </button>
       </div>
-    </div>
-
-    <!-- Success Message -->
-    <div
-      v-if="successMessage"
-      class="bg-green-50 dark:bg-green-900/20 p-4 rounded-md flex items-center justify-between"
-    >
-      <p class="text-green-800 dark:text-green-200">{{ successMessage }}</p>
-      <button
-        @click="successMessage = ''"
-        class="text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 text-sm"
-      >
-        Dismiss
-      </button>
-    </div>
-
-    <!-- Error State -->
-    <div
-      v-if="error"
-      class="bg-red-50 dark:bg-red-900/20 p-4 rounded-md flex items-center justify-between"
-    >
-      <p class="text-red-800 dark:text-red-200">{{ error }}</p>
-      <button
-        @click="error = ''"
-        class="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 text-sm"
-      >
-        Dismiss
-      </button>
     </div>
 
     <!-- Loading State -->

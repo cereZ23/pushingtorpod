@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useTenantStore } from '@/stores/tenant'
+import { useToastStore } from '@/stores/toast'
 import apiClient from '@/api/client'
 
 // --- Types ---
@@ -47,6 +48,7 @@ interface AxiosErrorShape {
 // --- Stores ---
 
 const tenantStore = useTenantStore()
+const toast = useToastStore()
 const tid = computed(() => tenantStore.currentTenantId)
 
 // --- Format / severity options ---
@@ -85,22 +87,7 @@ const isPushing = ref(false)
 const isTesting = ref(false)
 const showPushConfirm = ref(false)
 
-// --- Feedback state ---
-
-const error = ref('')
-const successMessage = ref('')
-
 // --- Helpers ---
-
-function showSuccess(msg: string) {
-  successMessage.value = msg
-  setTimeout(() => { successMessage.value = '' }, 3000)
-}
-
-function showError(msg: string) {
-  error.value = msg
-  setTimeout(() => { error.value = '' }, 5000)
-}
 
 function buildExportPayload(format: SiemFormat, severity: SeverityLevel | '', since: string): Record<string, unknown> {
   const payload: Record<string, unknown> = { format }
@@ -122,7 +109,6 @@ function formatEventJson(event: SiemEvent): string {
 async function handlePreviewExport() {
   if (!tid.value) return
   isExporting.value = true
-  error.value = ''
   exportResult.value = null
 
   try {
@@ -135,7 +121,7 @@ async function handlePreviewExport() {
     exportEventsExpanded.value = false
   } catch (err: unknown) {
     const axiosErr = err as AxiosErrorShape
-    showError(axiosErr.response?.data?.detail || axiosErr.message || 'Failed to preview export')
+    toast.error(axiosErr.response?.data?.detail || axiosErr.message || 'Failed to preview export')
   } finally {
     isExporting.value = false
   }
@@ -157,7 +143,6 @@ const canPush = computed(() =>
 async function handleTestPush() {
   if (!tid.value || !canPush.value) return
   isTesting.value = true
-  error.value = ''
 
   try {
     const response = await apiClient.post<PushResponse>(
@@ -165,13 +150,13 @@ async function handleTestPush() {
       buildPushPayload(),
     )
     if (response.data.success) {
-      showSuccess(`Test push successful: ${response.data.event_count} events sent`)
+      toast.success(`Test push successful: ${response.data.event_count} events sent`)
     } else {
-      showError(response.data.detail || 'Push failed with unknown error')
+      toast.error(response.data.detail || 'Push failed with unknown error')
     }
   } catch (err: unknown) {
     const axiosErr = err as AxiosErrorShape
-    showError(axiosErr.response?.data?.detail || axiosErr.message || 'Test push failed')
+    toast.error(axiosErr.response?.data?.detail || axiosErr.message || 'Test push failed')
   } finally {
     isTesting.value = false
   }
@@ -189,7 +174,6 @@ async function handlePushNow() {
   showPushConfirm.value = false
   if (!tid.value || !canPush.value) return
   isPushing.value = true
-  error.value = ''
 
   try {
     const response = await apiClient.post<PushResponse>(
@@ -197,13 +181,13 @@ async function handlePushNow() {
       buildPushPayload(),
     )
     if (response.data.success) {
-      showSuccess(`Push completed: ${response.data.event_count} events delivered to SIEM endpoint`)
+      toast.success(`Push completed: ${response.data.event_count} events delivered to SIEM endpoint`)
     } else {
-      showError(response.data.detail || 'Push failed with unknown error')
+      toast.error(response.data.detail || 'Push failed with unknown error')
     }
   } catch (err: unknown) {
     const axiosErr = err as AxiosErrorShape
-    showError(axiosErr.response?.data?.detail || axiosErr.message || 'Push failed')
+    toast.error(axiosErr.response?.data?.detail || axiosErr.message || 'Push failed')
   } finally {
     isPushing.value = false
   }
@@ -213,8 +197,6 @@ async function handlePushNow() {
 
 watch(tid, () => {
   exportResult.value = null
-  error.value = ''
-  successMessage.value = ''
   // No data to reload -- SIEM export is action-based, not data-loaded
 })
 </script>
@@ -228,42 +210,6 @@ watch(tid, () => {
         Export findings to Splunk or Azure Sentinel in SIEM-compatible formats
       </p>
     </div>
-
-    <!-- Success Banner -->
-    <Transition
-      enter-active-class="transition ease-out duration-200"
-      enter-from-class="opacity-0 -translate-y-1"
-      enter-to-class="opacity-100 translate-y-0"
-      leave-active-class="transition ease-in duration-150"
-      leave-from-class="opacity-100 translate-y-0"
-      leave-to-class="opacity-0 -translate-y-1"
-    >
-      <div
-        v-if="successMessage"
-        role="alert"
-        class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-3 rounded-md"
-      >
-        <p class="text-green-800 dark:text-green-200 text-sm">{{ successMessage }}</p>
-      </div>
-    </Transition>
-
-    <!-- Error Banner -->
-    <Transition
-      enter-active-class="transition ease-out duration-200"
-      enter-from-class="opacity-0 -translate-y-1"
-      enter-to-class="opacity-100 translate-y-0"
-      leave-active-class="transition ease-in duration-150"
-      leave-from-class="opacity-100 translate-y-0"
-      leave-to-class="opacity-0 -translate-y-1"
-    >
-      <div
-        v-if="error"
-        role="alert"
-        class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4 rounded-md"
-      >
-        <p class="text-red-800 dark:text-red-200 text-sm">{{ error }}</p>
-      </div>
-    </Transition>
 
     <!-- ===== Section 1: Export Preview ===== -->
     <div class="bg-white dark:bg-dark-bg-secondary rounded-lg border border-gray-200 dark:border-dark-border overflow-hidden">

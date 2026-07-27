@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toast'
 import { authApi } from '@/api/auth'
 import apiClient from '@/api/client'
 
 const authStore = useAuthStore()
+const toast = useToastStore()
 
 const mfaEnabled = computed(() => authStore.currentUser?.mfa_enabled ?? false)
 
@@ -25,18 +27,14 @@ const newPassword = ref('')
 const confirmPassword = ref('')
 const isChangingPassword = ref(false)
 
-const error = ref('')
-const successMessage = ref('')
-
 async function handleSetupMfa() {
-  error.value = ''
   isSettingUp.value = true
 
   try {
     setupData.value = await authApi.setupMfa()
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
-    error.value = axiosErr.response?.data?.detail || axiosErr.message || 'Failed to start MFA setup'
+    toast.error(axiosErr.response?.data?.detail || axiosErr.message || 'Failed to start MFA setup')
   } finally {
     isSettingUp.value = false
   }
@@ -44,18 +42,17 @@ async function handleSetupMfa() {
 
 async function handleVerifySetup() {
   if (!verifyCode.value || verifyCode.value.length !== 6) return
-  error.value = ''
   isVerifying.value = true
 
   try {
     await authApi.verifyMfaSetup(verifyCode.value)
     setupData.value = null
     verifyCode.value = ''
-    showSuccess('MFA enabled successfully')
+    toast.success('MFA enabled successfully')
     await authStore.fetchCurrentUser()
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
-    error.value = axiosErr.response?.data?.detail || axiosErr.message || 'Invalid verification code'
+    toast.error(axiosErr.response?.data?.detail || axiosErr.message || 'Invalid verification code')
   } finally {
     isVerifying.value = false
   }
@@ -63,33 +60,30 @@ async function handleVerifySetup() {
 
 async function handleDisableMfa() {
   if (!disablePassword.value) return
-  error.value = ''
   isDisabling.value = true
 
   try {
     await authApi.disableMfa(disablePassword.value)
     showDisableConfirm.value = false
     disablePassword.value = ''
-    showSuccess('MFA disabled')
+    toast.success('MFA disabled')
     await authStore.fetchCurrentUser()
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
-    error.value = axiosErr.response?.data?.detail || axiosErr.message || 'Failed to disable MFA'
+    toast.error(axiosErr.response?.data?.detail || axiosErr.message || 'Failed to disable MFA')
   } finally {
     isDisabling.value = false
   }
 }
 
 async function handleChangePassword() {
-  error.value = ''
-
   if (newPassword.value !== confirmPassword.value) {
-    error.value = 'Passwords do not match'
+    toast.error('Passwords do not match')
     return
   }
 
   if (newPassword.value.length < 8) {
-    error.value = 'New password must be at least 8 characters'
+    toast.error('New password must be at least 8 characters')
     return
   }
 
@@ -103,10 +97,10 @@ async function handleChangePassword() {
     currentPassword.value = ''
     newPassword.value = ''
     confirmPassword.value = ''
-    showSuccess('Password changed successfully')
+    toast.success('Password changed successfully')
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
-    error.value = axiosErr.response?.data?.detail || axiosErr.message || 'Failed to change password'
+    toast.error(axiosErr.response?.data?.detail || axiosErr.message || 'Failed to change password')
   } finally {
     isChangingPassword.value = false
   }
@@ -116,11 +110,6 @@ function cancelSetup() {
   setupData.value = null
   verifyCode.value = ''
 }
-
-function showSuccess(msg: string) {
-  successMessage.value = msg
-  setTimeout(() => { successMessage.value = '' }, 3000)
-}
 </script>
 
 <template>
@@ -129,14 +118,6 @@ function showSuccess(msg: string) {
     <div>
       <h2 class="text-2xl font-bold text-gray-900 dark:text-dark-text-primary">Security Settings</h2>
       <p class="text-sm text-gray-500 dark:text-dark-text-tertiary mt-1">Manage your password and two-factor authentication</p>
-    </div>
-
-    <!-- Success / Error -->
-    <div v-if="successMessage" class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-3 rounded-md">
-      <p class="text-green-800 dark:text-green-200 text-sm">{{ successMessage }}</p>
-    </div>
-    <div v-if="error" class="bg-red-50 dark:bg-red-900/20 p-4 rounded-md">
-      <p class="text-red-800 dark:text-red-200 text-sm">{{ error }}</p>
     </div>
 
     <!-- MFA Section -->

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
 import { useTenantStore } from '@/stores/tenant'
+import { useToastStore } from '@/stores/toast'
 import apiClient from '@/api/client'
 import { formatDate } from '@/utils/formatters'
 
@@ -33,12 +34,11 @@ interface CreateSuppressionPayload {
 // -- State --
 
 const tenantStore = useTenantStore()
+const toast = useToastStore()
 const currentTenantId = computed(() => tenantStore.currentTenantId)
 
 const rules = ref<SuppressionRule[]>([])
 const isLoading = ref(false)
-const error = ref('')
-const successMessage = ref('')
 
 // Create dialog
 const showCreateDialog = ref(false)
@@ -85,7 +85,6 @@ const inactiveRules = computed(() => rules.value.filter(r => !r.is_active))
 async function fetchRules(): Promise<void> {
   if (!currentTenantId.value) return
   isLoading.value = true
-  error.value = ''
 
   try {
     const response = await apiClient.get(
@@ -98,7 +97,7 @@ async function fetchRules(): Promise<void> {
       rules.value = []
     } else {
       const message = err instanceof Error ? err.message : 'Failed to load suppression rules'
-      error.value = message
+      toast.error(message)
     }
   } finally {
     isLoading.value = false
@@ -110,7 +109,6 @@ async function handleCreateRule(): Promise<void> {
   if (!newRule.value.name.trim() || !newRule.value.pattern.trim()) return
 
   isSaving.value = true
-  error.value = ''
 
   try {
     const payload = {
@@ -125,10 +123,10 @@ async function handleCreateRule(): Promise<void> {
     rules.value.push(response.data)
     showCreateDialog.value = false
     resetForm()
-    showSuccess('Suppression rule created')
+    toast.success('Suppression rule created')
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to create rule'
-    error.value = message
+    toast.error(message)
   } finally {
     isSaving.value = false
   }
@@ -144,10 +142,10 @@ async function handleToggleActive(rule: SuppressionRule): Promise<void> {
       { is_active: newState }
     )
     rule.is_active = newState
-    showSuccess(`Rule ${newState ? 'activated' : 'deactivated'}`)
+    toast.success(`Rule ${newState ? 'activated' : 'deactivated'}`)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to update rule'
-    error.value = message
+    toast.error(message)
   }
 }
 
@@ -160,7 +158,6 @@ async function handleDeleteRule(): Promise<void> {
   if (!currentTenantId.value || !ruleToDelete.value) return
 
   isDeleting.value = true
-  error.value = ''
 
   try {
     await apiClient.delete(
@@ -169,10 +166,10 @@ async function handleDeleteRule(): Promise<void> {
     rules.value = rules.value.filter(r => r.id !== ruleToDelete.value!.id)
     showDeleteConfirm.value = false
     ruleToDelete.value = null
-    showSuccess('Rule deleted')
+    toast.success('Rule deleted')
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to delete rule'
-    error.value = message
+    toast.error(message)
   } finally {
     isDeleting.value = false
   }
@@ -221,11 +218,6 @@ function prefillFromFinding(): void {
   showCreateDialog.value = true
 }
 
-function showSuccess(msg: string): void {
-  successMessage.value = msg
-  setTimeout(() => { successMessage.value = '' }, 3000)
-}
-
 function isExpired(rule: SuppressionRule): boolean {
   if (!rule.expires_at) return false
   return new Date(rule.expires_at) < new Date()
@@ -271,23 +263,6 @@ watch(currentTenantId, () => {
           New Rule
         </button>
       </div>
-    </div>
-
-    <!-- Success Message -->
-    <div
-      v-if="successMessage"
-      class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-3 rounded-md flex items-center gap-2"
-    >
-      <svg class="w-5 h-5 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-      </svg>
-      <p class="text-green-800 dark:text-green-200 text-sm">{{ successMessage }}</p>
-    </div>
-
-    <!-- Error Banner -->
-    <div v-if="error" class="bg-red-50 dark:bg-red-900/20 p-4 rounded-md flex items-center justify-between">
-      <p class="text-red-800 dark:text-red-200">{{ error }}</p>
-      <button @click="error = ''" class="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 text-sm">Dismiss</button>
     </div>
 
     <!-- Loading -->

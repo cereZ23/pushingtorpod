@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
 import { useTenantStore } from '@/stores/tenant'
+import { useToastStore } from '@/stores/toast'
 import apiClient from '@/api/client'
 import { formatDate } from '@/utils/formatters'
 
@@ -56,12 +57,11 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 // -- State --
 
 const tenantStore = useTenantStore()
+const toast = useToastStore()
 const currentTenantId = computed(() => tenantStore.currentTenantId)
 
 const schedules = ref<ReportSchedule[]>([])
 const isLoading = ref(false)
-const error = ref('')
-const successMessage = ref('')
 
 // Form state
 const showForm = ref(false)
@@ -134,7 +134,6 @@ const isFormValid = computed((): boolean => {
 async function fetchSchedules(): Promise<void> {
   if (!currentTenantId.value) return
   isLoading.value = true
-  error.value = ''
 
   try {
     const response = await apiClient.get(
@@ -146,7 +145,7 @@ async function fetchSchedules(): Promise<void> {
     if (isNotFoundError(err)) {
       schedules.value = []
     } else {
-      error.value = extractErrorMessage(err, 'Failed to load report schedules')
+      toast.error(extractErrorMessage(err, 'Failed to load report schedules'))
     }
   } finally {
     isLoading.value = false
@@ -165,7 +164,6 @@ async function handleSubmit(): Promise<void> {
   }
 
   isSaving.value = true
-  error.value = ''
 
   try {
     const payload = {
@@ -185,19 +183,19 @@ async function handleSubmit(): Promise<void> {
       if (idx !== -1) {
         schedules.value[idx] = response.data
       }
-      showSuccess('Schedule updated')
+      toast.success('Schedule updated')
     } else {
       const response = await apiClient.post(
         `/api/v1/tenants/${currentTenantId.value}/report-schedules`,
         payload
       )
       schedules.value.push(response.data)
-      showSuccess('Schedule created')
+      toast.success('Schedule created')
     }
 
     closeForm()
   } catch (err: unknown) {
-    error.value = extractErrorMessage(err, 'Failed to save schedule')
+    toast.error(extractErrorMessage(err, 'Failed to save schedule'))
   } finally {
     isSaving.value = false
   }
@@ -215,11 +213,11 @@ async function handleToggleActive(schedule: ReportSchedule): Promise<void> {
       `/api/v1/tenants/${currentTenantId.value}/report-schedules/${schedule.id}`,
       { is_active: schedule.is_active }
     )
-    showSuccess(`Schedule ${schedule.is_active ? 'activated' : 'deactivated'}`)
+    toast.success(`Schedule ${schedule.is_active ? 'activated' : 'deactivated'}`)
   } catch (err: unknown) {
     // Revert on failure
     schedule.is_active = previousState
-    error.value = extractErrorMessage(err, 'Failed to update schedule')
+    toast.error(extractErrorMessage(err, 'Failed to update schedule'))
   }
 }
 
@@ -227,7 +225,6 @@ async function handleDelete(): Promise<void> {
   if (!currentTenantId.value || !scheduleToDelete.value) return
 
   isDeleting.value = true
-  error.value = ''
 
   try {
     await apiClient.delete(
@@ -236,9 +233,9 @@ async function handleDelete(): Promise<void> {
     schedules.value = schedules.value.filter(s => s.id !== scheduleToDelete.value!.id)
     showDeleteConfirm.value = false
     scheduleToDelete.value = null
-    showSuccess('Schedule deleted')
+    toast.success('Schedule deleted')
   } catch (err: unknown) {
-    error.value = extractErrorMessage(err, 'Failed to delete schedule')
+    toast.error(extractErrorMessage(err, 'Failed to delete schedule'))
   } finally {
     isDeleting.value = false
   }
@@ -325,11 +322,6 @@ function getFormatBadgeClass(fmt: ReportFormat): string {
 
 // -- Generic helpers --
 
-function showSuccess(msg: string): void {
-  successMessage.value = msg
-  setTimeout(() => { successMessage.value = '' }, 3000)
-}
-
 function isNotFoundError(err: unknown): boolean {
   if (err && typeof err === 'object' && 'response' in err) {
     const axiosErr = err as { response?: { status?: number } }
@@ -370,23 +362,6 @@ watch(currentTenantId, () => {
       >
         Create Schedule
       </button>
-    </div>
-
-    <!-- Success Message -->
-    <div
-      v-if="successMessage"
-      class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-3 rounded-md flex items-center gap-2"
-    >
-      <svg aria-hidden="true" class="w-5 h-5 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-      </svg>
-      <p class="text-green-800 dark:text-green-200 text-sm">{{ successMessage }}</p>
-    </div>
-
-    <!-- Error Banner -->
-    <div v-if="error" role="alert" class="bg-red-50 dark:bg-red-900/20 p-4 rounded-md flex items-center justify-between">
-      <p class="text-red-800 dark:text-red-200">{{ error }}</p>
-      <button @click="error = ''" class="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 text-sm">Dismiss</button>
     </div>
 
     <!-- Loading -->

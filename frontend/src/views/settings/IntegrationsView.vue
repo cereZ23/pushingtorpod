@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
 import { useTenantStore } from '@/stores/tenant'
+import { useToastStore } from '@/stores/toast'
 import apiClient from '@/api/client'
 
 interface TicketingConfig {
@@ -14,14 +15,13 @@ interface TicketingConfig {
 }
 
 const tenantStore = useTenantStore()
+const toast = useToastStore()
 const tid = computed(() => tenantStore.currentTenantId)
 
 const config = ref<TicketingConfig | null>(null)
 const isLoading = ref(true)
 const isSaving = ref(false)
 const isTesting = ref(false)
-const error = ref('')
-const successMessage = ref('')
 const testResult = ref<string | null>(null)
 
 // Form state
@@ -36,7 +36,6 @@ const syncStatusBack = ref(false)
 async function fetchConfig() {
   if (!tid.value) return
   isLoading.value = true
-  error.value = ''
 
   try {
     const response = await apiClient.get(`/api/v1/tenants/${tid.value}/integrations/ticketing`)
@@ -53,7 +52,7 @@ async function fetchConfig() {
     if (axiosErr.response?.status === 404) {
       config.value = null
     } else {
-      error.value = axiosErr.response?.data?.detail || axiosErr.message || 'Failed to load configuration'
+      toast.error(axiosErr.response?.data?.detail || axiosErr.message || 'Failed to load configuration')
     }
   } finally {
     isLoading.value = false
@@ -63,7 +62,6 @@ async function fetchConfig() {
 async function handleSave() {
   if (!tid.value) return
   isSaving.value = true
-  error.value = ''
 
   try {
     const payload = {
@@ -81,11 +79,11 @@ async function handleSave() {
     // so a PUT on an existing config returned 405. Always POST.
     await apiClient.post(`/api/v1/tenants/${tid.value}/integrations/ticketing`, payload)
 
-    showSuccess('Configuration saved')
+    toast.success('Configuration saved')
     await fetchConfig()
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
-    error.value = axiosErr.response?.data?.detail || axiosErr.message || 'Failed to save configuration'
+    toast.error(axiosErr.response?.data?.detail || axiosErr.message || 'Failed to save configuration')
   } finally {
     isSaving.value = false
   }
@@ -95,7 +93,6 @@ async function handleTestConnection() {
   if (!tid.value) return
   isTesting.value = true
   testResult.value = null
-  error.value = ''
 
   try {
     const response = await apiClient.post(`/api/v1/tenants/${tid.value}/integrations/ticketing/test`)
@@ -103,7 +100,7 @@ async function handleTestConnection() {
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
     testResult.value = null
-    error.value = axiosErr.response?.data?.detail || axiosErr.message || 'Connection test failed'
+    toast.error(axiosErr.response?.data?.detail || axiosErr.message || 'Connection test failed')
   } finally {
     isTesting.value = false
   }
@@ -119,16 +116,11 @@ async function handleDeactivate() {
     projectKey.value = ''
     username.value = ''
     apiToken.value = ''
-    showSuccess('Integration deactivated')
+    toast.success('Integration deactivated')
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
-    error.value = axiosErr.response?.data?.detail || axiosErr.message || 'Failed to deactivate'
+    toast.error(axiosErr.response?.data?.detail || axiosErr.message || 'Failed to deactivate')
   }
-}
-
-function showSuccess(msg: string) {
-  successMessage.value = msg
-  setTimeout(() => { successMessage.value = '' }, 3000)
 }
 
 watch(tid, fetchConfig)
@@ -141,14 +133,6 @@ onMounted(fetchConfig)
     <div>
       <h2 class="text-2xl font-bold text-gray-900 dark:text-dark-text-primary">Integrations</h2>
       <p class="text-sm text-gray-500 dark:text-dark-text-tertiary mt-1">Configure external integrations for ticketing and workflows</p>
-    </div>
-
-    <!-- Success / Error -->
-    <div v-if="successMessage" class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-3 rounded-md">
-      <p class="text-green-800 dark:text-green-200 text-sm">{{ successMessage }}</p>
-    </div>
-    <div v-if="error" class="bg-red-50 dark:bg-red-900/20 p-4 rounded-md">
-      <p class="text-red-800 dark:text-red-200 text-sm">{{ error }}</p>
     </div>
 
     <!-- Loading -->
