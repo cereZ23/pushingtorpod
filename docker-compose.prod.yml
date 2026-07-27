@@ -230,7 +230,13 @@ services:
       dockerfile: Dockerfile.worker
     # No container_name — allows `docker compose up --scale worker=N`
     restart: unless-stopped
-    command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+    # concurrency=3: a single in-progress heavy scan holds worker slots and
+    # FIFO-blocks light tasks (single-phase reruns, alerting, digests) behind
+    # it. A 3rd slot lets those through. Trade-off: 3 concurrent heavy T3 phases
+    # could approach the 12G limit (8G already OOM'd at concurrency=2 — see the
+    # resources note below), mitigated by worker_max_tasks_per_child recycling.
+    # If OOM recurs, move light tasks to a dedicated 'quick' queue/worker instead.
+    command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=3"]
     stop_grace_period: 120s
     depends_on:
       postgres:
