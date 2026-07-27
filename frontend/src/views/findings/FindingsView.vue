@@ -55,12 +55,12 @@ const groupedByHost = computed(() => {
     { findings: Finding[]; critical: number; high: number; medium: number }
   > = {};
   for (const f of findings.value) {
-    const host = (f as any).asset_identifier || (f as any).host || "Unknown";
+    const host = f.asset_identifier || f.host || "Unknown";
     if (!groups[host]) {
       groups[host] = { findings: [], critical: 0, high: 0, medium: 0 };
     }
     groups[host].findings.push(f);
-    const sev = ((f as any).severity || "").toLowerCase();
+    const sev = (f.severity || "").toLowerCase();
     if (sev === "critical") groups[host].critical++;
     else if (sev === "high") groups[host].high++;
     else if (sev === "medium") groups[host].medium++;
@@ -506,9 +506,9 @@ const getStatusColor = getFindingStatusBadgeClass;
               <div class="flex items-center gap-3 min-w-0">
                 <span
                   class="px-2 py-0.5 text-xs font-semibold rounded-full flex-shrink-0"
-                  :class="getSeverityBadgeClass((f as any).severity)"
+                  :class="getSeverityBadgeClass(f.severity)"
                 >
-                  {{ (f as any).severity }}
+                  {{ f.severity }}
                 </span>
                 <span
                   class="text-sm text-gray-900 dark:text-dark-text-primary truncate"
@@ -517,7 +517,7 @@ const getStatusColor = getFindingStatusBadgeClass;
               </div>
               <span
                 class="text-xs text-gray-400 dark:text-dark-text-tertiary flex-shrink-0 ml-2"
-                >{{ (f as any).source }}</span
+                >{{ f.source }}</span
               >
             </div>
           </div>
