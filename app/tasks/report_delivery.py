@@ -227,8 +227,7 @@ def deliver_scheduled_reports(self) -> dict:
             effective_fmt = schedule.format
             if schedule.report_type in ("soc2", "iso27001") and effective_fmt == "docx":
                 logger.warning(
-                    "Schedule %d requests %s as DOCX, which has no compliance "
-                    "layout; delivering PDF instead.",
+                    "Schedule %d requests %s as DOCX, which has no compliance layout; delivering PDF instead.",
                     schedule.id,
                     schedule.report_type,
                 )
