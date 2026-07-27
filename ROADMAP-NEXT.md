@@ -72,8 +72,10 @@ _Consistenza UX, salute del codice, qualità dei finding._
 
 ## P2 — Feature / scala (backlog)
 
-- [ ] **Scan paralleli** — `docker-compose.prod.yml:233` fermo a `--concurrency=2`: 1 scan
-  alla volta. → alzare concorrenza / worker autoscale su coda Redis.
+- [~] **Scan paralleli** — **[PARZIALE, PR #45]** `--concurrency=2` → `3` così i task leggeri
+  (rerun single-phase, alert, digest) non restano FIFO-bloccati dietro uno scan pesante in corso.
+  Tradeoff OOM accettato (12G, storia OOM a conc.2); mitigato da `worker_max_tasks_per_child`.
+  Se l'OOM si ripresenta → coda `quick` dedicata (Opzione A). Autoscale/parallelismo pieno resta backlog.
 - [ ] **Webhook per-evento** — oggi solo fine-scan; niente "started" né per-finding critico.
 - [ ] **`POST scans/run` dedicato** (trigger da UI senza passare da endpoint generici) e
   **rate limit sull'endpoint SIEM push** (oggi illimitato).
