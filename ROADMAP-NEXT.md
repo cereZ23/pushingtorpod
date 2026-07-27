@@ -60,8 +60,10 @@ _Consistenza UX, salute del codice, qualità dei finding._
   `no-undef` off per TS), script `lint:ci`, e tolto `continue-on-error`: ora gli errori bloccano.
   Violazioni reali: **0 errori, 7 warning** `no-explicit-any` (`(f as any).campo` in FindingsView
   + IssueDetail) → burndown estendendo il tipo `Finding`, non bloccanti.
-- [ ] **Dedup finding HSTS** — nessun raggruppamento per root-domain in `app/tasks/misconfig.py`:
-  43 MEDIUM identici invece di 1 azionabile. → 1 finding per dominio.
+- [x] **Dedup finding HSTS** — **[FATTO, PR #43]** aggiunto `dedup_scope="root_domain"` al
+  decoratore `@register`; HDR-004 lo usa: le finding HSTS di tutti i subdomain sotto lo stesso
+  registrable domain (via `tldextract`, nuovo `app/utils/domains.py`) collassano in **1 finding
+  per dominio** con gli host affetti in evidence (43 MEDIUM → 1 azionabile). 18 test.
 - [ ] **Auto-close finding stale** — oggi cutoff a 5 minuti su singolo scan
   (`misconfig.py:1959-1980`) e solo `source=misconfig`, non "non visto negli ultimi 3 scan"
   né i finding nuclei. → estendere a N-scan e a tutte le sorgenti.
