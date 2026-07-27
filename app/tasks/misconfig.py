@@ -339,6 +339,19 @@ _SEVERITY_RANK = {
 }
 
 
+def _filter_scannable(assets: list, live_ip_ids: set) -> list:
+    """Drop dead CIDR-expanded IP assets before scanning.
+
+    An IP asset from a /22–/32 scope expansion is created ``is_active=True``
+    regardless of liveness, and nothing ever deactivates IP assets (the 14-day
+    stale pruning only touches domains/subdomains). naabu creates a Service row
+    only for an actually-open port, so an IP with zero Service rows is
+    unreachable — scanning it wastes the phase budget (the 681-IP timeout case).
+    Keep every non-IP asset and only the IPs that have at least one open port.
+    """
+    return [a for a in assets if not (a.type and a.type.value == "ip" and a.id not in live_ip_ids)]
+
+
 def _persist_finding(
     db: Any,
     *,
@@ -2041,6 +2054,21 @@ def run_misconfig_detection(
             )
             .all()
         )
+
+        # Don't scan dead things: drop CIDR-expanded IP assets that have no open
+        # port (no Service row). is_active alone is unreliable for IPs — nothing
+        # deactivates them — so this is the real liveness gate for the IP set.
+        ip_asset_ids = [a.id for a in assets if a.type and a.type.value == "ip"]
+        live_ip_ids: set = set()
+        if ip_asset_ids:
+            live_ip_ids = {
+                row[0] for row in db.query(Service.asset_id).filter(Service.asset_id.in_(ip_asset_ids)).distinct()
+            }
+        before = len(assets)
+        assets = _filter_scannable(assets, live_ip_ids)
+        dead_ips = before - len(assets)
+        if dead_ips:
+            tenant_logger.info(f"Skipping {dead_ips} dead IP asset(s) with no open ports (nothing to scan)")
 
         if not assets:
             tenant_logger.warning("No active assets found for misconfig detection")

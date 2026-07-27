@@ -80,9 +80,11 @@ _Consistenza UX, salute del codice, qualità dei finding._
 - [ ] **Webhook per-evento** — oggi solo fine-scan; niente "started" né per-finding critico.
 - [ ] **`POST scans/run` dedicato** (trigger da UI senza passare da endpoint generici) e
   **rate limit sull'endpoint SIEM push** (oggi illimitato).
-- [~] **Performance scan** — **[PARZIALE, PR #46]** misconfig andava in timeout di fase (1800s) su
-  tenant con molti IP: EXP-011 probava le porte sensibili **serialmente** per asset (681 IP × 3s
-  ≈ 34 min). Fix: pre-warm concorrente dei probe prima del loop (cache per-processo) → ~1-2 min.
+- [~] **Performance scan** — **[PARZIALE, PR #46 + #48]** misconfig andava in timeout di fase
+  (1800s) su tenant con molti IP: EXP-011 probava le porte sensibili **serialmente** per asset
+  (681 IP × 3s ≈ 34 min). #46: pre-warm concorrente dei probe (cache per-processo) → ~1-2 min.
+  #48 (principio *scan solo i vivi*): misconfig ora **scarta gli IP morti** (CIDR-expanded,
+  `is_active` ma zero righe Service = nessuna porta aperta) → non li scansiona affatto, alla fonte.
   Resta: `fingerprintx` timeout 300s (`config.py:184`, target 60s); profiling memoria nuclei.
 - [~] **Copertura nuclei** — **[PARZIALE, PR #47]** Scoperto: al timeout il subprocess veniva
   SIGKILLato e **tutto l'output del pass buttato** (findings: []) — perdita **silenziosa** di
