@@ -2,6 +2,7 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useTenantStore } from '@/stores/tenant'
 import apiClient from '@/api/client'
+import ConfirmDeleteDialog from '@/components/scans/ConfirmDeleteDialog.vue'
 
 // --- Type definitions ---
 
@@ -66,7 +67,8 @@ const testingPolicyId = ref<number | null>(null)
 const isSeedingDefaults = ref(false)
 
 // Delete confirmation
-const deletingPolicyId = ref<number | null>(null)
+const policyToDelete = ref<AlertPolicy | null>(null)
+const isDeletingPolicy = ref(false)
 
 // --- Constants ---
 
@@ -189,23 +191,29 @@ async function savePolicy(): Promise<void> {
   }
 }
 
-async function deletePolicy(policyId: number): Promise<void> {
-  if (!currentTenantId.value) return
+function confirmDeletePolicy(policy: AlertPolicy): void {
+  policyToDelete.value = policy
+}
+
+async function deletePolicy(): Promise<void> {
+  if (!currentTenantId.value || !policyToDelete.value) return
 
   error.value = ''
+  isDeletingPolicy.value = true
 
   try {
     await apiClient.delete(
-      `/api/v1/tenants/${currentTenantId.value}/alert-policies/${policyId}`
+      `/api/v1/tenants/${currentTenantId.value}/alert-policies/${policyToDelete.value.id}`
     )
-    deletingPolicyId.value = null
+    policyToDelete.value = null
     successMessage.value = 'Policy deleted successfully'
     await loadPolicies()
     clearSuccessAfterDelay()
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to delete policy'
     error.value = message
-    deletingPolicyId.value = null
+  } finally {
+    isDeletingPolicy.value = false
   }
 }
 
@@ -216,11 +224,17 @@ async function testPolicy(policyId: number): Promise<void> {
   error.value = ''
 
   try {
-    await apiClient.post(
-      `/api/v1/tenants/${currentTenantId.value}/alert-policies/${policyId}/test`
-    )
-    successMessage.value = 'Test notification sent successfully'
-    clearSuccessAfterDelay()
+    const response = await apiClient.post<{
+      success: boolean
+      channels_tested: string[]
+      message: string
+    }>(`/api/v1/tenants/${currentTenantId.value}/alert-policies/${policyId}/test`)
+    if (response.data.success) {
+      successMessage.value = response.data.message
+      clearSuccessAfterDelay()
+    } else {
+      error.value = response.data.message
+    }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to send test notification'
     error.value = message
@@ -534,26 +548,11 @@ function clearSuccessAfterDelay(): void {
                   </button>
                   <span class="text-gray-300 dark:text-dark-border">|</span>
                   <button
-                    v-if="deletingPolicyId !== policy.id"
-                    @click="deletingPolicyId = policy.id"
+                    @click="confirmDeletePolicy(policy)"
                     class="text-sm text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300"
                   >
                     Delete
                   </button>
-                  <template v-else>
-                    <button
-                      @click="deletePolicy(policy.id)"
-                      class="text-sm text-red-600 dark:text-red-400 font-medium hover:text-red-800 dark:hover:text-red-300"
-                    >
-                      Confirm
-                    </button>
-                    <button
-                      @click="deletingPolicyId = null"
-                      class="text-sm text-gray-500 dark:text-dark-text-secondary hover:text-gray-700 dark:hover:text-dark-text-primary"
-                    >
-                      Cancel
-                    </button>
-                  </template>
                 </div>
               </td>
             </tr>
@@ -561,6 +560,17 @@ function clearSuccessAfterDelay(): void {
         </table>
       </div>
     </div>
+
+    <ConfirmDeleteDialog
+      :open="policyToDelete !== null"
+      title="Delete Alert Policy"
+      message="This will permanently delete this alert policy and stop all notifications it sends. This action cannot be undone."
+      :entity-name="policyToDelete?.name ?? ''"
+      :is-loading="isDeletingPolicy"
+      confirm-label="Delete Policy"
+      @close="policyToDelete = null"
+      @confirm="deletePolicy"
+    />
 
     <!-- Create/Edit Policy Dialog -->
     <Teleport to="body">

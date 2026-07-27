@@ -11,6 +11,7 @@ import {
   getFindingStatusBadgeClass,
 } from "@/utils/severity";
 import { formatDate } from "@/utils/formatters";
+import { highlightJson } from "@/utils/jsonHighlight";
 
 const route = useRoute();
 const router = useRouter();
@@ -790,16 +791,18 @@ onMounted(() => {
                 v-else-if="typeof value === 'object' && value !== null"
                 class="text-gray-700 dark:text-dark-text-secondary"
               >
-                <pre class="inline">{{ JSON.stringify(value, null, 2) }}</pre>
+                <pre class="inline" v-html="highlightJson(value)"></pre>
               </span>
               <span v-else class="text-gray-900 dark:text-dark-text-primary">{{
                 value
               }}</span>
             </div>
           </template>
-          <pre v-else class="text-gray-900 dark:text-dark-text-primary">{{
-            JSON.stringify(finding.evidence, null, 2)
-          }}</pre>
+          <pre
+            v-else
+            class="text-gray-900 dark:text-dark-text-primary"
+            v-html="highlightJson(finding.evidence)"
+          ></pre>
         </div>
       </div>
 

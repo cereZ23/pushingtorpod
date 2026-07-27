@@ -4,6 +4,7 @@ import { useTenantStore } from "@/stores/tenant";
 import { useScanStore } from "@/stores/scans";
 import apiClient from "@/api/client";
 import type { Project } from "@/stores/scans";
+import ConfirmDeleteDialog from "@/components/scans/ConfirmDeleteDialog.vue";
 
 // -- Types --
 
@@ -68,6 +69,12 @@ const newProfile = ref({
 const scopes = ref<ScopeRule[]>([]);
 const showAddScope = ref(false);
 const isSavingScope = ref(false);
+
+// Delete/remove confirmation
+const profileToDelete = ref<ScanProfile | null>(null);
+const isDeletingProfile = ref(false);
+const scopeToDelete = ref<ScopeRule | null>(null);
+const isRemovingScope = ref(false);
 
 const newScope = ref({
   rule_type: "include" as "include" | "exclude",
@@ -235,20 +242,28 @@ async function handleCreateProfile(): Promise<void> {
   }
 }
 
-async function handleDeleteProfile(profile: ScanProfile): Promise<void> {
-  if (!currentTenantId.value || !selectedProjectId.value) return;
-  if (!confirm(`Delete profile "${profile.name}"?`)) return;
+function confirmDeleteProfile(profile: ScanProfile): void {
+  profileToDelete.value = profile;
+}
 
+async function handleDeleteProfile(): Promise<void> {
+  if (!currentTenantId.value || !selectedProjectId.value || !profileToDelete.value)
+    return;
+
+  isDeletingProfile.value = true;
   try {
     await apiClient.delete(
-      `/api/v1/tenants/${currentTenantId.value}/projects/${selectedProjectId.value}/profiles/${profile.id}`,
+      `/api/v1/tenants/${currentTenantId.value}/projects/${selectedProjectId.value}/profiles/${profileToDelete.value.id}`,
     );
-    profiles.value = profiles.value.filter((p) => p.id !== profile.id);
+    profiles.value = profiles.value.filter((p) => p.id !== profileToDelete.value!.id);
     showSuccess("Profile deleted");
+    profileToDelete.value = null;
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : "Failed to delete profile";
     error.value = message;
+  } finally {
+    isDeletingProfile.value = false;
   }
 }
 
@@ -301,21 +316,30 @@ async function handleAddScope(): Promise<void> {
   }
 }
 
-async function handleRemoveScope(scope: ScopeRule): Promise<void> {
-  if (!currentTenantId.value || !selectedProjectId.value) return;
+function confirmRemoveScope(scope: ScopeRule): void {
+  scopeToDelete.value = scope;
+}
 
+async function handleRemoveScope(): Promise<void> {
+  if (!currentTenantId.value || !selectedProjectId.value || !scopeToDelete.value)
+    return;
+
+  isRemovingScope.value = true;
   try {
     await apiClient.delete(
-      `/api/v1/tenants/${currentTenantId.value}/projects/${selectedProjectId.value}/scopes/${scope.id}`,
+      `/api/v1/tenants/${currentTenantId.value}/projects/${selectedProjectId.value}/scopes/${scopeToDelete.value.id}`,
     );
-    scopes.value = scopes.value.filter((s) => s.id !== scope.id);
+    scopes.value = scopes.value.filter((s) => s.id !== scopeToDelete.value!.id);
     showSuccess("Scope rule removed");
+    scopeToDelete.value = null;
   } catch (err: unknown) {
     if (!isNotFoundError(err)) {
       const message =
         err instanceof Error ? err.message : "Failed to remove scope rule";
       error.value = message;
     }
+  } finally {
+    isRemovingScope.value = false;
   }
 }
 
@@ -714,7 +738,7 @@ onMounted(async () => {
                         Schedule
                       </button>
                       <button
-                        @click="handleDeleteProfile(profile)"
+                        @click="confirmDeleteProfile(profile)"
                         class="text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
                       >
                         Delete
@@ -795,7 +819,7 @@ onMounted(async () => {
                   </span>
                 </div>
                 <button
-                  @click="handleRemoveScope(scope)"
+                  @click="confirmRemoveScope(scope)"
                   class="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 p-1"
                   title="Remove rule"
                 >
@@ -1181,5 +1205,27 @@ onMounted(async () => {
         </div>
       </div>
     </Teleport>
+
+    <ConfirmDeleteDialog
+      :open="profileToDelete !== null"
+      title="Delete Scan Profile"
+      message="This will permanently delete this scan profile and its schedule. This action cannot be undone."
+      :entity-name="profileToDelete?.name ?? ''"
+      :is-loading="isDeletingProfile"
+      confirm-label="Delete Profile"
+      @close="profileToDelete = null"
+      @confirm="handleDeleteProfile"
+    />
+
+    <ConfirmDeleteDialog
+      :open="scopeToDelete !== null"
+      title="Remove Scope Rule"
+      message="This will stop scanning targets matched by this rule. This action cannot be undone."
+      :entity-name="scopeToDelete?.pattern ?? ''"
+      :is-loading="isRemovingScope"
+      confirm-label="Remove Rule"
+      @close="scopeToDelete = null"
+      @confirm="handleRemoveScope"
+    />
   </div>
 </template>

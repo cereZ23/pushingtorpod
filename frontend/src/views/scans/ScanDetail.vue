@@ -215,10 +215,6 @@ const PHASE_LABELS: Record<string, { name: string; description: string }> = {
     name: "Passive Discovery",
     description: "Subdomain enumeration via Subfinder + crt.sh",
   },
-  "1b": {
-    name: "GitHub Dorking",
-    description: "Searching leaked secrets and configs on GitHub",
-  },
   "1c": {
     name: "WHOIS / RDAP",
     description: "Domain registration and ownership lookup",

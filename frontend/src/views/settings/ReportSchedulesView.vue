@@ -569,6 +569,23 @@ watch(currentTenantId, () => {
               </div>
             </div>
 
+            <!-- ISO 27001 Scope Disclaimer -->
+            <div
+              v-if="form.report_type === 'iso27001'"
+              class="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3 rounded-md"
+            >
+              <p class="text-sm font-medium text-amber-800 dark:text-amber-200">
+                EASM scope — 15 technological controls
+              </p>
+              <p class="text-sm text-amber-700 dark:text-amber-300 mt-1">
+                This report maps external scan findings to 15 ISO 27001 Annex A
+                controls (A.8 Technological + A.5 Cloud/Threat Intel) that are
+                observable from the attack surface. Organizational (A.5), People
+                (A.6) and Physical (A.7) controls require internal assessment
+                tools and are out of EASM scope.
+              </p>
+            </div>
+
             <!-- Cadence -->
             <div>
               <label for="schedule-cadence" class="block text-sm font-medium text-gray-700 dark:text-dark-text-secondary mb-1">Cadence</label>
