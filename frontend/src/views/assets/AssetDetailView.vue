@@ -80,8 +80,11 @@ const screenshotViewerRef = ref<InstanceType<typeof ScreenshotViewer> | null>(
 const showEndpoints = ref(false);
 const showEvents = ref(false);
 
-// Endpoint filter
+// Endpoint filter / search / pagination
 const endpointTypeFilter = ref("all");
+const endpointSearch = ref("");
+const endpointPage = ref(1);
+const ENDPOINTS_PER_PAGE = 50;
 
 // ---------------------------------------------------------------------------
 // Data loading
@@ -328,10 +331,39 @@ const groupedTech = computed(() => {
 });
 
 const filteredEndpoints = computed(() => {
-  if (endpointTypeFilter.value === "all") return endpoints.value;
-  return endpoints.value.filter(
-    (e: AssetEndpoint) => e.endpoint_type === endpointTypeFilter.value,
-  );
+  const q = endpointSearch.value.trim().toLowerCase();
+  return endpoints.value.filter((e: AssetEndpoint) => {
+    if (
+      endpointTypeFilter.value !== "all" &&
+      e.endpoint_type !== endpointTypeFilter.value
+    ) {
+      return false;
+    }
+    if (
+      q &&
+      !(e.path || "").toLowerCase().includes(q) &&
+      !(e.method || "").toLowerCase().includes(q)
+    ) {
+      return false;
+    }
+    return true;
+  });
+});
+
+const endpointPageCount = computed(() =>
+  Math.max(1, Math.ceil(filteredEndpoints.value.length / ENDPOINTS_PER_PAGE)),
+);
+
+// Clamp to the last page as results shrink; slice the current page's rows.
+const pagedEndpoints = computed(() => {
+  const page = Math.min(endpointPage.value, endpointPageCount.value);
+  const start = (page - 1) * ENDPOINTS_PER_PAGE;
+  return filteredEndpoints.value.slice(start, start + ENDPOINTS_PER_PAGE);
+});
+
+// Reset to the first page whenever the filter or search narrows the set.
+watch([endpointTypeFilter, endpointSearch], () => {
+  endpointPage.value = 1;
 });
 
 const endpointTypes = computed(() => {
@@ -1210,8 +1242,8 @@ watch(assetId, () => {
 
         <!-- Content -->
         <div v-if="showEndpoints" class="px-6 pb-6">
-          <!-- Filter -->
-          <div class="flex items-center gap-2 mb-4">
+          <!-- Filter + search -->
+          <div class="flex flex-wrap items-center gap-2 mb-4">
             <FunnelIcon class="h-4 w-4 text-gray-400" />
             <select
               v-model="endpointTypeFilter"
@@ -1221,6 +1253,12 @@ watch(assetId, () => {
                 {{ t === "all" ? "All Types" : t }}
               </option>
             </select>
+            <input
+              v-model="endpointSearch"
+              type="search"
+              placeholder="Search path or method…"
+              class="text-xs border border-gray-300 dark:border-dark-border bg-white dark:bg-dark-bg-tertiary text-gray-700 dark:text-dark-text-secondary rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-primary-500 flex-1 min-w-[10rem]"
+            />
             <span class="text-xs text-gray-500 dark:text-dark-text-tertiary"
               >{{ filteredEndpoints.length }} results</span
             >
@@ -1265,7 +1303,7 @@ watch(assetId, () => {
                 class="divide-y divide-gray-100 dark:divide-dark-border/50"
               >
                 <tr
-                  v-for="ep in filteredEndpoints.slice(0, 50)"
+                  v-for="ep in pagedEndpoints"
                   :key="ep.id"
                   class="hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary/50"
                 >
@@ -1313,12 +1351,42 @@ watch(assetId, () => {
                 </tr>
               </tbody>
             </table>
-            <p
-              v-if="filteredEndpoints.length > 50"
-              class="mt-3 text-xs text-gray-500 dark:text-dark-text-tertiary text-center"
+            <div
+              v-if="endpointPageCount > 1"
+              class="mt-3 flex items-center justify-between gap-2"
             >
-              Showing 50 of {{ filteredEndpoints.length }} endpoints
-            </p>
+              <span class="text-xs text-gray-500 dark:text-dark-text-tertiary">
+                Showing {{ (endpointPage - 1) * ENDPOINTS_PER_PAGE + 1 }}–{{
+                  Math.min(
+                    endpointPage * ENDPOINTS_PER_PAGE,
+                    filteredEndpoints.length,
+                  )
+                }}
+                of {{ filteredEndpoints.length }}
+              </span>
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  :disabled="endpointPage <= 1"
+                  @click="endpointPage--"
+                  class="px-2 py-1 text-xs rounded-md border border-gray-300 dark:border-dark-border text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-1 focus:ring-primary-500"
+                >
+                  Prev
+                </button>
+                <span class="text-xs text-gray-500 dark:text-dark-text-tertiary">
+                  Page {{ Math.min(endpointPage, endpointPageCount) }} of
+                  {{ endpointPageCount }}
+                </span>
+                <button
+                  type="button"
+                  :disabled="endpointPage >= endpointPageCount"
+                  @click="endpointPage++"
+                  class="px-2 py-1 text-xs rounded-md border border-gray-300 dark:border-dark-border text-gray-700 dark:text-dark-text-secondary hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-1 focus:ring-primary-500"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
