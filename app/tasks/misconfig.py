@@ -1801,8 +1801,52 @@ def _probe_tcp(host: str, port: int, timeout: int) -> tuple[bool, str]:
         return False, ""
 
 
+# Per-run cache of sensitive-port probe results, keyed by host. Populated by
+# _prewarm_sensitive_probes before the (serial) asset loop so EXP-011 reads
+# hits instead of probing live. Process-local (Celery prefork = isolated
+# processes) and cleared at the start of every run, so it's safe under the
+# concurrent worker pool.
+_sensitive_probe_cache: dict[str, dict[int, tuple[bool, str]]] = {}
+
+# Cap on concurrent TCP connects during pre-warm. These are I/O-bound (mostly
+# waiting on the connect timeout), so a high fan-out is cheap and turns
+# N_hosts * timeout of serial probing into ~(N_hosts * N_ports / this) * timeout.
+_PROBE_PREWARM_WORKERS = 100
+
+
+def _prewarm_sensitive_probes(hosts: list[str], timeout: int) -> None:
+    """Probe sensitive ports across many hosts concurrently and fill the cache.
+
+    The misconfig orchestrator iterates assets serially, so without this each of
+    (e.g.) 681 IP assets costs one probe timeout back-to-back — ~34 min at 3s,
+    blowing the phase timeout. Fanning the (host, port) probes out across a
+    bounded pool collapses that to ~(pairs / workers) * timeout.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    pairs = [(h, p) for h in hosts for p in _SENSITIVE_PORTS]
+    if not pairs:
+        return
+
+    def _one(hp: tuple[str, int]) -> tuple[str, int, tuple[bool, str]]:
+        h, p = hp
+        return h, p, _probe_tcp(h, p, timeout)
+
+    with ThreadPoolExecutor(max_workers=min(_PROBE_PREWARM_WORKERS, len(pairs))) as executor:
+        for h, p, res in executor.map(_one, pairs):
+            _sensitive_probe_cache.setdefault(h, {})[p] = res
+
+
 def _probe_sensitive_ports(host: str, timeout: int) -> dict[int, tuple[bool, str]]:
-    """Probe all sensitive ports concurrently so per-host wall time ≈ one timeout."""
+    """Return sensitive-port probe results for a host.
+
+    Uses the pre-warmed concurrent cache when available; falls back to a live
+    per-host concurrent probe otherwise (e.g. a host not covered by pre-warm).
+    """
+    cached = _sensitive_probe_cache.get(host)
+    if cached is not None:
+        return cached
+
     from concurrent.futures import ThreadPoolExecutor
 
     def _one(port: int) -> tuple[int, tuple[bool, str]]:
@@ -2012,6 +2056,21 @@ def run_misconfig_detection(
         # Their findings are collapsed into one-per-registrable-domain after the
         # per-asset loop instead of being persisted inline.
         root_scoped: dict[str, dict[str, list]] = {}
+
+        # Pre-warm the sensitive-port probes (EXP-011) concurrently across all
+        # probe-eligible hosts. Without this the serial per-asset loop probes one
+        # host at a time — ~one timeout each — which on large IP sets (e.g. 681
+        # IPs at 3s) overruns the 1800s phase timeout. Cache is process-local.
+        _sensitive_probe_cache.clear()
+        if settings.nonweb_exposure_enabled:
+            probe_hosts = [
+                a.identifier
+                for a in assets
+                if a.type and a.type.value in ("domain", "subdomain", "ip") and _is_safe_probe_target(a.identifier)
+            ]
+            if probe_hosts:
+                tenant_logger.info(f"Pre-warming sensitive-port probes for {len(probe_hosts)} hosts (concurrent)")
+                _prewarm_sensitive_probes(probe_hosts, settings.nonweb_probe_timeout)
 
         for asset in assets:
             asset_type_value = asset.type.value if asset.type else ""

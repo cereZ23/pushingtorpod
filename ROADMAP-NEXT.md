@@ -80,8 +80,10 @@ _Consistenza UX, salute del codice, qualità dei finding._
 - [ ] **Webhook per-evento** — oggi solo fine-scan; niente "started" né per-finding critico.
 - [ ] **`POST scans/run` dedicato** (trigger da UI senza passare da endpoint generici) e
   **rate limit sull'endpoint SIEM push** (oggi illimitato).
-- [ ] **Performance scan** — `fingerprintx` timeout ancora 300s (`config.py:184`, target 60s);
-  profiling memoria nuclei con 5000+ template / eventuale split in 2 pass.
+- [~] **Performance scan** — **[PARZIALE, PR #46]** misconfig andava in timeout di fase (1800s) su
+  tenant con molti IP: EXP-011 probava le porte sensibili **serialmente** per asset (681 IP × 3s
+  ≈ 34 min). Fix: pre-warm concorrente dei probe prima del loop (cache per-processo) → ~1-2 min.
+  Resta: `fingerprintx` timeout 300s (`config.py:184`, target 60s); profiling memoria nuclei.
 - [ ] **Copertura nuclei** — verificare che TUTTI i template rientrino nel timeout; template
   custom davvero Italy-specific (oggi 1 su 16).
 - [ ] **Feature enterprise** (grandi, su richiesta): authenticated crawling, k8s/etcd exposure,
