@@ -77,6 +77,21 @@ const form = ref<ScheduleFormData>({
   recipientsText: '',
 })
 
+// Compliance reports (SOC 2 / ISO 27001) only exist as PDF — the Annex A / TSC
+// control mapping lives only in the PDF layout, so DOCX is disabled for them
+// and the format is forced to PDF when a compliance type is selected.
+const isComplianceType = computed(
+  () => form.value.report_type === 'soc2' || form.value.report_type === 'iso27001',
+)
+watch(
+  () => form.value.report_type,
+  () => {
+    if (isComplianceType.value && form.value.format === 'docx') {
+      form.value.format = 'pdf'
+    }
+  },
+)
+
 // Delete confirmation
 const showDeleteConfirm = ref(false)
 const scheduleToDelete = ref<ReportSchedule | null>(null)
@@ -564,7 +579,9 @@ watch(currentTenantId, () => {
                   class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-md text-gray-900 dark:text-dark-text-primary dark:bg-dark-bg-tertiary focus:outline-none focus:ring-2 focus:ring-primary-500"
                 >
                   <option value="pdf">PDF</option>
-                  <option value="docx">DOCX</option>
+                  <option value="docx" :disabled="isComplianceType">
+                    DOCX{{ isComplianceType ? ' (not available for compliance reports)' : '' }}
+                  </option>
                 </select>
               </div>
             </div>

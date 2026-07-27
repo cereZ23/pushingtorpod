@@ -854,9 +854,9 @@ class ReportGenerator:
         with page numbers and confidentiality markings, and full chart
         embedding.
 
-        For compliance report types (``soc2``, ``iso27001``), the DOCX
-        output uses the executive template layout. Use PDF export for
-        full compliance-specific formatting with TSC/Annex A control mappings.
+        Compliance report types (``soc2``, ``iso27001``) are not available
+        as DOCX and raise ``ValueError``: the TSC/Annex A control mapping
+        exists only in the PDF templates. Use PDF export for those.
 
         Args:
             report_type: ``"executive"``, ``"technical"``, ``"soc2"``,
@@ -868,10 +868,18 @@ class ReportGenerator:
         Returns:
             DOCX bytes.
         """
-        # Compliance types use executive layout for DOCX
-        # (full compliance formatting is in PDF templates)
+        # Compliance report types have no DOCX layout: the Annex A / TSC
+        # control mapping lives only in the PDF templates. Previously these
+        # silently fell back to the executive layout, producing a DOCX that
+        # looked like a compliance report but carried none of the control
+        # mapping. Refuse instead so no misleading document is ever produced;
+        # callers should request PDF for compliance exports.
         if report_type in ("soc2", "iso27001"):
-            report_type = "executive"
+            raise ValueError(
+                f"Compliance report type '{report_type}' is not available as DOCX "
+                "(the Annex A / TSC control mapping exists only in the PDF layout). "
+                "Request a PDF export instead."
+            )
         from docx import Document
         from docx.shared import Inches, Pt, Cm, RGBColor, Emu
         from docx.enum.text import WD_ALIGN_PARAGRAPH

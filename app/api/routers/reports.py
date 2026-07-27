@@ -722,6 +722,19 @@ def export_report_docx(
     """
     _verify_tenant_exists(db, tenant_id)
 
+    # Compliance reports have no DOCX layout (Annex A / TSC mapping is
+    # PDF-only). Reject the combination explicitly rather than returning a
+    # misleading executive-layout document.
+    if report_type in ("soc2", "iso27001"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Compliance report '{report_type}' is only available as PDF. "
+                "The DOCX layout does not include the Annex A / TSC control "
+                "mapping. Use the PDF export instead."
+            ),
+        )
+
     from app.services.report_generator import ReportGenerator
 
     generator = ReportGenerator(db, tenant_id)
