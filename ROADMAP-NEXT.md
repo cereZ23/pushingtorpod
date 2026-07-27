@@ -58,8 +58,9 @@ _Consistenza UX, salute del codice, qualità dei finding._
   **parse error** — il frontend non aveva *nessun* config ESLint, quindi il linter era morto e
   `continue-on-error` li ingoiava. Aggiunto `.eslintrc.cjs` (vue3-essential + ts-recommended,
   `no-undef` off per TS), script `lint:ci`, e tolto `continue-on-error`: ora gli errori bloccano.
-  Violazioni reali: **0 errori, 7 warning** `no-explicit-any` (`(f as any).campo` in FindingsView
-  + IssueDetail) → burndown estendendo il tipo `Finding`, non bloccanti.
+  Violazioni reali col config: 0 errori, 7 warning `no-explicit-any`. **[BURNDOWN FATTO, PR #44]**
+  i 7 `(f as any).campo` erano cast inutili (i campi erano già sul tipo `Finding`) → rimossi →
+  **lint ora 0 errori, 0 warning** (baseline pristina per il ratchet).
 - [x] **Dedup finding HSTS** — **[FATTO, PR #43]** aggiunto `dedup_scope="root_domain"` al
   decoratore `@register`; HDR-004 lo usa: le finding HSTS di tutti i subdomain sotto lo stesso
   registrable domain (via `tldextract`, nuovo `app/utils/domains.py`) collassano in **1 finding

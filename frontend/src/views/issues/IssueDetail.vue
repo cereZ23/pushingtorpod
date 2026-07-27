@@ -269,7 +269,7 @@ function viewFinding(finding: Finding): void {
 const firstFindingEpss = computed((): number | null => {
   const findings = issueStore.currentIssue?.findings || [];
   for (const f of findings) {
-    const ti = (f as any).evidence?.threat_intel;
+    const ti = f.evidence?.threat_intel;
     if (ti?.epss_score) return ti.epss_score;
   }
   return null;
@@ -278,7 +278,7 @@ const firstFindingEpss = computed((): number | null => {
 const firstFindingUrl = computed((): string | null => {
   const findings = issueStore.currentIssue?.findings || [];
   for (const f of findings) {
-    if ((f as any).matched_at) return (f as any).matched_at;
+    if (f.matched_at) return f.matched_at;
   }
   return null;
 });
@@ -287,15 +287,20 @@ const firstFindingUrl = computed((): string | null => {
 // DB, SPF/DMARC/DKIM, DNS, domain expiry, ...) must NOT be "verified" with an HTTP
 // curl — mirror the backend's control-aware mapping (remediation_playbook.py).
 const verifyCommand = computed((): string | null => {
-  const f = issueStore.currentIssue?.findings?.[0] as any;
+  const f = issueStore.currentIssue?.findings?.[0];
   if (!f) return null;
   const host = f.asset_identifier;
-  const ev = f.evidence || {};
-  const cid: string = (ev.control_id || "").toUpperCase();
+  const ev: Record<string, unknown> = f.evidence || {};
+  const cid: string = String(ev.control_id || "").toUpperCase();
   // Port from evidence, else parsed from a "CTRL:host:port" template id.
   const portMatch =
     typeof f.template_id === "string" ? f.template_id.match(/:(\d{1,5})$/) : null;
-  const port = ev.port ?? (portMatch ? Number(portMatch[1]) : null);
+  const port: number | null =
+    typeof ev.port === "number"
+      ? ev.port
+      : portMatch
+        ? Number(portMatch[1])
+        : null;
 
   if (["EXP-011", "EXP-006", "EML-008", "EML-009"].includes(cid) && port)
     return `nc -zvw3 ${host} ${port}`;
