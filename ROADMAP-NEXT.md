@@ -54,9 +54,12 @@ _Consistenza UX, salute del codice, qualità dei finding._
 - [x] **Paginazione lista endpoint asset** — **[FATTO, PR #41]** `AssetDetailView` ora ha
   ricerca su path/method + paginazione client-side (50/pagina, Prev/Next) invece del cap fisso
   a 50: tutti gli endpoint sono raggiungibili.
-- [ ] **ESLint ratchet** — `.github/workflows/tests.yml:169-170` ha `continue-on-error: true`;
-  **92 errori** oggi invisibili in CI. → far fallire sui *nuovi* errori subito, smaltire i 92
-  esistenti a lotti, poi togliere il flag.
+- [x] **ESLint ratchet** — **[FATTO, PR #42]** Scoperta: i "92 errori" non erano violazioni ma
+  **parse error** — il frontend non aveva *nessun* config ESLint, quindi il linter era morto e
+  `continue-on-error` li ingoiava. Aggiunto `.eslintrc.cjs` (vue3-essential + ts-recommended,
+  `no-undef` off per TS), script `lint:ci`, e tolto `continue-on-error`: ora gli errori bloccano.
+  Violazioni reali: **0 errori, 7 warning** `no-explicit-any` (`(f as any).campo` in FindingsView
+  + IssueDetail) → burndown estendendo il tipo `Finding`, non bloccanti.
 - [ ] **Dedup finding HSTS** — nessun raggruppamento per root-domain in `app/tasks/misconfig.py`:
   43 MEDIUM identici invece di 1 azionabile. → 1 finding per dominio.
 - [ ] **Auto-close finding stale** — oggi cutoff a 5 minuti su singolo scan

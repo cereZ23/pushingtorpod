@@ -165,9 +165,13 @@ jobs:
       - name: Type check
         run: pnpm vue-tsc --noEmit
 
+      # Enforced: fails the job on any ESLint error. Until now the frontend
+      # had no ESLint config at all, so `pnpm lint` only ever emitted
+      # parse errors that continue-on-error swallowed — the linter was dead.
+      # A working .eslintrc.cjs plus this gate makes new errors block; the few
+      # remaining `any` usages are warnings and don't fail the build.
       - name: Lint
-        run: pnpm lint --no-fix
-        continue-on-error: true
+        run: pnpm lint:ci
 
       - name: Test
         run: pnpm test
