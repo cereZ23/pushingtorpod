@@ -26,6 +26,39 @@ from app.tasks.pipeline_helpers import (
 logger = logging.getLogger(__name__)
 
 
+def _target_org_tokens(assets) -> set[str]:
+    """Identity tokens for the target org, from the registrable domains scanned.
+
+    e.g. itsright.it / www.itsright.it -> {"itsright"}. Used to decide whether a
+    WHOIS netblock belongs to the target or to its hosting provider.
+    """
+    from app.models.database import AssetType
+    from app.utils.domains import registrable_domain
+
+    tokens: set[str] = set()
+    for a in assets:
+        if a.type in (AssetType.DOMAIN, AssetType.SUBDOMAIN):
+            reg = registrable_domain(a.identifier)
+            if reg:
+                label = reg.split(".")[0]
+                if len(label) >= 3:
+                    tokens.add(label.lower())
+    return tokens
+
+
+def _org_matches_target(org_name, target_tokens: set[str]) -> bool:
+    """True only if a WHOIS netblock org plausibly belongs to the target org.
+
+    WHOIS on a resolved IP returns the hosting *provider's* netblock; expanding
+    it would scan the provider's other customers (out of scope). Requiring an
+    org↔target-token match keeps expansion to netblocks the target actually owns.
+    """
+    if not org_name or not target_tokens:
+        return False
+    o = org_name.lower()
+    return any(tok in o for tok in target_tokens)
+
+
 def _phase_0_seed_ingestion(tenant_id, project_id, scan_run_id, db, tenant_logger):
     """Phase 0: Parse seeds from project, validate scope, create initial assets.
 
@@ -282,6 +315,11 @@ def _phase_1c_whois_discovery(tenant_id, project_id, scan_run_id, db, tenant_log
     ip_assets = [a for a in assets if a.type == AssetType.IP]
     domain_assets = [a for a in assets if a.type == AssetType.DOMAIN]
 
+    # WHOIS on a resolved IP returns the hosting provider's netblock; only expand
+    # blocks that match the target org (see _org_matches_target). itsright showed
+    # why: 2 hosts exploded into 792 provider IPs (other customers, out of scope).
+    target_tokens = _target_org_tokens(assets)
+
     def _whois_ip_range(ip: str) -> dict:
         """Query WHOIS for org and IP range of an address. Works with any registry."""
         import subprocess
@@ -373,6 +411,21 @@ def _phase_1c_whois_discovery(tenant_id, project_id, scan_run_id, db, tenant_log
         # Skip cloud provider ranges — they own huge blocks, not ours
         if org and any(cloud in org.lower() for cloud in CLOUD_ORGS):
             tenant_logger.debug("Phase 1c: skipping cloud org '%s' for IP %s", org, asset.identifier)
+            continue
+
+        # Only expand a netblock we can attribute to the target org. WHOIS on a
+        # resolved IP returns the hosting provider's block; expanding it scans
+        # the provider's other customers (out of scope). If the org doesn't
+        # match a target-domain token it's a provider range — keep only the
+        # resolved IP itself, don't explode the netblock.
+        if not _org_matches_target(org, target_tokens):
+            tenant_logger.info(
+                "Phase 1c: NOT expanding netblock for IP %s — org '%s' does not match target %s "
+                "(provider range, out of scope)",
+                asset.identifier,
+                org,
+                sorted(target_tokens),
+            )
             continue
 
         if org and org.lower() not in org_names_seen:

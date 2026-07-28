@@ -33,6 +33,14 @@ su 38, 92 errori ESLint soppressi in CI.
 
 _Cose che possono causare perdita dati, incidenti, o vendere un artefatto sbagliato._
 
+- [x] **Espansione CIDR scansionava il netblock del PROVIDER** — **[FATTO, PR #50]** la fase 1c faceva
+  WHOIS su ogni IP risolto ed espandeva il netblock in tutti i /32; ma quel netblock è del **provider
+  di hosting**, non del target → un dominio (itsright.it) esplodeva in **792 IP di altri clienti del
+  provider** (fuori scope, rallenta tutto). Fix: espandere solo netblock il cui **org WHOIS matcha il
+  target** (token dai domini radice), non "non è un cloud noto". Follow-up: disattivare gli IP morti
+  già creati per i tenant esistenti; dedup dei finding network/service per IP (FTP/cipher su host che
+  condividono lo stesso IP oggi duplicati).
+
 - [ ] **Backup off-site** — oggi `scripts/backup.sh` fa solo `pg_dump` locale via cron,
   retention 7 giorni, **nessun upload S3/MinIO**. Un guasto del box = perdita totale.
   → aggiungere upload verso MinIO/S3 con retention 30gg e restore testato.
