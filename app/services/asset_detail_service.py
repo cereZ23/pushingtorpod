@@ -257,8 +257,12 @@ class AssetDetailService:
         # ------------------------------------------------------------------ #
         # Summary statistics
         # ------------------------------------------------------------------ #
+        # OPEN findings only — the severity chips must not include fixed/
+        # suppressed findings (which would mismatch the findings list).
         severity_counts: dict[str, int] = {}
         for f in asset.findings:
+            if (f.status.value if hasattr(f.status, "value") else str(f.status)) != "open":
+                continue
             sev = f.severity.value if hasattr(f.severity, "value") else str(f.severity)
             severity_counts[sev] = severity_counts.get(sev, 0) + 1
 
@@ -437,14 +441,16 @@ class AssetDetailService:
 
         parent_open_ports = sorted(set(s.port for s in parent.services if s.port is not None))
 
+        # OPEN findings only for the severity chips (see the sibling summary).
         parent_severity_counts: dict[str, int] = {}
         parent_open_findings = 0
         for f in parent_findings:
+            st = f.status.value if hasattr(f.status, "value") else str(f.status)
+            if st != "open":
+                continue
             sev = f.severity.value if hasattr(f.severity, "value") else str(f.severity)
             parent_severity_counts[sev] = parent_severity_counts.get(sev, 0) + 1
-            st = f.status.value if hasattr(f.status, "value") else str(f.status)
-            if st == "open":
-                parent_open_findings += 1
+            parent_open_findings += 1
 
         response_data["summary"] = {
             "total_services": len(parent.services),

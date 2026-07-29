@@ -31,7 +31,7 @@ from app.api.schemas.asset import (
 )
 from app.api.schemas.common import BulkOperationResult
 from app.api.schemas.envelope import PaginatedEnvelope, PaginationMeta
-from app.models.database import Asset, AssetType, Seed, Service, Finding
+from app.models.database import Asset, AssetType, FindingStatus, Seed, Service, Finding
 from app.models.enrichment import Certificate, Endpoint
 from app.repositories.asset_repository import AssetRepository
 from app.core.audit import log_data_modification, log_audit_event, AuditEventType
@@ -148,7 +148,9 @@ def list_assets(
     )
     finding_count_sq = (
         select(func.count(Finding.id))
-        .where(Finding.asset_id == Asset.id)
+        # OPEN only — consistent with the graph/exposure per-asset counts and
+        # the findings list (fixed/suppressed must not inflate the column).
+        .where(Finding.asset_id == Asset.id, Finding.status == FindingStatus.OPEN)
         .correlate(Asset)
         .scalar_subquery()
         .label("finding_count")

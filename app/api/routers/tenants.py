@@ -294,7 +294,14 @@ async def _calculate_tenant_stats_async(db: AsyncSession, tenant_id: int) -> Ten
     finding_query = (
         select(
             func.count(Finding.id).label("total"),
-            *[func.count(case((Finding.severity == sev, literal(1)))).label(sev.value) for sev in FindingSeverity],
+            # Per-severity counts are OPEN-only so the dashboard's "Action
+            # Required" banner and severity chips match the findings list. Using
+            # all-status counts here surfaced fixed/suppressed findings on dead
+            # assets as actionable (e.g. "3 high" that weren't in the list).
+            *[
+                func.count(case(((Finding.severity == sev) & is_open, literal(1)))).label(sev.value)
+                for sev in FindingSeverity
+            ],
             func.count(case((is_open, literal(1)))).label("open"),
             func.count(
                 case(
@@ -314,7 +321,9 @@ async def _calculate_tenant_stats_async(db: AsyncSession, tenant_id: int) -> Ten
             ).label("high_open"),
         )
         .join(Asset)
-        .where(Asset.tenant_id == tenant_id)
+        # Active assets only — findings on deactivated/dead assets (e.g. pruned
+        # dead IPs) must not inflate the dashboard vs the findings list.
+        .where(Asset.tenant_id == tenant_id, Asset.is_active.is_(True))
     )
     finding_row = (await db.execute(finding_query)).one()
 
