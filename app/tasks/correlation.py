@@ -315,9 +315,38 @@ def _highest_severity(severities: list[str]) -> str:
 
 # nuclei protocol types whose findings are IP-level (no virtual-host concept):
 # the same service on two hostnames that resolve to the same IP is ONE finding.
-# HTTP/SSL are intentionally excluded — different vhosts (SNI) can serve
-# different content/certs, so those stay per-host.
+# HTTP is excluded — vhosts serve different content per Host header.
 _NETWORK_FINDING_TYPES = {"tcp", "network"}
+
+# SSL findings are a mixed bag: server-TLS-config checks (cipher suites, TLS
+# versions, DH params) are a property of the listening socket (IP:port) and are
+# identical across SNI, so they dedup by IP. Cert-specific checks (expired,
+# self-signed, SAN mismatch, weak signature) depend on the certificate served
+# for a given SNI and legitimately differ per hostname — those stay per-host.
+# Only dedup an SSL finding when its template id matches a server-config check.
+_SSL_SERVER_CONFIG_KEYWORDS = (
+    "cipher",
+    "tls-version",
+    "deprecated-tls",
+    "insecure-tls",
+    "dh-param",
+    "ssl-dh",
+    "3des",
+    "rc4",
+)
+
+
+def _is_dedupable_by_ip(finding) -> bool:
+    """Whether a finding represents an IP:port-level fact (dedup by IP) rather
+    than a per-hostname (vhost/cert) one."""
+    ev = finding.evidence or {}
+    ftype = ev.get("type")
+    if ftype in _NETWORK_FINDING_TYPES:
+        return True
+    if ftype == "ssl":
+        tid = (finding.template_id or "").lower()
+        return any(k in tid for k in _SSL_SERVER_CONFIG_KEYWORDS)
+    return False
 
 
 def _network_dupe_groups(findings, ip_by_asset):
@@ -365,7 +394,7 @@ def dedup_network_findings_by_ip(tenant_id: int, db, tenant_logger) -> int:
         )
         .all()
     )
-    net = [f for f in findings if (f.evidence or {}).get("type") in _NETWORK_FINDING_TYPES]
+    net = [f for f in findings if _is_dedupable_by_ip(f)]
     if len(net) < 2:
         return 0
 

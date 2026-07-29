@@ -63,3 +63,34 @@ def test_finding_without_ip_is_skipped():
     ]
     ip_by_asset = {10: {"1.1.1.1"}}
     assert _network_dupe_groups(findings, ip_by_asset) == []
+
+
+from app.tasks.correlation import _is_dedupable_by_ip
+
+
+def _nf(ftype, template_id="x"):
+    return SimpleNamespace(evidence={"type": ftype}, template_id=template_id)
+
+
+class TestIsDedupableByIp:
+    def test_tcp_and_network_are_dedupable(self):
+        assert _is_dedupable_by_ip(_nf("tcp")) is True
+        assert _is_dedupable_by_ip(_nf("network")) is True
+
+    def test_http_is_not_dedupable(self):
+        assert _is_dedupable_by_ip(_nf("http")) is False
+
+    def test_ssl_server_config_is_dedupable(self):
+        assert _is_dedupable_by_ip(_nf("ssl", "ssl/weak-cipher-suites")) is True
+        assert _is_dedupable_by_ip(_nf("ssl", "ssl/tls-version")) is True
+        assert _is_dedupable_by_ip(_nf("ssl", "ssl/deprecated-tls")) is True
+        assert _is_dedupable_by_ip(_nf("ssl", "ssl/ssl-dh-params")) is True
+
+    def test_ssl_cert_specific_is_not_dedupable(self):
+        # cert findings differ per SNI/hostname — keep per-host
+        assert _is_dedupable_by_ip(_nf("ssl", "ssl/expired-ssl")) is False
+        assert _is_dedupable_by_ip(_nf("ssl", "ssl/self-signed-ssl")) is False
+        assert _is_dedupable_by_ip(_nf("ssl", "ssl/mismatched-ssl")) is False
+
+    def test_no_evidence_type_is_not_dedupable(self):
+        assert _is_dedupable_by_ip(SimpleNamespace(evidence=None, template_id="x")) is False
