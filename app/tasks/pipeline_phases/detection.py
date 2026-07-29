@@ -601,6 +601,13 @@ def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
             db.commit()
             tenant_logger.info(f"Auto-closed {auto_closed} stale nuclei findings (not seen since {cutoff})")
 
+    # Collapse network/service findings (FTP/SSH/...) detected on multiple
+    # hostnames that resolve to the same IP into one — they're one real service.
+    # Runs before correlation so issues form from the deduped set.
+    from app.tasks.correlation import dedup_network_findings_by_ip
+
+    dedup_network_findings_by_ip(tenant_id, db, tenant_logger)
+
     result = run_correlation(tenant_id, scan_run_id=scan_run_id)
 
     if isinstance(result, dict):

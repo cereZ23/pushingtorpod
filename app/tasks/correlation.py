@@ -307,3 +307,111 @@ def _highest_severity(severities: list[str]) -> str:
         if sev in severities:
             return sev
     return "info"
+
+
+# ---------------------------------------------------------------------------
+# Network/service finding dedup by shared resolved IP
+# ---------------------------------------------------------------------------
+
+# nuclei protocol types whose findings are IP-level (no virtual-host concept):
+# the same service on two hostnames that resolve to the same IP is ONE finding.
+# HTTP/SSL are intentionally excluded — different vhosts (SNI) can serve
+# different content/certs, so those stay per-host.
+_NETWORK_FINDING_TYPES = {"tcp", "network"}
+
+
+def _network_dupe_groups(findings, ip_by_asset):
+    """Group network findings that share (template_id, resolved-IP-set).
+
+    Pure/testable. ``ip_by_asset`` maps asset_id -> set(ip identifiers). Returns
+    a list of (keep_finding, [duplicate_findings...]) for each group with >1
+    member; the lowest-id finding is kept as representative.
+    """
+    groups = defaultdict(list)
+    for f in findings:
+        ips = ip_by_asset.get(f.asset_id)
+        if not ips:
+            continue  # can't attribute to an IP — leave it alone
+        key = (f.template_id, tuple(sorted(ips)))
+        groups[key].append(f)
+
+    result = []
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        ordered = sorted(members, key=lambda f: f.id)
+        result.append((ordered[0], ordered[1:]))
+    return result
+
+
+def dedup_network_findings_by_ip(tenant_id: int, db, tenant_logger) -> int:
+    """Collapse network/service nuclei findings sharing a resolved IP.
+
+    FTP/SSH/etc. detected on both example.com and www.example.com (same IP) is
+    one real service. Keep one representative (affected hosts recorded in its
+    evidence) and mark the rest SUPPRESSED so the findings list shows one row.
+    Idempotent: re-detected duplicates on the next scan are re-collapsed here.
+    """
+    from app.models.risk import Relationship
+    from app.models.database import AssetType
+
+    findings = (
+        db.query(Finding)
+        .join(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Finding.source == "nuclei",
+            Finding.status == FindingStatus.OPEN,
+        )
+        .all()
+    )
+    net = [f for f in findings if (f.evidence or {}).get("type") in _NETWORK_FINDING_TYPES]
+    if len(net) < 2:
+        return 0
+
+    asset_ids = {f.asset_id for f in net}
+    ip_by_asset: dict[int, set] = defaultdict(set)
+
+    # hostname assets -> resolved IP identifiers
+    rels = (
+        db.query(Relationship.source_asset_id, Asset.identifier)
+        .join(Asset, Asset.id == Relationship.target_asset_id)
+        .filter(
+            Relationship.tenant_id == tenant_id,
+            Relationship.rel_type == "resolves_to",
+            Relationship.source_asset_id.in_(asset_ids),
+        )
+        .all()
+    )
+    for src_id, ip_ident in rels:
+        ip_by_asset[src_id].add(ip_ident)
+
+    # IP-type assets resolve to themselves
+    ip_assets = db.query(Asset.id, Asset.identifier).filter(Asset.id.in_(asset_ids), Asset.type == AssetType.IP).all()
+    for aid, ident in ip_assets:
+        ip_by_asset[aid].add(ident)
+
+    suppressed = 0
+    for keep, dupes in _network_dupe_groups(net, ip_by_asset):
+        all_hosts = sorted({f.host for f in [keep, *dupes] if f.host})
+        ev = dict(keep.evidence or {})
+        ev["affected_hosts"] = all_hosts
+        ev["shared_ip"] = sorted(ip_by_asset.get(keep.asset_id, set()))
+        ev["deduped_by_ip"] = True
+        keep.evidence = ev
+        keep.last_seen = datetime.now(timezone.utc)
+        for d in dupes:
+            d.status = FindingStatus.SUPPRESSED
+            dev = dict(d.evidence or {})
+            dev["suppressed_reason"] = "duplicate_service_on_shared_ip"
+            dev["deduped_into"] = keep.id
+            d.evidence = dev
+            suppressed += 1
+
+    if suppressed:
+        db.commit()
+        tenant_logger.info(
+            f"Network-finding dedup: collapsed {suppressed} duplicate service finding(s) "
+            "on shared IPs (same service, multiple hostnames)"
+        )
+    return suppressed

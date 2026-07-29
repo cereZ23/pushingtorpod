@@ -38,8 +38,8 @@ _Cose che possono causare perdita dati, incidenti, o vendere un artefatto sbagli
   di hosting**, non del target → un dominio (itsright.it) esplodeva in **792 IP di altri clienti del
   provider** (fuori scope, rallenta tutto). Fix: espandere solo netblock il cui **org WHOIS matcha il
   target** (token dai domini radice), non "non è un cloud noto". Follow-up: disattivare gli IP morti
-  già creati per i tenant esistenti; dedup dei finding network/service per IP (FTP/cipher su host che
-  condividono lo stesso IP oggi duplicati).
+  già creati per i tenant esistenti. **Dedup finding network/servizio per IP FATTO (PR #51)**: FTP/SSH
+  su host che condividono lo stesso IP ora collassano in 1 (fase 10, i duplicati passano a suppressed).
 
 - [ ] **Backup off-site** — oggi `scripts/backup.sh` fa solo `pg_dump` locale via cron,
   retention 7 giorni, **nessun upload S3/MinIO**. Un guasto del box = perdita totale.
