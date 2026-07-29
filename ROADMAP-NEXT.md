@@ -26,6 +26,15 @@ su 38, 92 errori ESLint soppressi in CI.
   dedicato, scan-authorization API, scope-gate, kill-switch + circuit breaker, CSV
   injection fix, detection-efficacy harness.
 - **Retention** — digest settimanale esposizione + hero card dashboard.
+- **Arco UX/qualità (28-29 lug, PR #39-54)** — 6 UX quick-win, toast rollout (10 view),
+  paginazione endpoint, config ESLint (era assente → lint morto) + lint a 0, dedup HSTS,
+  concurrency 2→3, fix DOCX compliance.
+- **Arco qualità-scan "scan solo i vivi" (PR #46-54)** — misconfig probe paralleli (30min→~1min)
+  + skip IP morti; nuclei salva output parziale al timeout + **batching** (ogni template su ogni
+  target vivo, validato T3: 9→27 finding, `coverage_complete=True`); discovery non espande più il
+  **netblock del provider** (fine dei 792 IP di terzi); **disattivazione IP morti** post-naabu;
+  **dedup finding per IP** (network FTP/SSH + SSL cipher, SNI-safe); **fix conteggi dashboard**
+  incoerenti ("3 high" fantasma → allineati OPEN+attivi su ~12 query/11 file).
 
 ---
 
@@ -37,9 +46,12 @@ _Cose che possono causare perdita dati, incidenti, o vendere un artefatto sbagli
   WHOIS su ogni IP risolto ed espandeva il netblock in tutti i /32; ma quel netblock è del **provider
   di hosting**, non del target → un dominio (itsright.it) esplodeva in **792 IP di altri clienti del
   provider** (fuori scope, rallenta tutto). Fix: espandere solo netblock il cui **org WHOIS matcha il
-  target** (token dai domini radice), non "non è un cloud noto". Follow-up: disattivare gli IP morti
-  già creati per i tenant esistenti. **Dedup finding network/servizio per IP FATTO (PR #51)**: FTP/SSH
-  su host che condividono lo stesso IP ora collassano in 1 (fase 10, i duplicati passano a suppressed).
+  target** (token dai domini radice), non "non è un cloud noto".
+  - **[FATTO, PR #53]** disattivazione IP morti (zero porte aperte) post-naabu → self-clean dei
+    tenant esistenti (cere: ~792 IP → disattivati al prossimo scan).
+  - **[FATTO, PR #51]** dedup finding network per IP (FTP/SSH su host stesso-IP → 1, in fase 10).
+  - **[FATTO, PR #54]** dedup finding SSL server-config per IP (weak cipher/TLS-version → 1);
+    i finding cert-specific (scaduto/self-signed/mismatch) restano per-host (SNI-safe).
 
 - [ ] **Backup off-site** — oggi `scripts/backup.sh` fa solo `pg_dump` locale via cron,
   retention 7 giorni, **nessun upload S3/MinIO**. Un guasto del box = perdita totale.
