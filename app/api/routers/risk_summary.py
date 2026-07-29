@@ -57,7 +57,11 @@ def get_risk_summary(
     severity_counts = dict(
         db.query(Finding.severity, func.count(Finding.id))
         .join(Asset)
-        .filter(Asset.tenant_id == tenant_id, Finding.status == FindingStatus.OPEN)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.is_active.is_(True),
+            Finding.status == FindingStatus.OPEN,
+        )
         .group_by(Finding.severity)
         .all()
     )
@@ -178,7 +182,14 @@ def get_attack_surface_groups(
     where risk concentrates.
     """
     open_findings = (
-        db.query(Finding).join(Asset).filter(Asset.tenant_id == tenant_id, Finding.status == FindingStatus.OPEN).all()
+        db.query(Finding)
+        .join(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.is_active.is_(True),
+            Finding.status == FindingStatus.OPEN,
+        )
+        .all()
     )
 
     groups = {

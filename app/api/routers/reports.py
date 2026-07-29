@@ -439,7 +439,12 @@ def generate_executive_report(
         count = (
             db.query(func.count(Finding.id))
             .join(Asset)
-            .filter(Asset.tenant_id == tenant_id, Finding.severity == severity)
+            .filter(
+                Asset.tenant_id == tenant_id,
+                Asset.is_active.is_(True),
+                Finding.status == FindingStatus.OPEN,
+                Finding.severity == severity,
+            )
             .scalar()
             or 0
         )
@@ -509,6 +514,7 @@ def generate_executive_report(
             .join(Asset)
             .filter(
                 Asset.tenant_id == tenant_id,
+                Asset.is_active.is_(True),
                 Finding.severity == severity,
                 Finding.status == FindingStatus.OPEN,
             )

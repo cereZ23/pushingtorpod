@@ -233,6 +233,7 @@ def get_severity_breakdown(
             .join(Asset)
             .filter(
                 Asset.tenant_id == tenant_id,
+                Asset.is_active.is_(True),
                 Finding.status == FindingStatus.OPEN,
                 Finding.severity == severity,
             )
@@ -479,6 +480,7 @@ def get_risk_heatmap(
         .join(Asset, Finding.asset_id == Asset.id)
         .filter(
             Asset.tenant_id == tenant_id,
+            Asset.is_active.is_(True),
             Finding.status == FindingStatus.OPEN,
         )
         .group_by(Finding.severity, Asset.type)
@@ -588,7 +590,11 @@ def get_changes(
     new_findings_q = (
         db.query(Finding)
         .join(Asset)
-        .filter(Asset.tenant_id == tenant_id, Finding.first_seen >= cutoff)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.is_active.is_(True),
+            Finding.first_seen >= cutoff,
+        )
         .order_by(Finding.first_seen.desc())
     )
     new_findings_total = new_findings_q.count()
@@ -599,6 +605,7 @@ def get_changes(
         .join(Asset)
         .filter(
             Asset.tenant_id == tenant_id,
+            Asset.is_active.is_(True),
             Finding.first_seen >= cutoff,
             Finding.severity == FindingSeverity.CRITICAL,
         )
@@ -610,6 +617,7 @@ def get_changes(
         .join(Asset)
         .filter(
             Asset.tenant_id == tenant_id,
+            Asset.is_active.is_(True),
             Finding.first_seen >= cutoff,
             Finding.severity == FindingSeverity.HIGH,
         )

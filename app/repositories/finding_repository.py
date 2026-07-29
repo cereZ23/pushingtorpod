@@ -329,18 +329,19 @@ class FindingRepository:
         Returns:
             Statistics dict
         """
-        # Base query
-        query = self.db.query(Finding).join(Asset).filter(Asset.tenant_id == tenant_id)
+        # Base query — active assets only (dead-asset findings must not inflate
+        # counts vs the findings list).
+        query = self.db.query(Finding).join(Asset).filter(Asset.tenant_id == tenant_id, Asset.is_active.is_(True))
 
         # Apply time filter
         if days > 0:
             cutoff = datetime.now(timezone.utc) - timedelta(days=days)
             query = query.filter(Finding.first_seen >= cutoff)
 
-        # Count by severity
+        # Count by severity (OPEN only — matches the findings list / dashboard)
         by_severity = {}
         for severity in FindingSeverity:
-            count = query.filter(Finding.severity == severity).count()
+            count = query.filter(Finding.severity == severity, Finding.status == FindingStatus.OPEN).count()
             by_severity[severity.value] = count
 
         # Count by status

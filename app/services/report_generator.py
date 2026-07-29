@@ -371,7 +371,12 @@ class ReportGenerator:
             c = (
                 db.query(func.count(Finding.id))
                 .join(Asset)
-                .filter(Asset.tenant_id == tid, Finding.severity == sev)
+                .filter(
+                    Asset.tenant_id == tid,
+                    Asset.is_active.is_(True),
+                    Finding.status == FindingStatus.OPEN,
+                    Finding.severity == sev,
+                )
                 .scalar()
                 or 0
             )

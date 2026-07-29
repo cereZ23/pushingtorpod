@@ -59,6 +59,7 @@ def build_digest(db: Any, tenant_id: int, days: int = 7) -> Dict[str, Any]:
         .join(Asset)
         .filter(
             Asset.tenant_id == tenant_id,
+            Asset.is_active.is_(True),
             Finding.first_seen >= cutoff,
             Finding.status == FindingStatus.OPEN,
         )
@@ -75,6 +76,7 @@ def build_digest(db: Any, tenant_id: int, days: int = 7) -> Dict[str, Any]:
         .join(Asset)
         .filter(
             Asset.tenant_id == tenant_id,
+            Asset.is_active.is_(True),
             Finding.status == FindingStatus.FIXED,
             Finding.last_seen >= cutoff,
         )

@@ -56,6 +56,13 @@ _Cose che possono causare perdita dati, incidenti, o vendere un artefatto sbagli
 
 _Consistenza UX, salute del codice, qualità dei finding._
 
+- [x] **Conteggi finding incoerenti tra endpoint** — **[FATTO, PR #52]** il banner "Action Required"
+  mostrava "3 high" assenti dalla lista: `get_tenant_dashboard.findings_by_severity` contava **tutti gli
+  stati su tutti gli asset** (i 3 high erano fixed/soppressi su IP morti). Canonico = **OPEN + asset
+  attivi** (come la lista findings). Allineati ~12 query in 11 file (dashboard, tenants, risk_summary,
+  exposure, findings/stats, reports, report_generator, finding_repository, asset_detail, assets) —
+  aggiunto `is_active` e/o `status=OPEN` dove mancava.
+
 - [x] **Rollout del sistema di toast** — **[FATTO, PR #40]** 10 view settings/form migrate dai
   banner inline al toast store (success→`toast.success`, errori load/azione→`toast.error`),
   validazione form tenuta inline. Restano le view read-only (solo `error` di load) → follow-up.

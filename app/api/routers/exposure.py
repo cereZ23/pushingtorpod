@@ -84,12 +84,14 @@ def get_exposure_summary(
         db.query(func.count(Asset.id)).filter(Asset.tenant_id == tenant_id, Asset.is_active.is_(True)).scalar() or 0
     )
 
-    # Assets with at least one open finding (exposed assets)
+    # Assets with at least one open finding (exposed assets), active only —
+    # dead/deactivated assets must not inflate the exposure counts.
     exposed_asset_ids_sq = (
         db.query(Finding.asset_id)
         .join(Asset)
         .filter(
             Asset.tenant_id == tenant_id,
+            Asset.is_active.is_(True),
             Finding.status == FindingStatus.OPEN,
         )
         .distinct()
@@ -116,6 +118,7 @@ def get_exposure_summary(
         .join(Asset)
         .filter(
             Asset.tenant_id == tenant_id,
+            Asset.is_active.is_(True),
             Finding.status == FindingStatus.OPEN,
         )
         .group_by(Finding.asset_id)
@@ -516,12 +519,13 @@ def get_exposure_changes(
         for f in resolved_findings
     ]
 
-    # Counts (may exceed the returned 50 items)
+    # Counts (may exceed the returned 50 items) — active assets only
     new_count = (
         db.query(func.count(Finding.id))
         .join(Asset)
         .filter(
             Asset.tenant_id == tenant_id,
+            Asset.is_active.is_(True),
             Finding.status == FindingStatus.OPEN,
             Finding.first_seen >= cutoff,
         )
@@ -534,6 +538,7 @@ def get_exposure_changes(
         .join(Asset)
         .filter(
             Asset.tenant_id == tenant_id,
+            Asset.is_active.is_(True),
             Finding.status == FindingStatus.FIXED,
             Finding.last_seen >= cutoff,
         )

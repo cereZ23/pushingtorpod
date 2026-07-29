@@ -57,10 +57,23 @@ def get_finding_stats(tenant_id: int, db: Session = Depends(get_db), membership=
     # Total findings
     total = db.query(Finding).join(Asset).filter(Asset.tenant_id == tenant_id).count()
 
-    # Distribution by severity
+    # Distribution by severity — OPEN findings on ACTIVE assets, matching the
+    # findings list (list_findings). Counting all statuses / dead assets here
+    # surfaced fixed/suppressed findings as if actionable (the "3 high not in
+    # the list" dashboard bug).
     by_severity = {}
     for severity in FindingSeverity:
-        count = db.query(Finding).join(Asset).filter(Asset.tenant_id == tenant_id, Finding.severity == severity).count()
+        count = (
+            db.query(Finding)
+            .join(Asset)
+            .filter(
+                Asset.tenant_id == tenant_id,
+                Asset.is_active == True,  # noqa: E712
+                Finding.status == FindingStatus.OPEN,
+                Finding.severity == severity,
+            )
+            .count()
+        )
         by_severity[severity.value] = count
 
     # Distribution by status
@@ -87,12 +100,13 @@ def get_finding_stats(tenant_id: int, db: Session = Depends(get_db), membership=
         db.query(Finding).join(Asset).filter(Asset.tenant_id == tenant_id, Finding.status == FindingStatus.OPEN).count()
     )
 
-    # Critical and high open findings
+    # Critical and high open findings (active assets only)
     critical_open = (
         db.query(Finding)
         .join(Asset)
         .filter(
             Asset.tenant_id == tenant_id,
+            Asset.is_active == True,  # noqa: E712
             Finding.severity == FindingSeverity.CRITICAL,
             Finding.status == FindingStatus.OPEN,
         )
@@ -103,7 +117,10 @@ def get_finding_stats(tenant_id: int, db: Session = Depends(get_db), membership=
         db.query(Finding)
         .join(Asset)
         .filter(
-            Asset.tenant_id == tenant_id, Finding.severity == FindingSeverity.HIGH, Finding.status == FindingStatus.OPEN
+            Asset.tenant_id == tenant_id,
+            Asset.is_active == True,  # noqa: E712
+            Finding.severity == FindingSeverity.HIGH,
+            Finding.status == FindingStatus.OPEN,
         )
         .count()
     )
