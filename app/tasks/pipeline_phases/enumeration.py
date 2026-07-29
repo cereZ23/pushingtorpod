@@ -566,7 +566,7 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
                            target: scan everything, no exceptions).
     """
     from app.tasks.enrichment import run_naabu
-    from app.models.database import Asset, AssetType
+    from app.models.database import Asset, AssetType, Service
 
     # CPU/RAM-aware port configuration
     from app.services.resource_scaler import get_scan_params
@@ -682,10 +682,33 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         blocked_ports=config["blocked_ports"],
     )
 
+    # Deactivate dead IP assets: after naabu, an IP with zero open ports (no
+    # Service row) is unreachable. naabu only creates a Service row for an open
+    # port, so "IP + no service" == dead. Deactivating them keeps dead
+    # CIDR-expansion leftovers out of downstream phases, the dashboard, and the
+    # next scan (self-cleanup for tenants that already have the junk IPs;
+    # discovery no longer creates provider netblocks going forward).
+    from sqlalchemy import exists
+
+    deactivated = (
+        db.query(Asset)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.type == AssetType.IP,
+            Asset.is_active == True,  # noqa: E712
+            ~exists().where(Service.asset_id == Asset.id),
+        )
+        .update({Asset.is_active: False}, synchronize_session=False)
+    )
+    if deactivated:
+        db.commit()
+        tenant_logger.info(f"Deactivated {deactivated} dead IP asset(s) with no open ports")
+
     return {
         "ports_discovered": result.get("ports_discovered", 0) if isinstance(result, dict) else 0,
         "services_created": result.get("services_created", 0) if isinstance(result, dict) else 0,
         "hosts_scanned": result.get("hosts_scanned", 0) if isinstance(result, dict) else 0,
+        "dead_ips_deactivated": deactivated,
         "scan_tier": scan_tier,
         "top_ports": config["top_ports"],
         "rate": config["rate"],
