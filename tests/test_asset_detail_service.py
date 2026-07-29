@@ -292,8 +292,10 @@ class TestAssetDetailServiceGetDetail:
         assert set(data["summary"]["open_ports"]) == {80, 443}
         assert data["summary"]["has_tls"] is True
         assert data["summary"]["has_http"] is True
+        # severity_breakdown counts OPEN findings only — the FIXED low finding
+        # (f2) must NOT appear (it would mismatch the findings list).
         assert data["summary"]["severity_breakdown"]["critical"] == 1
-        assert data["summary"]["severity_breakdown"]["low"] == 1
+        assert data["summary"]["severity_breakdown"].get("low", 0) == 0
 
     def test_technology_invalid_json_is_ignored(self):
         s = _make_service(technologies="not-json-at-all")
