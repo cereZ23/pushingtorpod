@@ -38,7 +38,11 @@ onMounted(async () => {
 
 watch(currentTenantId, (newId, oldId) => {
   if (newId && oldId && newId !== oldId) {
+    // Clear before refetch so the previous tenant's rows don't linger.
     currentPage.value = 1
+    certificates.value = []
+    totalItems.value = 0
+    totalPages.value = 0
     loadCertificates()
   }
 })

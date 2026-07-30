@@ -2,8 +2,10 @@
 import { ref } from 'vue'
 import apiClient from '@/api/client'
 import { useToastStore } from '@/stores/toast'
+import { useTenantStore } from '@/stores/tenant'
 
 const toast = useToastStore()
+const tenantStore = useTenantStore()
 
 // Form state
 const isLoading = ref(false)
@@ -140,6 +142,14 @@ const submitOnboarding = async () => {
 
     // Success!
     toast.success(response.data.message)
+
+    // Refresh the tenant list so the new tenant appears in the switcher
+    // immediately, without requiring a page reload.
+    try {
+      await tenantStore.fetchTenants()
+    } catch {
+      // Non-fatal: the tenant was created; the switcher will catch up on reload.
+    }
 
     // Reset form after 3 seconds
     setTimeout(() => {

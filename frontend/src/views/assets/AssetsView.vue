@@ -51,7 +51,11 @@ onMounted(async () => {
 watch(currentTenantId, (newTenantId, oldTenantId) => {
   // Only reload if both values exist (not initial load from undefined)
   if (newTenantId && oldTenantId && newTenantId !== oldTenantId) {
+    // Clear before refetch so the previous tenant's rows don't linger.
     currentPage.value = 1;
+    assets.value = [];
+    totalItems.value = 0;
+    totalPages.value = 0;
     loadAssets();
   }
 });

@@ -12,6 +12,14 @@ export const useTenantStore = defineStore("tenant", () => {
 
   const currentTenantId = computed(() => currentTenant.value?.id);
 
+  // Single mutation point for the active tenant: keeps currentTenant and
+  // localStorage in sync so a refresh (and the auth store's RBAC computed,
+  // which reads this store) always agree on which tenant is active.
+  function _applyTenant(tenant: Tenant) {
+    currentTenant.value = tenant;
+    localStorage.setItem("currentTenantId", String(tenant.id));
+  }
+
   async function fetchTenants() {
     tenants.value = await tenantApi.list();
 
@@ -26,14 +34,10 @@ export const useTenantStore = defineStore("tenant", () => {
     // Auto-select tenant if none selected (or was just reset)
     if (!currentTenant.value && tenants.value.length > 0) {
       const storedId = localStorage.getItem("currentTenantId");
-      if (storedId) {
-        const tenant = tenants.value.find((t) => t.id === parseInt(storedId));
-        if (tenant) {
-          currentTenant.value = tenant;
-          return;
-        }
-      }
-      currentTenant.value = tenants.value[0];
+      const stored = storedId
+        ? tenants.value.find((t) => t.id === parseInt(storedId))
+        : undefined;
+      _applyTenant(stored ?? tenants.value[0]);
     }
   }
 
@@ -45,9 +49,12 @@ export const useTenantStore = defineStore("tenant", () => {
   function selectTenant(tenantId: number) {
     const tenant = tenants.value.find((t) => t.id === tenantId);
     if (tenant) {
-      currentTenant.value = tenant;
-      localStorage.setItem("currentTenantId", String(tenantId));
-      // Clear tenant-scoped data from dependent stores
+      _applyTenant(tenant);
+      // Clear tenant-scoped data from dependent stores.
+      // NOTE: this is a hand-maintained allowlist — any NEW store that caches
+      // tenant-scoped data must be reset here too, or it will leak the previous
+      // tenant's data after a switch. View-local lists clear themselves in their
+      // currentTenantId watcher (clear-before-refetch).
       useScanStore().$reset();
       useIssueStore().$reset();
       useGraphStore().$reset();

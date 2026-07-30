@@ -99,7 +99,11 @@ onMounted(async () => {
 
 watch(currentTenantId, () => {
   if (currentTenantId.value) {
+    // Clear before refetch so the previous tenant's rows don't linger.
     currentPage.value = 1;
+    findings.value = [];
+    totalItems.value = 0;
+    totalPages.value = 0;
     loadFindings();
   }
 });
