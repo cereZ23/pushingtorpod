@@ -4,6 +4,7 @@ import { RouterView, useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
 import { useTenantStore } from "@/stores/tenant";
 import { useThemeStore } from "@/stores/theme";
+import { useToastStore } from "@/stores/toast";
 import apiClient from "@/api/client";
 import {
   MagnifyingGlassIcon,
@@ -14,6 +15,7 @@ import {
 } from "@heroicons/vue/24/outline";
 import ErrorBoundary from "@/components/ErrorBoundary.vue";
 import ToastContainer from "@/components/ToastContainer.vue";
+import NoTenantState from "@/components/common/NoTenantState.vue";
 
 // --- Types ---
 
@@ -44,6 +46,9 @@ const route = useRoute();
 const authStore = useAuthStore();
 const tenantStore = useTenantStore();
 const themeStore = useThemeStore();
+const toast = useToastStore();
+
+const isSuperuser = computed(() => !!authStore.currentUser?.is_superuser);
 
 const isLoading = ref(true);
 const isSidebarOpen = ref(true);
@@ -466,8 +471,13 @@ function handleLogout() {
 function onTenantChange(event: Event) {
   const select = event.target as HTMLSelectElement;
   const tenantId = parseInt(select.value, 10);
-  if (!isNaN(tenantId)) {
-    tenantStore.selectTenant(tenantId);
+  if (isNaN(tenantId)) return;
+  tenantStore.selectTenant(tenantId);
+  toast.success(`Switched to ${tenantStore.currentTenant?.name ?? "tenant"}`);
+  // Leave detail routes only (they hold an id scoped to the previous tenant);
+  // list/overview routes refetch in place via their currentTenantId watcher, so
+  // switching no longer yanks the user back to the dashboard from every page.
+  if (Object.keys(route.params).length > 0) {
     router.push("/");
   }
 }
@@ -627,18 +637,25 @@ function toggleSidebar() {
             <!-- Tenant Selector -->
             <div
               v-if="tenantStore.tenants.length > 0"
-              class="text-sm flex items-center"
+              class="text-sm flex items-center gap-2"
             >
-              <label
-                for="tenant-select"
-                class="text-gray-600 dark:text-dark-text-secondary"
-                >Tenant:</label
+              <span class="text-gray-600 dark:text-dark-text-secondary"
+                >Tenant:</span
               >
+              <!-- Single tenant: static label, no pointless one-option dropdown -->
+              <span
+                v-if="tenantStore.tenants.length === 1"
+                class="font-medium text-gray-900 dark:text-dark-text-primary"
+              >
+                {{ currentTenant?.name }}
+              </span>
               <select
+                v-else
                 id="tenant-select"
                 :value="currentTenant?.id"
                 @change="onTenantChange"
-                class="ml-2 font-medium text-gray-900 dark:text-dark-text-primary bg-transparent border border-gray-300 dark:border-dark-border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 cursor-pointer"
+                aria-label="Select tenant"
+                class="font-medium text-gray-900 dark:text-dark-text-primary bg-transparent border border-gray-300 dark:border-dark-border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 cursor-pointer"
               >
                 <option
                   v-for="t in tenantStore.tenants"
@@ -649,6 +666,22 @@ function toggleSidebar() {
                   {{ t.name }}
                 </option>
               </select>
+              <!-- Superuser: all-tenant visibility hint + create affordance -->
+              <span
+                v-if="isSuperuser"
+                class="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+                title="You are a superuser — this list shows all tenants, not just your memberships"
+              >
+                all tenants
+              </span>
+              <router-link
+                v-if="isSuperuser"
+                to="/admin/onboard-customer"
+                class="text-primary-600 dark:text-primary-400 hover:underline font-medium"
+                title="Create a new tenant"
+              >
+                + Tenant
+              </router-link>
             </div>
 
             <!-- Theme Toggle -->
@@ -807,6 +840,15 @@ function toggleSidebar() {
             Loading...
           </div>
         </div>
+        <!-- No workspace: replace the "No tenant selected" dead-end every view
+             would otherwise show. Superuser onboarding page is exempt so the
+             first tenant can still be created from an empty platform. -->
+        <NoTenantState
+          v-else-if="
+            tenantStore.tenants.length === 0 &&
+            route.path !== '/admin/onboard-customer'
+          "
+        />
         <ErrorBoundary v-else>
           <RouterView />
         </ErrorBoundary>

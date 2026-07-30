@@ -35,6 +35,12 @@ su 38, 92 errori ESLint soppressi in CI.
   **netblock del provider** (fine dei 792 IP di terzi); **disattivazione IP morti** post-naabu;
   **dedup finding per IP** (network FTP/SSH + SSL cipher, SNI-safe); **fix conteggi dashboard**
   incoerenti ("3 high" fantasma → allineati OPEN+attivi su ~12 query/11 file).
+- **Fix UX gestione tenant (30 lug)** — bug RBAC vero: due `currentTenantId` separati (dati vs
+  permessi) → dopo login/switch un admin non-superuser perdeva le voci admin finché non ricaricava.
+  Unificato il source-of-truth (auth deriva dal tenant store). + switcher chiaro (mono-tenant
+  statico, badge/CTA superuser, toast a switch, niente più push forzato a `/`), empty-state
+  "Nessun workspace" (`NoTenantState.vue`) al posto del "No tenant selected" nudo, refetch tenant
+  dopo onboard, clear-before-refetch sulle liste (niente flash del tenant precedente).
 
 ---
 
