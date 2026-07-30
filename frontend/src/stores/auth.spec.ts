@@ -50,6 +50,16 @@ vi.mock('@/api/auth', () => ({
 
 // Import after mocks are set up (vitest hoists vi.mock above imports)
 import { useAuthStore } from '@/stores/auth'
+import { useTenantStore } from '@/stores/tenant'
+import type { Tenant } from '@/api/types'
+
+// The auth store derives currentTenantId from the tenant store (single source of
+// truth), so RBAC tests simulate an active tenant by setting the tenant store
+// rather than writing localStorage directly.
+function setActiveTenant(id: number) {
+  const tenantStore = useTenantStore()
+  tenantStore.currentTenant = { id, name: `T${id}`, slug: `t${id}` } as unknown as Tenant
+}
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -338,7 +348,7 @@ describe('useAuthStore', () => {
       const store = useAuthStore()
       store.setTokens('some-access', 'some-refresh')
       store.user = createMockUser()
-      localStorage.setItem('currentTenantId', '1')
+      setActiveTenant(1)
 
       store.clearTokens()
 
@@ -449,8 +459,8 @@ describe('useAuthStore', () => {
       expect(store.currentTenantId).toBeNull()
     })
 
-    it('reads currentTenantId from localStorage', () => {
-      localStorage.setItem('currentTenantId', '42')
+    it('derives currentTenantId from the tenant store', () => {
+      setActiveTenant(42)
       const store = useAuthStore()
       expect(store.currentTenantId).toBe(42)
     })
@@ -470,7 +480,7 @@ describe('useAuthStore', () => {
     })
 
     it('returns role for current tenant', () => {
-      localStorage.setItem('currentTenantId', '1')
+      setActiveTenant(1)
       const store = useAuthStore()
       store.user = createMockUser({ tenant_roles: { 1: 'admin', 2: 'viewer' } })
 
@@ -478,7 +488,7 @@ describe('useAuthStore', () => {
     })
 
     it('returns role for a different tenant', () => {
-      localStorage.setItem('currentTenantId', '2')
+      setActiveTenant(2)
       const store = useAuthStore()
       store.user = createMockUser({ tenant_roles: { 1: 'admin', 2: 'viewer' } })
 
@@ -486,7 +496,7 @@ describe('useAuthStore', () => {
     })
 
     it('returns null when user has no role for current tenant', () => {
-      localStorage.setItem('currentTenantId', '99')
+      setActiveTenant(99)
       const store = useAuthStore()
       store.user = createMockUser({ tenant_roles: { 1: 'admin' } })
 
@@ -494,7 +504,7 @@ describe('useAuthStore', () => {
     })
 
     it('returns null when tenant_roles is undefined', () => {
-      localStorage.setItem('currentTenantId', '1')
+      setActiveTenant(1)
       const store = useAuthStore()
       store.user = createMockUser({ tenant_roles: undefined })
 
@@ -504,7 +514,7 @@ describe('useAuthStore', () => {
 
   describe('canWrite', () => {
     it('returns true for analyst role', () => {
-      localStorage.setItem('currentTenantId', '1')
+      setActiveTenant(1)
       const store = useAuthStore()
       store.user = createMockUser({ tenant_roles: { 1: 'analyst' } })
 
@@ -512,7 +522,7 @@ describe('useAuthStore', () => {
     })
 
     it('returns true for admin role', () => {
-      localStorage.setItem('currentTenantId', '1')
+      setActiveTenant(1)
       const store = useAuthStore()
       store.user = createMockUser({ tenant_roles: { 1: 'admin' } })
 
@@ -520,7 +530,7 @@ describe('useAuthStore', () => {
     })
 
     it('returns true for owner role', () => {
-      localStorage.setItem('currentTenantId', '1')
+      setActiveTenant(1)
       const store = useAuthStore()
       store.user = createMockUser({ tenant_roles: { 1: 'owner' } })
 
@@ -528,7 +538,7 @@ describe('useAuthStore', () => {
     })
 
     it('returns true for member role (legacy)', () => {
-      localStorage.setItem('currentTenantId', '1')
+      setActiveTenant(1)
       const store = useAuthStore()
       store.user = createMockUser({ tenant_roles: { 1: 'member' } })
 
@@ -536,7 +546,7 @@ describe('useAuthStore', () => {
     })
 
     it('returns false for viewer role', () => {
-      localStorage.setItem('currentTenantId', '1')
+      setActiveTenant(1)
       const store = useAuthStore()
       store.user = createMockUser({ tenant_roles: { 1: 'viewer' } })
 
@@ -566,7 +576,7 @@ describe('useAuthStore', () => {
 
   describe('canAdmin', () => {
     it('returns true for admin role', () => {
-      localStorage.setItem('currentTenantId', '1')
+      setActiveTenant(1)
       const store = useAuthStore()
       store.user = createMockUser({ tenant_roles: { 1: 'admin' } })
 
@@ -574,7 +584,7 @@ describe('useAuthStore', () => {
     })
 
     it('returns true for owner role', () => {
-      localStorage.setItem('currentTenantId', '1')
+      setActiveTenant(1)
       const store = useAuthStore()
       store.user = createMockUser({ tenant_roles: { 1: 'owner' } })
 
@@ -582,7 +592,7 @@ describe('useAuthStore', () => {
     })
 
     it('returns false for analyst role', () => {
-      localStorage.setItem('currentTenantId', '1')
+      setActiveTenant(1)
       const store = useAuthStore()
       store.user = createMockUser({ tenant_roles: { 1: 'analyst' } })
 
@@ -590,7 +600,7 @@ describe('useAuthStore', () => {
     })
 
     it('returns false for viewer role', () => {
-      localStorage.setItem('currentTenantId', '1')
+      setActiveTenant(1)
       const store = useAuthStore()
       store.user = createMockUser({ tenant_roles: { 1: 'viewer' } })
 
@@ -598,7 +608,7 @@ describe('useAuthStore', () => {
     })
 
     it('returns false for member role', () => {
-      localStorage.setItem('currentTenantId', '1')
+      setActiveTenant(1)
       const store = useAuthStore()
       store.user = createMockUser({ tenant_roles: { 1: 'member' } })
 
