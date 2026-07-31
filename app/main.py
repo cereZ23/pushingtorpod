@@ -270,13 +270,37 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Handle validation errors with detailed information"""
+    # Pydantic v2 embeds the raw ValueError raised by custom field validators in
+    # each error's `ctx`, which is NOT JSON-serializable. Passing exc.errors()
+    # straight to JSONResponse makes json.dumps raise, turning a clean 422 into a
+    # generic 500 (e.g. a weak password on onboarding surfaced as "server error"
+    # instead of the actual reason). Sanitize every field to a plain string.
+    errors = []
+    for error in exc.errors():
+        field = ".".join(str(loc) for loc in error.get("loc", []) if loc != "body")
+        errors.append(
+            {
+                "field": field,
+                "message": str(error.get("msg", "Invalid value")),
+                "type": str(error.get("type", "value_error")),
+            }
+        )
+
+    # Surface a human-readable reason so clients that only render `detail`
+    # (the onboarding/admin forms) tell the user what actually went wrong.
+    if errors:
+        first = errors[0]
+        detail = f"{first['field']}: {first['message']}" if first["field"] else first["message"]
+    else:
+        detail = "Request validation failed"
+
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
             "error": "ValidationError",
-            "detail": "Request validation failed",
+            "detail": detail,
             "status_code": 422,
-            "errors": exc.errors(),
+            "errors": errors,
         },
     )
 
