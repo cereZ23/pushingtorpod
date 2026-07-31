@@ -652,7 +652,7 @@ watch(assetId, () => {
             />
             <span
               class="text-xs font-medium text-gray-500 dark:text-dark-text-tertiary uppercase tracking-wider"
-              >Findings</span
+              >Open Findings</span
             >
           </div>
           <p
@@ -1193,6 +1193,17 @@ watch(assetId, () => {
       <!-- ================================================================ -->
       <!-- 7. FINDINGS (extracted)                                          -->
       <!-- ================================================================ -->
+      <!-- On a service-level (port) asset the findings are recorded at the host
+           level, not per-port, so make that explicit instead of looking like they
+           belong to this specific port. -->
+      <p
+        v-if="parentAsset"
+        class="text-xs text-gray-500 dark:text-dark-text-tertiary -mb-2"
+      >
+        Findings are recorded at the host level
+        (<span class="font-medium">{{ parentAsset.identifier }}</span>) — not
+        specific to this port.
+      </p>
       <FindingsSummary
         :findings="findings"
         :severity-breakdown="severityBreakdown"
