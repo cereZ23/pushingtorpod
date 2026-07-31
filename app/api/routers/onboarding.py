@@ -13,6 +13,7 @@ import re
 
 from app.api.dependencies import get_db
 from app.core.audit import log_data_modification
+from app.core.tenant_context import set_current_tenant, clear_current_tenant
 from app.models.database import Tenant, Seed
 from app.models.auth import User, TenantMembership
 from app.rate_limiter import limiter
@@ -157,6 +158,14 @@ def register_organization(
 
         logger.info(f"Created user: {user.email} (ID: {user.id})")
 
+        # The membership + seed rows are RLS-protected: their WITH CHECK ties
+        # tenant_id to the app.current_tenant_id GUC, which the sync engine's
+        # before_cursor_execute listener fills from this contextvar. The public
+        # onboarding request carries no tenant context, so without this the INSERTs
+        # fail RLS ("new row violates row-level security policy") and the whole
+        # registration 500s. Scope to the just-created tenant; the finally clears it.
+        set_current_tenant(tenant.id)
+
         # 6. Create tenant membership (owner role)
         membership = TenantMembership(user_id=user.id, tenant_id=tenant.id, role="owner", is_active=True)
         db.add(membership)
@@ -240,6 +249,11 @@ def register_organization(
         db.rollback()
         logger.error(f"Onboarding failed: {str(e)}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Registration failed: {str(e)}")
+
+    finally:
+        # Always drop the tenant context we set for the RLS-scoped inserts, so it
+        # never leaks into later work on this request/thread.
+        clear_current_tenant()
 
 
 @router.get("/check-availability/{slug}")
