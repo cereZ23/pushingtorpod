@@ -1875,6 +1875,73 @@ def check_exp_011(
     return findings
 
 
+# Ports handled by a dedicated check or considered expected/benign on an
+# internet-facing host, so they don't count toward the "unusual exposure" cluster.
+_WEB_PORTS = frozenset({80, 443, 8080, 8443, 8000, 8081, 8888, 4443, 9090, 9443})
+_EXPECTED_NONWEB_PORTS = frozenset(
+    {
+        21,  # FTP (EML-009)
+        25,
+        110,
+        143,
+        465,
+        587,
+        993,
+        995,  # mail (dedicated / expected)
+        53,
+        123,  # DNS / NTP
+    }
+)
+_UNUSUAL_EXPOSURE_THRESHOLD = 4
+
+
+@register(
+    control_id="EXP-012",
+    name="Multiple non-standard service ports exposed",
+    severity="medium",
+    confidence=0.60,
+    category="Service Exposure",
+    asset_types=["domain", "subdomain", "ip"],
+)
+def check_exp_012(
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
+) -> list[dict]:
+    """Flag hosts exposing a cluster of non-web ports we could not identify.
+
+    naabu finds the open ports but fingerprintx often can't fingerprint them on
+    filtered/firewalled hosts, so they'd otherwise sit as bare "Unknown" services
+    with no finding at all. A host publishing several such non-standard, non-web
+    ports (e.g. legacy admin/RDP/FTP-data ports) is a real attack-surface signal
+    worth surfacing for manual review — without claiming a specific product we
+    never verified.
+    """
+    known = _WEB_PORTS | _EXPECTED_NONWEB_PORTS | frozenset(_SENSITIVE_PORTS)
+    unusual = sorted({s.port for s in services if s.port is not None and s.port not in known})
+    if len(unusual) < _UNUSUAL_EXPOSURE_THRESHOLD:
+        return []
+    return [
+        {
+            "name": f"{len(unusual)} non-standard service ports exposed to the internet",
+            "severity": "medium",
+            "confidence": 0.60,
+            "evidence": {
+                "ports": unusual,
+                "note": "Services on these ports were not fingerprinted — verify manually.",
+            },
+            "control_id": "EXP-012",
+            "finding_key": f"EXP-012:{asset.identifier}",
+            "remediation": (
+                "Review these non-web ports: confirm each service is meant to be internet-facing, "
+                "identify what runs on it, and restrict anything administrative (RDP/VNC/DB/legacy) "
+                "to trusted networks or a VPN."
+            ),
+        }
+    ]
+
+
 @register(
     control_id="DOM-001",
     name="Domain registration expiring soon",
