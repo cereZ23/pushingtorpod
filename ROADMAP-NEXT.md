@@ -41,6 +41,19 @@ su 38, 92 errori ESLint soppressi in CI.
   "Manage" (entra nel tenant → Users); banner "Managing users for: X" + selettore inline in Users.
   Bug collaterali fixati: onboarding 500 su validazione (ValueError non serializzabile, #57), 500
   RLS su `seeds` senza tenant context (#58), login 401 mascherato da "No refresh token" (#59).
+- **Arco qualità finding / audit imbuto EASM (31 lug, PR #62-69)** — audit dell'imbuto (nostro vs
+  reference ProjectDiscovery) → **piano a 5 pilastri anti-FP/FN**. Fatti:
+  - **#1 loop discovery** (#66): i SAN dei certificati (tlsx) rientrano come asset SUBDOMAIN in-scope
+    (`_upsert_hostname_assets`; terzi su cert condivisi esclusi) — prima si buttavano via.
+  - **#2 esposizione vs igiene** (#67): ogni finding ha un `tier` (`finding_tier`); board con tab
+    Exposures|Hygiene|All, default Exposures → l'igiene (header/cipher/SPF) non seppellisce il segnale.
+  - **#3 deep-ID (parziale)** (#68): identificazione appliance dai certificati (serial Fortinet nel CN
+    → FortiGate-100D + serial, come Shodan); check `DEV-001` + CLI `scripts/fortifind.py`.
+  - **#4 loop segna-FP** (#69): bottone "Mark false positive" → soppressione **permanente** (l'upsert
+    nuclei non tocca lo status, misconfig riapre solo i FIXED → i FP non tornano).
+  - Pulizia rumore: rimosso "No SCT" (falso positivo su ogni cert, #63) + **cancellati 117** finding
+    SCT da tutti i tenant in prod; asset-detail finding host-level + conteggi coerenti (#62); cloud
+    provider "(estimated)" (#65); nuovo **EXP-012** per cluster di porte non-web non identificate (#64).
 - **Fix UX gestione tenant (30 lug)** — bug RBAC vero: due `currentTenantId` separati (dati vs
   permessi) → dopo login/switch un admin non-superuser perdeva le voci admin finché non ricaricava.
   Unificato il source-of-truth (auth deriva dal tenant store). + switcher chiaro (mono-tenant
@@ -109,6 +122,16 @@ _Consistenza UX, salute del codice, qualità dei finding._
   né i finding nuclei. → estendere a N-scan e a tutte le sorgenti.
 - [ ] **Audit loading-state** — solo ~11/38 view hanno spinner/skeleton; un terzo lampeggia
   vuoto al primo render. → skeleton coerente view per view.
+- [ ] **Qualità EASM — pilastri #3 (pesante) e #5** (dal piano a 5 pilastri, PR #62-69):
+  - **#3 deep service-ID**: probe protocollo-specifici (fgfm/541, RDP-NTLM su porte non-standard come
+    1042/1043) + **`nmap -sV` di secondo passaggio** sugli Unknown vivi dietro firewall → identificare
+    i servizi come fa nmap a mano (oggi restano "Unknown" e non generano finding mirati).
+  - **#5 verifica + recall**: gate di **ri-verifica attiva** sui finding high-value prima di mostrarli;
+    **harness di precision/recall** su target noti → numeri sulla qualità nel tempo, non a sensazione.
+  - Follow-up #1: route i 4 upsert-asset inline (fasi 1/2/3, crt.sh) via `_upsert_hostname_assets`;
+    `run_dnsx` same-run sui nuovi SAN così si arricchiscono nello stesso scan.
+  - Follow-up #3: estendere `device_fingerprint` a più vendor (Palo Alto, SonicWall, Cisco ASA) col
+    serial/model nel cert.
 
 ## P2 — Feature / scala (backlog)
 
