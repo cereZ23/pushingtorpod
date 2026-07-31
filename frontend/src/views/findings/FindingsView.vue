@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, computed, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useTenantStore } from "@/stores/tenant";
+import { useToastStore } from "@/stores/toast";
 import { findingApi } from "@/api/findings";
 import apiClient from "@/api/client";
 import type { Finding, PaginatedResponse } from "@/api/types";
@@ -15,6 +16,7 @@ import SkeletonLoader from "@/components/SkeletonLoader.vue";
 
 const router = useRouter();
 const tenantStore = useTenantStore();
+const toast = useToastStore();
 
 const findings = ref<Finding[]>([]);
 const isLoading = ref(true);
@@ -223,6 +225,20 @@ async function bulkChangeStatus(newStatus: string) {
     error.value = "Bulk update failed";
   } finally {
     isBulkUpdating.value = false;
+  }
+}
+
+// Mark the selected findings as false positives: suppress them permanently.
+// A SUPPRESSED finding is never reopened on rescan (the nuclei upsert doesn't touch
+// status; misconfig only reopens FIXED), so they won't come back.
+async function markFalsePositive() {
+  const n = selectedIds.value.size;
+  if (n === 0) return;
+  await bulkChangeStatus("suppressed");
+  if (!error.value) {
+    toast.success(
+      `${n} finding${n > 1 ? "s" : ""} marked as false positive — won't reappear on future scans.`,
+    );
   }
 }
 
@@ -457,6 +473,14 @@ const getStatusColor = getFindingStatusBadgeClass;
           {{ selectedIds.size }} selected
         </span>
         <div class="flex items-center gap-2">
+          <button
+            @click="markFalsePositive"
+            :disabled="isBulkUpdating"
+            title="Suppress permanently — these won't reappear on future scans"
+            class="text-sm font-medium px-3 py-1 rounded-md bg-amber-100 text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300 disabled:opacity-50"
+          >
+            Mark false positive
+          </button>
           <select
             @change="handleBulkStatusChange"
             :disabled="isBulkUpdating"
