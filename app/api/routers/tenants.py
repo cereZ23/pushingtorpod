@@ -123,10 +123,7 @@ def tenants_overview(
                 or 0
             )
             asset_count = (
-                db.query(func.count(Asset.id))
-                .filter(Asset.tenant_id == t.id, Asset.is_active.is_(True))
-                .scalar()
-                or 0
+                db.query(func.count(Asset.id)).filter(Asset.tenant_id == t.id, Asset.is_active.is_(True)).scalar() or 0
             )
             out.append(
                 TenantOverviewItem(
