@@ -38,8 +38,17 @@ apiClient.interceptors.response.use(
       return Promise.reject(error)
     }
 
+    // A 401 from an auth endpoint itself (login / mfa verify) means bad
+    // credentials or a dead challenge — NOT an expired access token. Never try to
+    // refresh here: there's no session to refresh, so it would fail with
+    // "No refresh token available" and swallow the real "invalid credentials"
+    // message. Let the caller (LoginView) surface the actual error.
+    const isAuthAttempt =
+      originalRequest.url?.includes('/auth/login') ||
+      originalRequest.url?.includes('/auth/mfa/verify')
+
     // Handle 401 errors (expired/invalid token) - 403 is authorization, not authentication
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthAttempt) {
       originalRequest._retry = true
 
       const authStore = useAuthStore()
