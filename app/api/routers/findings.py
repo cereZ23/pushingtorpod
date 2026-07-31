@@ -239,6 +239,7 @@ def list_findings(
     source: Optional[str] = Query(None),
     cve_id: Optional[str] = Query(None),
     template_id: Optional[str] = Query(None),
+    tier: Optional[str] = Query(None, description="'exposure' (actionable) or 'hygiene' (best-practice); omit for all"),
     search: Optional[str] = Query(None),
     min_cvss_score: Optional[float] = Query(None),
     sort_by: str = Query("last_seen"),
@@ -312,6 +313,14 @@ def list_findings(
 
     if template_id:
         query = query.filter(Finding.template_id == template_id)
+
+    # Tier split (exposure vs hygiene) — keyword match on the finding name, mirroring
+    # the read-time finding_tier() classifier so pagination stays correct.
+    if tier in ("exposure", "hygiene"):
+        from app.services.scanning.finding_tier import HYGIENE_KEYWORDS
+
+        hygiene_cond = or_(*[Finding.name.ilike(f"%{kw}%") for kw in HYGIENE_KEYWORDS])
+        query = query.filter(hygiene_cond if tier == "hygiene" else ~hygiene_cond)
 
     if min_cvss_score is not None:
         query = query.filter(Finding.cvss_score >= min_cvss_score)
