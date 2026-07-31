@@ -201,6 +201,7 @@ export interface Finding {
   first_seen: string;
   last_seen: string;
   status: "open" | "suppressed" | "fixed";
+  tier?: "exposure" | "hygiene";
   fingerprint?: string;
   occurrence_count: number;
   asset_identifier?: string;

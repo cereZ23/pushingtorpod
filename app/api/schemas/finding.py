@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator, model_valida
 from datetime import datetime
 
 from app.services.scanning.confidence import confidence_from_evidence
+from app.services.scanning.finding_tier import finding_tier
 
 
 class FindingResponse(BaseModel):
@@ -30,6 +31,10 @@ class FindingResponse(BaseModel):
     confidence: str = Field(
         "confirmed",
         description="Detection confidence: 'presumptive' (version-based, needs validation) or 'confirmed'",
+    )
+    tier: str = Field(
+        "exposure",
+        description="'exposure' (actionable: CVE, exposed service/panel, cleartext) or 'hygiene' (best-practice: headers, cipher, SPF/DMARC)",
     )
 
     # Nuclei integration metadata
@@ -84,6 +89,7 @@ class FindingResponse(BaseModel):
         evidence by the nuclei parser. Absent → 'confirmed' (the default).
         """
         self.confidence = confidence_from_evidence(self.evidence)
+        self.tier = finding_tier(self.name, self.template_id, self.source)
         return self
 
     model_config = ConfigDict(

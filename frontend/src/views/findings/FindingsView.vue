@@ -29,6 +29,9 @@ const searchQuery = ref("");
 const selectedSeverity = ref("");
 const selectedStatus = ref("open");
 const selectedSource = ref("");
+// Default the board to actionable exposures; hygiene (headers/cipher/SPF-DMARC) is
+// collapsed behind its own tab so it stops burying the signal.
+const selectedTier = ref("exposure");
 
 // Sorting
 const sortBy = ref("last_seen");
@@ -137,6 +140,7 @@ async function loadFindings() {
       severity: selectedSeverity.value || undefined,
       status: selectedStatus.value || undefined,
       source: selectedSource.value || undefined,
+      tier: selectedTier.value || undefined,
       sort_by: sortBy.value,
       sort_order: sortOrder.value,
     };
@@ -304,6 +308,37 @@ const getStatusColor = getFindingStatusBadgeClass;
           Refresh
         </button>
       </div>
+    </div>
+
+    <!-- Tier: default to actionable exposures; hygiene (headers/cipher/SPF-DMARC)
+         is lower-signal best-practice, collapsed behind its own tab. -->
+    <div class="flex flex-wrap items-center gap-1 mb-4">
+      <button
+        v-for="t in [
+          { key: 'exposure', label: 'Exposures' },
+          { key: 'hygiene', label: 'Hygiene' },
+          { key: '', label: 'All' },
+        ]"
+        :key="t.key"
+        type="button"
+        @click="
+          selectedTier = t.key;
+          handleSearch();
+        "
+        :class="[
+          'px-3 py-1.5 rounded-md text-sm font-medium border',
+          selectedTier === t.key
+            ? 'bg-primary-600 text-white border-primary-600'
+            : 'bg-white dark:bg-dark-bg-tertiary text-gray-700 dark:text-dark-text-secondary border-gray-300 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-dark-bg-secondary',
+        ]"
+      >
+        {{ t.label }}
+      </button>
+      <span
+        class="ml-2 text-xs text-gray-500 dark:text-dark-text-tertiary"
+      >
+        Hygiene = headers / cipher / SPF-DMARC best-practice (lower signal)
+      </span>
     </div>
 
     <!-- Filters -->
