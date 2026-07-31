@@ -1943,6 +1943,63 @@ def check_exp_012(
 
 
 @register(
+    control_id="DEV-001",
+    name="Network appliance identified from certificate",
+    severity="medium",
+    confidence=0.90,
+    category="Service Exposure",
+    asset_types=["domain", "subdomain", "ip"],
+)
+def check_dev_001(
+    asset: Asset,
+    services: list[Service],
+    certificates: list[Certificate],
+    db: Any,
+) -> list[dict]:
+    """Identify internet-facing network appliances (FortiGate, etc.) from the factory
+    certificate they present. Device model + serial come straight from the cert CN —
+    the same signal Shodan uses — turning an anonymous TLS service into an actionable,
+    CVE-mappable appliance identification, using certs we already collect via tlsx.
+    """
+    from app.services.scanning.device_fingerprint import identify_device
+
+    findings: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for cert in certificates:
+        dev = identify_device(getattr(cert, "subject_cn", None))
+        if not dev:
+            continue
+        key = (dev["vendor"], dev["serial"])
+        if key in seen:
+            continue
+        seen.add(key)
+        findings.append(
+            {
+                "name": f"{dev['model']} appliance exposed (identified from certificate)",
+                "severity": "medium",
+                "confidence": 0.90,
+                "evidence": {
+                    "vendor": dev["vendor"],
+                    "device": dev["device"],
+                    "model": dev["model"],
+                    "serial": dev["serial"],
+                    "certificate_cn": cert.subject_cn,
+                    "source": "tls-certificate",
+                },
+                "control_id": "DEV-001",
+                "finding_key": f"DEV-001:{asset.identifier}:{dev['serial']}",
+                "remediation": (
+                    f"A {dev['model']} management/VPN interface is internet-facing (its factory "
+                    "certificate is served here). Restrict the admin/SSL-VPN interface to trusted "
+                    "networks, keep firmware patched (the exact model maps directly to known CVEs), "
+                    "and replace the default certificate."
+                ),
+            }
+        )
+    return findings
+
+
+@register(
     control_id="DOM-001",
     name="Domain registration expiring soon",
     severity="high",
