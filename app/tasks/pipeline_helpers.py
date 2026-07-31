@@ -262,6 +262,60 @@ def _query_crtsh(domain: str, tenant_id: int, db, tenant_logger) -> tuple[int, i
     return len(seen), created
 
 
+def _san_candidates_in_scope(sans, seed_domains: set, scopes: list) -> list[str]:
+    """Normalize certificate SAN entries and keep only in-scope hostnames.
+
+    Pure (no DB) so it can be unit-tested directly. Drops wildcard entries
+    (``*.example.com`` reveals no specific host — same choice as the crt.sh path),
+    then keeps names that are under a seed root (:func:`_is_hostname_in_scope`) and
+    not excluded by project scope rules (:func:`_is_in_scope`). This is what keeps
+    third-party SANs on a shared-hosting certificate (e.g. a co-tenant's mail host)
+    out of the tenant's asset table.
+    """
+    out: set[str] = set()
+    for raw in sans or []:
+        if not raw:
+            continue
+        host = str(raw).lower().strip().rstrip(".")
+        if not host or "*" in host:
+            continue
+        if not _is_hostname_in_scope(host, seed_domains):
+            continue
+        if not _is_in_scope(host, scopes):
+            continue
+        out.add(host)
+    return sorted(out)
+
+
+def _upsert_hostname_assets(db, tenant_id: int, project_id: int, hostnames, source: str, tenant_logger=None) -> int:
+    """Upsert in-scope hostnames as SUBDOMAIN assets (deduped). Returns count added.
+
+    Mirrors the crt.sh feedback loop (:func:`_query_crtsh`): scope-gated dedup-upsert.
+    Used by the TLS-SAN feedback step so certificate SANs re-enter discovery instead
+    of dying on the Certificate record. New assets are resolved/enriched by the normal
+    pipeline on the next scan; a fresh ``last_seen`` keeps them from the stale sweep.
+    """
+    from app.models.database import Asset, AssetType
+    from app.models.scanning import Scope
+
+    seed_domains = _get_seed_domains(tenant_id, project_id, db)
+    scopes = db.query(Scope).filter(Scope.project_id == project_id).all()
+    candidates = _san_candidates_in_scope(hostnames, seed_domains, scopes)
+
+    created = 0
+    for host in candidates:
+        existing = db.query(Asset.id).filter(Asset.tenant_id == tenant_id, Asset.identifier == host).first()
+        if not existing:
+            db.add(Asset(tenant_id=tenant_id, type=AssetType.SUBDOMAIN, identifier=host, is_active=True))
+            created += 1
+
+    if created:
+        db.commit()
+        if tenant_logger:
+            tenant_logger.info("SAN feedback (%s): +%d in-scope subdomain assets", source, created)
+    return created
+
+
 def _is_ip(value: str) -> bool:
     """Check if a string is an IP address."""
     import ipaddress

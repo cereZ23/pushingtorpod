@@ -540,11 +540,33 @@ def _phase_4b_tls_collection(tenant_id, project_id, scan_run_id, db, tenant_logg
     certificates_updated = result.get("certificates_updated", 0) if isinstance(result, dict) else 0
     hosts_analyzed = result.get("hosts_analyzed", 0) if isinstance(result, dict) else 0
 
+    # Feedback loop: the certificates we just collected list SANs that often reveal
+    # hosts passive discovery missed. Re-enter the in-scope ones as SUBDOMAIN assets
+    # (third-party SANs on shared certs are filtered out by scope). They get resolved
+    # and enriched by the normal pipeline on the next scan.
+    san_assets_added = 0
+    try:
+        from app.tasks.pipeline_helpers import _upsert_hostname_assets
+        from app.models.enrichment import Certificate
+
+        san_rows = db.query(Certificate.san_domains).filter(Certificate.asset_id.in_(asset_ids)).all()
+        sans: list[str] = []
+        for (san_list,) in san_rows:
+            if isinstance(san_list, list):
+                sans.extend(str(s) for s in san_list if s)
+        if sans:
+            san_assets_added = _upsert_hostname_assets(
+                db, tenant_id, project_id, sans, source="tlsx-san", tenant_logger=tenant_logger
+            )
+    except Exception as exc:  # never fail cert collection over the feedback step
+        tenant_logger.warning("TLS SAN feedback failed: %s", exc)
+
     return {
         "certificates_collected": certificates_collected,
         "certificates_created": certificates_created,
         "certificates_updated": certificates_updated,
         "hosts_analyzed": hosts_analyzed,
+        "san_assets_added": san_assets_added,
     }
 
 
