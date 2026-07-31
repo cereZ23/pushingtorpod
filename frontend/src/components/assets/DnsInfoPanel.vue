@@ -110,8 +110,10 @@ const recordCategories = [
       <div v-if="dnsInfo.cloud_provider">
         <h3
           class="text-xs font-medium text-gray-500 dark:text-dark-text-tertiary uppercase tracking-wider mb-2"
+          title="Heuristic classification from cdncheck IP ranges — cross-check with the reverse DNS / ASN / WHOIS below."
         >
           Cloud Provider
+          <span class="normal-case font-normal text-gray-400">(estimated)</span>
         </h3>
         <span
           v-if="cloudProvider"
