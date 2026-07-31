@@ -32,8 +32,10 @@ from app.api.schemas.tenant import (
     TenantStats,
     RecentActivity,
 )
+from pydantic import BaseModel
 from app.core.audit import log_data_modification
 from app.core.cache import cache_get_async, cache_set_async
+from app.core.tenant_context import allow_cross_tenant
 from app.models.database import (
     Tenant,
     Asset,
@@ -70,6 +72,71 @@ async def list_tenants(
         tenants = [m.tenant for m in current_user.tenant_memberships if m.is_active]
 
     return [TenantResponse.model_validate(t) for t in tenants]
+
+
+class TenantOverviewItem(BaseModel):
+    """One row of the superuser cross-tenant overview."""
+
+    id: int
+    name: str
+    slug: str
+    is_active: bool
+    owner_email: str | None
+    user_count: int
+    asset_count: int
+
+
+# NOTE: declared BEFORE "/{tenant_id}" so the static path wins the route match
+# (otherwise "overview" is parsed as a tenant_id and 422s).
+@router.get("/overview", response_model=list[TenantOverviewItem])
+def tenants_overview(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Superuser-only cross-tenant overview: every tenant with its owner and
+    user/asset counts, for the admin Tenants page. Uses the sync session +
+    allow_cross_tenant so the RLS-protected asset counts span all tenants."""
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superuser access required")
+
+    out: list[TenantOverviewItem] = []
+    with allow_cross_tenant():
+        for t in db.query(Tenant).order_by(Tenant.name).all():
+            owner_membership = (
+                db.query(TenantMembership)
+                .filter(
+                    TenantMembership.tenant_id == t.id,
+                    TenantMembership.role == "owner",
+                    TenantMembership.is_active.is_(True),
+                )
+                .first()
+            )
+            owner_email = None
+            if owner_membership:
+                owner_user = db.query(User).filter(User.id == owner_membership.user_id).first()
+                owner_email = owner_user.email if owner_user else None
+
+            user_count = (
+                db.query(func.count(TenantMembership.id))
+                .filter(TenantMembership.tenant_id == t.id, TenantMembership.is_active.is_(True))
+                .scalar()
+                or 0
+            )
+            asset_count = (
+                db.query(func.count(Asset.id)).filter(Asset.tenant_id == t.id, Asset.is_active.is_(True)).scalar() or 0
+            )
+            out.append(
+                TenantOverviewItem(
+                    id=t.id,
+                    name=t.name,
+                    slug=t.slug,
+                    is_active=bool(getattr(t, "is_active", True)),
+                    owner_email=owner_email,
+                    user_count=int(user_count),
+                    asset_count=int(asset_count),
+                )
+            )
+    return out
 
 
 @router.get("/{tenant_id}", response_model=TenantResponse)

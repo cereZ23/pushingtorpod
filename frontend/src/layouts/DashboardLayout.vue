@@ -26,8 +26,10 @@ interface NavItem {
   activeNames?: string[];
   /** Match against $route.path (startsWith) */
   activePaths?: string[];
-  /** Only visible to superusers */
+  /** Visible to tenant admins and superusers */
   adminOnly?: boolean;
+  /** Visible to platform superusers only (cross-tenant pages) */
+  superuserOnly?: boolean;
 }
 
 interface NavGroup {
@@ -158,6 +160,12 @@ const navGroups: NavGroup[] = [
         activeNames: ["SuppressionRules"],
       },
       {
+        label: "Tenants",
+        to: "/admin/tenants",
+        activeNames: ["TenantsAdmin"],
+        superuserOnly: true,
+      },
+      {
         label: "Users",
         to: "/settings/users",
         activeNames: ["Users"],
@@ -279,6 +287,7 @@ watch(
 
 function visibleItems(group: NavGroup): NavItem[] {
   return group.items.filter((item) => {
+    if (item.superuserOnly && !isSuperuser.value) return false;
     if (item.adminOnly && !authStore.canAdmin) return false;
     return true;
   });

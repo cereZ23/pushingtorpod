@@ -2,6 +2,7 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useTenantStore } from '@/stores/tenant'
 import { useToastStore } from '@/stores/toast'
+import { useAuthStore } from '@/stores/auth'
 import apiClient from '@/api/client'
 import AppDialog from '@/components/AppDialog.vue'
 
@@ -28,7 +29,17 @@ interface Invitation {
 
 const tenantStore = useTenantStore()
 const toast = useToastStore()
+const authStore = useAuthStore()
 const tid = computed(() => tenantStore.currentTenantId)
+
+// Make it explicit WHICH tenant's users are being managed; superusers can
+// switch tenant inline (the tid watcher reloads the list).
+const isSuperuser = computed(() => !!authStore.currentUser?.is_superuser)
+const currentTenantName = computed(() => tenantStore.currentTenant?.name ?? '')
+function switchTenant(event: Event) {
+  const id = parseInt((event.target as HTMLSelectElement).value, 10)
+  if (!isNaN(id)) tenantStore.selectTenant(id)
+}
 
 const users = ref<TenantUser[]>([])
 const invitations = ref<Invitation[]>([])
@@ -217,6 +228,44 @@ watch(tid, () => {
           Invite via Email
         </button>
       </div>
+    </div>
+
+    <!-- Which tenant are we managing? Superusers can switch inline. -->
+    <div
+      class="flex items-center gap-2 text-sm rounded-md border border-gray-200 dark:border-dark-border bg-gray-50 dark:bg-dark-bg-tertiary px-3 py-2"
+    >
+      <span class="text-gray-500 dark:text-dark-text-secondary"
+        >Managing users for:</span
+      >
+      <span
+        v-if="!isSuperuser"
+        class="font-medium text-gray-900 dark:text-dark-text-primary"
+      >
+        {{ currentTenantName }}
+      </span>
+      <select
+        v-else
+        :value="tid"
+        @change="switchTenant"
+        aria-label="Select tenant to manage"
+        class="font-medium text-gray-900 dark:text-dark-text-primary bg-transparent border border-gray-300 dark:border-dark-border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 cursor-pointer"
+      >
+        <option
+          v-for="t in tenantStore.tenants"
+          :key="t.id"
+          :value="t.id"
+          class="bg-white dark:bg-dark-bg-primary"
+        >
+          {{ t.name }}
+        </option>
+      </select>
+      <router-link
+        v-if="isSuperuser"
+        to="/admin/tenants"
+        class="ml-auto text-primary-600 dark:text-primary-400 hover:underline"
+      >
+        All tenants
+      </router-link>
     </div>
 
     <!-- Loading -->

@@ -211,6 +211,12 @@ const router = createRouter({
           meta: { requiresAdmin: true, title: "Audit Log" },
         },
         {
+          path: "admin/tenants",
+          name: "TenantsAdmin",
+          component: () => import("@/views/admin/TenantsAdminView.vue"),
+          meta: { requiresSuperuser: true, title: "Tenants" },
+        },
+        {
           path: "admin/onboard-customer",
           name: "OnboardCustomer",
           component: () => import("@/views/admin/OnboardCustomerView.vue"),
@@ -263,6 +269,25 @@ router.beforeEach(async (to, _from, next) => {
 
     if (!authStore.canAdmin) {
       console.warn("Access denied: Admin required");
+      next("/");
+      return;
+    }
+  }
+
+  // Check superuser requirement (platform-level, cross-tenant pages)
+  if (to.meta.requiresSuperuser) {
+    if (!authStore.currentUser && authStore.isAuthenticated) {
+      try {
+        await authStore.fetchCurrentUser();
+      } catch (error) {
+        console.error("Failed to fetch user:", error);
+        next("/login");
+        return;
+      }
+    }
+
+    if (!authStore.currentUser?.is_superuser) {
+      console.warn("Access denied: Superuser required");
       next("/");
       return;
     }
