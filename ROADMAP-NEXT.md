@@ -35,6 +35,12 @@ su 38, 92 errori ESLint soppressi in CI.
   **netblock del provider** (fine dei 792 IP di terzi); **disattivazione IP morti** post-naabu;
   **dedup finding per IP** (network FTP/SSH + SSL cipher, SNI-safe); **fix conteggi dashboard**
   incoerenti ("3 high" fantasma → allineati OPEN+attivi su ~12 query/11 file).
+- **Gestione tenant per superuser (31 lug)** — chiarito il modello (superuser piattaforma → crea
+  il *cliente* + owner; amministra per-tenant via switch). Nuova pagina **Tenants** superuser-only
+  (`/admin/tenants`, endpoint `GET /api/v1/tenants/overview`) con owner + conteggi utenti/asset e
+  "Manage" (entra nel tenant → Users); banner "Managing users for: X" + selettore inline in Users.
+  Bug collaterali fixati: onboarding 500 su validazione (ValueError non serializzabile, #57), 500
+  RLS su `seeds` senza tenant context (#58), login 401 mascherato da "No refresh token" (#59).
 - **Fix UX gestione tenant (30 lug)** — bug RBAC vero: due `currentTenantId` separati (dati vs
   permessi) → dopo login/switch un admin non-superuser perdeva le voci admin finché non ricaricava.
   Unificato il source-of-truth (auth deriva dal tenant store). + switcher chiaro (mono-tenant
