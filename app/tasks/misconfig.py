@@ -674,49 +674,9 @@ def check_tls_009(
     return findings
 
 
-@register(
-    control_id="TLS-010",
-    name="Certificate transparency log missing",
-    severity="info",
-    confidence=0.20,  # Low confidence — most CAs embed SCT; absence is often a parsing gap
-    category="TLS Certificate Intelligence",
-    asset_types=["domain", "subdomain"],
-)
-def check_tls_010(
-    asset: Asset,
-    services: list[Service],
-    certificates: list[Certificate],
-    db: Any,
-) -> list[dict]:
-    """Flag certificates that may not appear in CT logs (heuristic check)."""
-    findings: list[dict] = []
-    for cert in certificates:
-        raw = cert.raw_data or {}
-        if isinstance(raw, str):
-            try:
-                raw = json.loads(raw)
-            except (json.JSONDecodeError, TypeError):
-                raw = {}
-        sct_present = raw.get("sct_list") or raw.get("signed_certificate_timestamps")
-        if not sct_present and not cert.is_self_signed:
-            findings.append(
-                {
-                    "name": "No SCT (Signed Certificate Timestamp) detected",
-                    "severity": "info",
-                    "confidence": 0.50,
-                    "evidence": {
-                        "subject_cn": cert.subject_cn,
-                        "issuer": cert.issuer,
-                    },
-                    "control_id": "TLS-010",
-                    "finding_key": f"TLS-010:{asset.identifier}:{cert.serial_number}",
-                    "remediation": (
-                        "Ensure the CA embeds Signed Certificate Timestamps (SCTs) "
-                        "for Certificate Transparency compliance."
-                    ),
-                }
-            )
-    return findings
+# TLS-010 ("No SCT / Certificate transparency log missing") was removed: it relied
+# on cert.raw_data carrying an sct_list that tlsx usually doesn't populate, so it
+# fired on virtually every cert as a false positive with no actionable value.
 
 
 # ---------------------------------------------------------------------------
