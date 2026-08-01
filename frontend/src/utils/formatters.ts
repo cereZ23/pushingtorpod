@@ -12,10 +12,24 @@
  * @param mode - 'relative' for "5m ago", 'date' for locale date, 'datetime' for date+time
  * @returns Formatted string, or '—' for invalid/missing input
  */
+/**
+ * Parse an API timestamp into a Date.
+ *
+ * The backend serialises naive UTC datetimes (no timezone marker, e.g.
+ * "2026-08-01T15:37:41"). `new Date()` would parse a marker-less string as
+ * LOCAL time, which offsets every displayed time and inflates durations by the
+ * viewer's UTC offset (e.g. a 31-minute scan shown as "2h 27m" in CEST). Treat a
+ * marker-less string as UTC so times and durations are correct.
+ */
+export function parseApiDate(dateString: string): Date {
+  const hasTz = /(Z|[+-]\d{2}:?\d{2})$/.test(dateString)
+  return new Date(hasTz ? dateString : `${dateString}Z`)
+}
+
 export function formatDate(dateString: string | null | undefined, mode: 'relative' | 'date' | 'datetime' = 'datetime'): string {
   if (!dateString) return '—'
 
-  const date = new Date(dateString)
+  const date = parseApiDate(dateString)
   if (isNaN(date.getTime())) return '—'
 
   if (mode === 'relative') {

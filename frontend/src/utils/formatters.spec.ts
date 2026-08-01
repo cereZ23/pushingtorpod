@@ -1,7 +1,25 @@
 import { describe, it, expect } from 'vitest'
-import { formatDate, formatDateShort, formatRelativeTime } from './formatters'
+import { formatDate, formatDateShort, formatRelativeTime, parseApiDate } from './formatters'
 
 describe('formatters', () => {
+  describe('parseApiDate', () => {
+    it('treats a marker-less (naive) timestamp as UTC', () => {
+      // Backend emits naive UTC; must not be parsed as local time.
+      expect(parseApiDate('2026-08-01T15:37:41').getTime()).toBe(Date.parse('2026-08-01T15:37:41Z'))
+    })
+
+    it('respects an explicit Z or offset', () => {
+      expect(parseApiDate('2026-08-01T15:37:41Z').getTime()).toBe(Date.parse('2026-08-01T15:37:41Z'))
+      expect(parseApiDate('2026-08-01T15:37:41+02:00').getTime()).toBe(Date.parse('2026-08-01T13:37:41Z'))
+    })
+
+    it('handles fractional seconds', () => {
+      expect(parseApiDate('2026-08-01T15:37:41.123456').getTime()).toBe(
+        Date.parse('2026-08-01T15:37:41.123456Z'),
+      )
+    })
+  })
+
   describe('formatDateShort', () => {
     it('returns a formatted date string for valid ISO input', () => {
       const result = formatDateShort('2026-01-15T10:30:00Z')
