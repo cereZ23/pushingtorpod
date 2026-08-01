@@ -6,7 +6,7 @@ Handles service data from enrichment (HTTP, ports, TLS)
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, cast, String
 from typing import Optional, List
 import logging
 
@@ -94,6 +94,11 @@ def list_services(
                 Service.product.ilike(f"%{safe_search}%", escape="\\"),
                 Service.web_server.ilike(f"%{safe_search}%", escape="\\"),
                 Service.http_title.ilike(f"%{safe_search}%", escape="\\"),
+                # http_technologies is a JSON array (["PHP", "jQuery", ...]);
+                # cast to text so a Technologies-page deep link (e.g. ?search=jQuery)
+                # matches services whose tech was detected by httpx, not just those
+                # whose product/web_server names it.
+                cast(Service.http_technologies, String).ilike(f"%{safe_search}%", escape="\\"),
             )
         )
 
