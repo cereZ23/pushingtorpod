@@ -163,6 +163,12 @@ RUN playwright install chromium --with-deps && \
 # Update Nuclei templates at build time (skip if binary missing).
 RUN which nuclei && nuclei -update-templates || echo "WARN: nuclei not found, skipping template update"
 
+# Install the DAST fuzzing templates (SQLi/XSS/SSRF/etc.) — the bundled
+# nuclei-templates ship only a handful of http/fuzzing/ templates, so the real
+# `-dast` coverage lives in the separate projectdiscovery/fuzzing-templates repo.
+RUN git clone --depth 1 https://github.com/projectdiscovery/fuzzing-templates.git /opt/fuzzing-templates \
+    || echo "WARN: fuzzing-templates clone failed; DAST canary/phase will fetch at runtime"
+
 # Create non-root user.
 RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
