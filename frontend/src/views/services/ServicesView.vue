@@ -111,6 +111,17 @@ function getPortColor(port: number): string {
   }
   return 'text-gray-900 dark:text-dark-text-primary'
 }
+
+function riskBadgeClass(level: string): string {
+  const classes: Record<string, string> = {
+    critical: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400',
+    high: 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400',
+    medium: 'bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400',
+    low: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
+    info: 'bg-gray-100 text-gray-600 dark:bg-gray-700/30 dark:text-gray-400',
+  }
+  return classes[level] || classes.info
+}
 </script>
 
 <template>
@@ -209,6 +220,9 @@ function getPortColor(port: number): string {
                 Product
               </th>
               <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
+                Risk
+              </th>
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
                 HTTP Info
               </th>
               <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider">
@@ -247,6 +261,17 @@ function getPortColor(port: number): string {
               <td class="px-6 py-4">
                 <div class="text-sm text-gray-900 dark:text-dark-text-primary">{{ service.product || '-' }}</div>
                 <div v-if="service.version" class="text-xs text-gray-500 dark:text-dark-text-secondary">v{{ service.version }}</div>
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap">
+                <span
+                  v-if="service.risk_level"
+                  class="text-xs px-2 py-0.5 rounded-full font-medium capitalize"
+                  :class="riskBadgeClass(service.risk_level)"
+                  :title="service.risk_score != null ? `Risk score: ${service.risk_score}/100` : undefined"
+                >
+                  {{ service.risk_level }}
+                </span>
+                <span v-else class="text-sm text-gray-400">-</span>
               </td>
               <td class="px-6 py-4">
                 <div v-if="service.http_title" class="text-sm text-gray-900 dark:text-dark-text-primary truncate max-w-xs">

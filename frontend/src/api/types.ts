@@ -251,6 +251,9 @@ export interface Service {
   tls_fingerprint?: string;
   has_tls: boolean;
   tls_version?: string;
+  risk_score?: number;
+  risk_level?: string;
+  risk_components?: Record<string, unknown>;
   enrichment_source?: string;
   enriched_at?: string;
   response_time_ms?: number;
