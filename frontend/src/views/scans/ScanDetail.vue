@@ -35,6 +35,16 @@ const scanHealth = computed<ScanHealth | null>(() => {
   return health as ScanHealth;
 });
 
+// Phases that ran with reduced coverage (e.g. nuclei truncated at its timeout).
+// Server rolls these into stats.partial_phases; surface them so a "completed"
+// scan can't quietly hide incomplete detection.
+const partialPhases = computed<Array<{ phase: string; name: string; reason: string }>>(
+  () => {
+    const p = scanStore.currentScanRun?.stats?.partial_phases;
+    return Array.isArray(p) ? p : [];
+  },
+);
+
 onMounted(async () => {
   await loadScanData();
   startAutoRefresh();
@@ -106,6 +116,7 @@ function getPhaseIcon(status: PhaseStatus): string {
     pending: "clock",
     running: "spinner",
     completed: "check",
+    partial: "check",
     failed: "x",
     skipped: "dash",
   };
@@ -117,6 +128,7 @@ function getPhaseStatusClass(status: PhaseStatus): string {
     pending: "text-gray-400 dark:text-gray-500",
     running: "text-blue-500 dark:text-blue-400",
     completed: "text-green-500 dark:text-green-400",
+    partial: "text-amber-500 dark:text-amber-400",
     failed: "text-red-500 dark:text-red-400",
     skipped: "text-gray-400 dark:text-gray-500",
   };
@@ -129,6 +141,8 @@ function getPhaseStatusBadge(status: PhaseStatus): string {
     running: "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400",
     completed:
       "bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400",
+    partial:
+      "bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400",
     failed: "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400",
     skipped: "bg-gray-100 text-gray-500 dark:bg-gray-700/30 dark:text-gray-400",
   };
@@ -650,6 +664,54 @@ function getStatsEntries(
                   </span>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Partial coverage: phases that ran but did not fully cover their input -->
+      <div
+        v-if="partialPhases.length > 0"
+        class="rounded-lg border p-6 bg-amber-50 border-amber-200 dark:bg-amber-900/10 dark:border-amber-900/40"
+      >
+        <div class="flex items-center gap-3">
+          <span
+            class="px-2.5 py-0.5 inline-flex items-center text-xs font-semibold rounded-full uppercase tracking-wide bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400"
+          >
+            Partial
+          </span>
+          <div>
+            <h3
+              class="text-base font-semibold text-gray-900 dark:text-dark-text-primary"
+            >
+              Completed with reduced coverage
+            </h3>
+            <p class="text-sm text-gray-600 dark:text-dark-text-secondary">
+              Some phases ran but did not fully cover their input — results may be
+              incomplete.
+            </p>
+          </div>
+        </div>
+        <div class="mt-4 space-y-2">
+          <div
+            v-for="pp in partialPhases"
+            :key="pp.phase"
+            class="flex items-start gap-3 text-sm"
+          >
+            <span
+              class="mt-0.5 px-2 py-0.5 inline-flex items-center text-xs font-medium rounded-full shrink-0 bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400"
+            >
+              {{ pp.phase }}
+            </span>
+            <div>
+              <span
+                class="font-medium text-gray-900 dark:text-dark-text-primary"
+              >
+                {{ pp.name }}
+              </span>
+              <span class="ml-2 text-gray-600 dark:text-dark-text-secondary">
+                {{ pp.reason }}
+              </span>
             </div>
           </div>
         </div>

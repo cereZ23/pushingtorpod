@@ -65,6 +65,7 @@ export type PhaseStatus =
   | "pending"
   | "running"
   | "completed"
+  | "partial"
   | "failed"
   | "skipped";
 

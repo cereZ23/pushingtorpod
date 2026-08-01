@@ -48,6 +48,7 @@ class PhaseStatus(enum.Enum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
+    PARTIAL = "partial"  # ran but did not fully cover its input (e.g. nuclei truncated)
     FAILED = "failed"
     SKIPPED = "skipped"
 

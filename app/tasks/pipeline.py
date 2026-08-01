@@ -98,14 +98,24 @@ def _send_scan_notification(scan_run_id: int, status: str, stats: dict, tenant_i
 
         findings = stats.get("findings_created", 0) + stats.get("findings_updated", 0)
         duration = stats.get("duration_seconds", "?")
-        emoji = ":white_check_mark:" if status == "completed" else ":x:"
+        partial = stats.get("partial_phases") or []
+        degraded = status == "completed" and (partial or stats.get("completeness") == "partial")
+
+        if degraded:
+            emoji = ":warning:"
+            status_label = "completed (partial coverage)"
+        else:
+            emoji = ":white_check_mark:" if status == "completed" else ":x:"
+            status_label = status
 
         text = (
-            f"{emoji} *Scan #{scan_run_id}* {status} "
+            f"{emoji} *Scan #{scan_run_id}* {status_label} "
             f"(tenant {tenant_id}, {duration}s)\n"
             f"Findings: {findings} | "
             f"Phases: {stats.get('phases_completed', '?')}/{stats.get('phases_total', '?')}"
         )
+        if partial:
+            text += "\n:warning: Partial phases: " + ", ".join(p.get("name", p.get("phase", "?")) for p in partial)
 
         httpx.post(
             webhook_url,
@@ -186,7 +196,13 @@ def _update_phase(db, scan_run_id: int, phase_id: str, status: PhaseStatus, stat
 
     if status == PhaseStatus.RUNNING:
         phase_result.started_at = datetime.now(timezone.utc)
-    elif status in (PhaseStatus.COMPLETED, PhaseStatus.FAILED, PhaseStatus.SKIPPED):
+    elif status in (
+        PhaseStatus.COMPLETED,
+        PhaseStatus.PARTIAL,
+        PhaseStatus.FAILED,
+        PhaseStatus.SKIPPED,
+    ):
+        # PARTIAL is a terminal outcome too — stamp completed_at so duration is correct.
         phase_result.completed_at = datetime.now(timezone.utc)
 
     if stats:
@@ -196,6 +212,69 @@ def _update_phase(db, scan_run_id: int, phase_id: str, status: PhaseStatus, stat
 
     db.commit()
     return phase_result
+
+
+def _classify_phase_outcome(result) -> tuple:
+    """Classify a finished phase's result as COMPLETED or PARTIAL.
+
+    "Partial" = the phase ran and produced usable output but did NOT fully cover
+    its input (some templates/targets were skipped, truncated, or unresolved).
+    Normalized, opt-in signals — checked in priority order — so a healthy phase
+    never flaps to partial:
+      1. ``coverage_complete is False`` (+ optional ``truncated_passes``) — the
+         existing nuclei signal (detection.py), the canonical case.
+      2. ``partial`` truthy (+ optional ``partial_reason``) — any phase can
+         declare it processed only part of its input.
+      3. Standard per-phase counters ``items_total`` / ``items_succeeded`` /
+         ``items_failed`` / ``items_skipped`` — when present and some, but not
+         all, of the input succeeded. This is the uniform, forward-compatible
+         convention phases should adopt so partial is computed the same way
+         everywhere (and the counters surface in the UI/notification reason).
+    Returns ``(PhaseStatus, reason|None)``.
+    """
+    if not isinstance(result, dict):
+        return PhaseStatus.COMPLETED, None
+    if result.get("coverage_complete") is False:
+        passes = result.get("truncated_passes") or []
+        reason = (
+            f"incomplete coverage — truncated: {', '.join(map(str, passes))}"
+            if passes
+            else "incomplete coverage — some templates did not run"
+        )
+        return PhaseStatus.PARTIAL, reason
+    if result.get("partial"):
+        return PhaseStatus.PARTIAL, str(result.get("partial_reason") or "partial result")
+    # Standard counters: partial iff some input was covered but some was not.
+    total = result.get("items_total")
+    if isinstance(total, int) and total > 0:
+        succeeded = result.get("items_succeeded", 0) or 0
+        failed = result.get("items_failed", 0) or 0
+        skipped = result.get("items_skipped", 0) or 0
+        incomplete = failed + skipped
+        if 0 < succeeded < total and incomplete > 0:
+            reason = f"{succeeded}/{total} succeeded ({failed} failed, {skipped} skipped)"
+            return PhaseStatus.PARTIAL, reason
+    return PhaseStatus.COMPLETED, None
+
+
+def _mark_phase_outcome(db, scan_run_id: int, phase_id: str, result, pipeline_stats: dict, tenant_logger=None):
+    """Persist a finished phase as COMPLETED or PARTIAL and roll partial phases up
+    into ``pipeline_stats`` for operational propagation. Returns the PhaseStatus."""
+    status, reason = _classify_phase_outcome(result)
+    stats = result if isinstance(result, dict) else None
+    if status == PhaseStatus.PARTIAL:
+        stats = dict(stats or {})
+        stats["partial_reason"] = reason
+        pipeline_stats.setdefault("partial_phases", []).append(
+            {"phase": phase_id, "name": PHASE_DEFS[phase_id]["name"], "reason": reason}
+        )
+        if tenant_logger:
+            tenant_logger.warning("Phase %s (%s) PARTIAL: %s", phase_id, PHASE_DEFS[phase_id]["name"], reason)
+    _update_phase(db, scan_run_id, phase_id, status, stats=stats)
+    # A partial phase still ran — count it toward "phases that executed" so the
+    # X/Y ratio stays honest; partial_phases carries the degraded detail.
+    pipeline_stats["phases_completed"] += 1
+    return status
 
 
 def _update_scan_run(db, scan_run_id: int, status: ScanRunStatus, error: str = None, stats: dict = None):
@@ -230,8 +309,7 @@ def _run_single_phase(
     try:
         result = _execute_phase(phase_id, tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier=scan_tier)
 
-        _update_phase(db, scan_run_id, phase_id, PhaseStatus.COMPLETED, stats=result)
-        pipeline_stats["phases_completed"] += 1
+        _mark_phase_outcome(db, scan_run_id, phase_id, result, pipeline_stats, tenant_logger)
 
         if isinstance(result, dict):
             pipeline_stats["assets_discovered"] += result.get("assets_discovered", 0)
@@ -382,6 +460,7 @@ def run_scan_pipeline(self, scan_run_id: int):
             "phases_completed": 0,
             "phases_failed": 0,
             "phases_skipped": 0,
+            "partial_phases": [],  # [{phase, name, reason}] — phases that ran with reduced coverage
             "assets_discovered": 0,
             "findings_created": 0,
             "relationships_created": 0,
@@ -493,8 +572,7 @@ def run_scan_pipeline(self, scan_run_id: int):
                                     )
                                     return {"error": error, "stats": pipeline_stats}
                             else:
-                                _update_phase(db, scan_run_id, pid, PhaseStatus.COMPLETED, stats=result)
-                                pipeline_stats["phases_completed"] += 1
+                                _mark_phase_outcome(db, scan_run_id, pid, result, pipeline_stats, tenant_logger)
                                 if isinstance(result, dict):
                                     pipeline_stats["assets_discovered"] += result.get("assets_discovered", 0)
                                     pipeline_stats["findings_created"] += result.get("findings_created", 0)
@@ -530,6 +608,18 @@ def run_scan_pipeline(self, scan_run_id: int):
         if throttle_summary and throttle_summary.get("total_429s", 0) > 0:
             tenant_logger.warning(f"Adaptive throttle summary: {throttle_summary}")
             pipeline_stats["throttle"] = throttle_summary
+
+        # Roll partial phases up to a scan-level completeness signal. Status stays
+        # COMPLETED (no new ScanRunStatus → no consumer breakage); "completeness"
+        # + "partial_phases" carry the degraded detail for API/UI/notifications.
+        partial_phases = pipeline_stats.get("partial_phases", [])
+        pipeline_stats["completeness"] = "partial" if partial_phases else "complete"
+        if partial_phases:
+            tenant_logger.warning(
+                "Scan %s completed with PARTIAL coverage: %s",
+                scan_run_id,
+                ", ".join(p["name"] for p in partial_phases),
+            )
 
         # Mark scan as completed
         _update_scan_run(db, scan_run_id, ScanRunStatus.COMPLETED, stats=pipeline_stats)
@@ -748,9 +838,14 @@ def run_single_phase(self, scan_run_id: int, phase_id: str):
 
         try:
             result = _execute_phase(phase_id, tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier)
-            _update_phase(db, scan_run_id, phase_id, PhaseStatus.COMPLETED, stats=result)
+            status, reason = _classify_phase_outcome(result)
+            stats = result if isinstance(result, dict) else None
+            if status == PhaseStatus.PARTIAL:
+                stats = dict(stats or {})
+                stats["partial_reason"] = reason
+            _update_phase(db, scan_run_id, phase_id, status, stats=stats)
             db.commit()
-            tenant_logger.info(f"Phase {phase_id} completed: {result}")
+            tenant_logger.info(f"Phase {phase_id} {status.value}: {result}")
             return result
         except Exception as exc:
             _update_phase(db, scan_run_id, phase_id, PhaseStatus.FAILED, error=str(exc))

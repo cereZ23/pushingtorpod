@@ -146,6 +146,98 @@ class TestUpdatePhase:
         _update_phase(mock_db, scan_run_id=1, phase_id="1", status=PhaseStatus.RUNNING)
         assert existing.started_at is not None
 
+    def test_partial_status_exists(self):
+        """PARTIAL must be a first-class phase status."""
+        from app.models.scanning import PhaseStatus
+
+        assert PhaseStatus.PARTIAL.value == "partial"
+
+    def test_classify_completed_on_clean_result(self):
+        from app.tasks.pipeline import _classify_phase_outcome
+        from app.models.scanning import PhaseStatus
+
+        assert _classify_phase_outcome({"findings_created": 3})[0] == PhaseStatus.COMPLETED
+        assert _classify_phase_outcome(None)[0] == PhaseStatus.COMPLETED
+        # coverage_complete True must NOT be partial
+        assert _classify_phase_outcome({"coverage_complete": True})[0] == PhaseStatus.COMPLETED
+
+    def test_classify_partial_on_incomplete_coverage(self):
+        from app.tasks.pipeline import _classify_phase_outcome
+        from app.models.scanning import PhaseStatus
+
+        status, reason = _classify_phase_outcome(
+            {"coverage_complete": False, "truncated_passes": ["cves", "misconfig"]}
+        )
+        assert status == PhaseStatus.PARTIAL
+        assert "cves" in reason and "misconfig" in reason
+
+    def test_classify_partial_on_explicit_flag(self):
+        from app.tasks.pipeline import _classify_phase_outcome
+        from app.models.scanning import PhaseStatus
+
+        status, reason = _classify_phase_outcome({"partial": True, "partial_reason": "12/20 targets resolved"})
+        assert status == PhaseStatus.PARTIAL
+        assert reason == "12/20 targets resolved"
+
+    def test_classify_from_standard_counters(self):
+        """items_total/succeeded/failed/skipped — the uniform convention."""
+        from app.tasks.pipeline import _classify_phase_outcome
+        from app.models.scanning import PhaseStatus
+
+        # some succeeded, some failed → PARTIAL with a count-based reason
+        status, reason = _classify_phase_outcome(
+            {"items_total": 10, "items_succeeded": 7, "items_failed": 2, "items_skipped": 1}
+        )
+        assert status == PhaseStatus.PARTIAL
+        assert "7/10" in reason
+        # all succeeded → COMPLETED
+        assert _classify_phase_outcome({"items_total": 10, "items_succeeded": 10})[0] == PhaseStatus.COMPLETED
+        # zero succeeded is a failure mode, not partial — don't mask it as partial
+        assert (
+            _classify_phase_outcome({"items_total": 10, "items_succeeded": 0, "items_failed": 10})[0]
+            == PhaseStatus.COMPLETED
+        )
+
+    @patch("app.tasks.pipeline.SessionLocal")
+    def test_sets_completed_at_on_partial(self, mock_sl):
+        """PARTIAL is terminal — completed_at must be stamped (duration correctness)."""
+        from app.tasks.pipeline import _update_phase
+        from app.models.scanning import PhaseStatus
+
+        existing = MagicMock()
+        existing.completed_at = None
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = existing
+
+        _update_phase(mock_db, scan_run_id=1, phase_id="9", status=PhaseStatus.PARTIAL)
+        assert existing.completed_at is not None
+
+    @patch("app.tasks.pipeline._update_phase")
+    def test_mark_phase_outcome_rolls_partial_into_stats(self, mock_update):
+        """The shared completion path (sequential AND parallel) records partial
+        phases into pipeline_stats for scan-level rollup."""
+        from app.tasks.pipeline import _mark_phase_outcome
+        from app.models.scanning import PhaseStatus
+
+        pstats = {"phases_completed": 0}
+        status = _mark_phase_outcome(
+            MagicMock(), 1, "9", {"coverage_complete": False, "truncated_passes": ["cves"]}, pstats
+        )
+        assert status == PhaseStatus.PARTIAL
+        assert pstats["phases_completed"] == 1
+        assert pstats["partial_phases"][0]["phase"] == "9"
+        assert "cves" in pstats["partial_phases"][0]["reason"]
+
+    def test_serialize_phase_result_exposes_partial(self):
+        """PARTIAL must survive DB→API serialization as the string 'partial'."""
+        from app.services.scan_run_service import _serialize_phase_result
+        from app.models.scanning import PhaseStatus
+
+        phase = MagicMock()
+        phase.status = PhaseStatus.PARTIAL
+        phase.stats = {"partial_reason": "3/5 succeeded"}
+        assert _serialize_phase_result(phase)["status"] == "partial"
+
     @patch("app.tasks.pipeline.SessionLocal")
     def test_sets_error_on_failure(self, mock_sl):
         from app.tasks.pipeline import _update_phase
