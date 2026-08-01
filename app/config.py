@@ -253,6 +253,18 @@ class Settings(BaseSettings):
     naabu_rate_limit: int = 1000  # Packets per second
     naabu_default_ports: str = "top-1000"  # top-100, top-1000, or "1-65535"
     naabu_blocked_ports: list[int] = [22, 445, 3389, 3306, 5432]  # SSH, SMB, RDP, MySQL, PostgreSQL
+    # High-value DB / cache / admin / orchestration ports that naabu's top-1000
+    # list misses (Redis, MongoDB, Memcached, Kibana, RabbitMQ, Docker, etcd,
+    # Elasticsearch transport, Kafka, ...). These are appended via `-p` to every
+    # non-full port scan so an internet-exposed datastore is discovered on ALL
+    # tiers — that's core EASM value. naabu unions `-tp` and `-p` natively
+    # (validated on the worker), and a SYN probe makes no auth attempt (no legal
+    # risk). full_scan (T3) already covers all 65535, so this only augments
+    # top-N scans. Set empty to disable.
+    naabu_sensitive_ports: str = (
+        "6379,6380,27017,27018,11211,9200,9300,5601,5672,15672,9092,"
+        "2375,2376,2379,2380,5984,8086,8500,9042,2181,7474,7687,26257,50070,8088,1521,9090,3000"
+    )
 
     # Nuclei - per-tier exclude-tags.
     # The default (T1) now ALLOWS version-based CVE detection templates

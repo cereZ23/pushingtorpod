@@ -193,3 +193,13 @@ class TestTierConfiguration:
         # CVE detection classes must NOT be excluded on the default tier.
         for tag in ("rce", "sqli", "xss", "ssti", "ssrf"):
             assert tag not in t1, f"T1 must not exclude CVE class '{tag}'"
+
+    def test_naabu_sensitive_ports_cover_missed_datastores(self):
+        """The curated sensitive-port list must include the high-value DB/cache
+        ports that naabu's top-1000 misses (validated on the worker: 6379/27017/
+        11211 are NOT in top-1000). Without these, exposed datastores go unseen."""
+        from app.config import settings
+
+        ports = {p.strip() for p in settings.naabu_sensitive_ports.split(",") if p.strip()}
+        for p in ("6379", "27017", "11211", "5601", "15672"):
+            assert p in ports, f"sensitive ports must include {p}"
