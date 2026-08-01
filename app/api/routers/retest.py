@@ -224,7 +224,7 @@ def _safe_set(obj: object, attr: str, value) -> None:
 # ===========================================================================
 
 
-@router.post("/findings/{finding_id}/retest", response_model=TaskResponse)
+@router.post("/findings/{finding_id:int}/retest", response_model=TaskResponse)
 def trigger_retest(
     tenant_id: int,
     finding_id: int,
@@ -291,7 +291,7 @@ def trigger_retest(
     )
 
 
-@router.get("/findings/{finding_id}/retest-status", response_model=RetestStatusResponse)
+@router.get("/findings/{finding_id:int}/retest-status", response_model=RetestStatusResponse)
 def get_retest_status(
     tenant_id: int,
     finding_id: int,
