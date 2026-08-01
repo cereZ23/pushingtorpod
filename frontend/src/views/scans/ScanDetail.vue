@@ -273,6 +273,11 @@ const PHASE_LABELS: Record<string, { name: string; description: string }> = {
     name: "Vuln Scanning",
     description: "Running Nuclei vulnerability templates",
   },
+  "9d": {
+    name: "Active DAST",
+    description:
+      "Fuzzing crawled parameters (nuclei -dast) — Tier 3 + authorization only",
+  },
   "10": { name: "Correlation", description: "Grouping findings into issues" },
   "11": {
     name: "Risk Scoring",
