@@ -192,9 +192,18 @@ class TestUpdatePhase:
         assert "7/10" in reason
         # all succeeded → COMPLETED
         assert _classify_phase_outcome({"items_total": 10, "items_succeeded": 10})[0] == PhaseStatus.COMPLETED
-        # zero succeeded is a failure mode, not partial — don't mask it as partial
+
+    def test_classify_zero_succeeded_is_failed_not_completed(self):
+        """0/N succeeded with failures must be FAILED, never COMPLETED."""
+        from app.tasks.pipeline import _classify_phase_outcome
+        from app.models.scanning import PhaseStatus
+
+        status, reason = _classify_phase_outcome({"items_total": 10, "items_succeeded": 0, "items_failed": 10})
+        assert status == PhaseStatus.FAILED
+        assert "0/10" in reason
+        # all-skipped with no failures is legitimate → COMPLETED
         assert (
-            _classify_phase_outcome({"items_total": 10, "items_succeeded": 0, "items_failed": 10})[0]
+            _classify_phase_outcome({"items_total": 5, "items_succeeded": 0, "items_failed": 0, "items_skipped": 5})[0]
             == PhaseStatus.COMPLETED
         )
 
