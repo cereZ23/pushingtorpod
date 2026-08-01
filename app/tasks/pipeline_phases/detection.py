@@ -225,22 +225,21 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     # self-terminates before the phase timeout would mark it failed.
     nuclei_group_budget = int({1: 1800, 2: 3600, 3: 10800}.get(scan_tier, 3600) * 0.9)
 
-    # Tier-aware exclude-tags: T1 is very conservative (no active payloads),
-    # T2/T3 allow detection-based checks but still exclude intrusive templates.
-    # NOTE: we tried fully opening T3 (removing intrusive,sqli,xss,ssrf) but
-    # those templates send attack payloads that cause i/o timeouts on Azure
-    # hosts, which triggers nuclei's "permanently unresponsive" blacklist and
-    # prevents ALL subsequent templates (including simple detection checks
-    # like docker-compose, htaccess) from running on that host. Keeping
-    # intrusive excluded is essential for detection quality.
-    # Discovery templates ARE important for EASM (SPF, DKIM, DMARC, CAA,
-    # DNSSEC, NS takeover, wildcard DNS). They're kept in the scan but
-    # post-processed: stored as asset enrichment metadata, not as findings
-    # in the vulnerability list. See _store_discovery_as_enrichment().
+    # Tier-aware exclude-tags (config-driven, per-env overridable).
+    # KEY INSIGHT: what gets a host blacklisted by nuclei as "permanently
+    # unresponsive" (i/o timeouts starving every later template) is the
+    # PAYLOAD-SENDING families — intrusive, fuzz, dos, bruteforce, upload —
+    # NOT the version/path-based CVE matchers that merely happen to carry a
+    # class tag like `rce`/`sqli`. So T1 keeps the payload-senders excluded
+    # (Azure-timeout safeguard, unchanged) but now ALLOWS the benign CVE
+    # detection templates — that's the fix for "0 CVE on the default tier".
+    # Discovery templates (SPF/DKIM/DMARC/CAA/DNSSEC/NS-takeover/wildcard) are
+    # kept in the scan but post-processed into asset enrichment metadata, not
+    # findings — see _store_discovery_as_enrichment().
     tier_exclude_tags = {
-        1: "dos,headless,fuzz,osint,token-spray,intrusive,sqli,xss,ssrf,ssti,rce,upload,bruteforce,credential-stuffing",
-        2: "dos,headless,fuzz,osint,token-spray,intrusive,credential-stuffing,bruteforce,upload",
-        3: "dos,headless,fuzz,osint,intrusive,credential-stuffing",
+        1: app_settings.nuclei_exclude_tags_t1,
+        2: app_settings.nuclei_exclude_tags_t2,
+        3: app_settings.nuclei_exclude_tags_t3,
     }
     exclude_tags = tier_exclude_tags.get(scan_tier, tier_exclude_tags[1])
 

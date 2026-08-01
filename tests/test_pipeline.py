@@ -179,3 +179,17 @@ class TestTierConfiguration:
     def test_cloud_bucket_is_optional(self):
         """Cloud bucket discovery (1d) should be optional."""
         assert PHASE_DEFS["1d"]["required"] is False
+
+    def test_tier1_excludes_payload_senders_but_allows_cve_detection(self):
+        """T1 must keep the payload-sending families excluded (Azure-timeout
+        safeguard) but must NOT exclude the benign version/path CVE matchers —
+        that combination is what makes the default tier find CVEs."""
+        from app.config import settings
+
+        t1 = set(settings.nuclei_exclude_tags_t1.split(","))
+        # Payload-senders that get a host blacklisted stay excluded.
+        for tag in ("intrusive", "fuzz", "dos", "bruteforce"):
+            assert tag in t1, f"T1 must still exclude '{tag}'"
+        # CVE detection classes must NOT be excluded on the default tier.
+        for tag in ("rce", "sqli", "xss", "ssti", "ssrf"):
+            assert tag not in t1, f"T1 must not exclude CVE class '{tag}'"
