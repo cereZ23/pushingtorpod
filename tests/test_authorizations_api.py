@@ -1,5 +1,7 @@
 """API tests for scan-authorization management."""
 
+import pytest
+
 from app.models.authorization import ScanAuthorization  # noqa: F401 (ensure table registered)
 
 
@@ -8,6 +10,21 @@ def _url(tenant_id: int) -> str:
 
 
 class TestScanAuthorizationApi:
+    @pytest.fixture(autouse=True)
+    def _promote_admin(self, db_session, test_user, test_tenant):
+        # Creating/revoking a legal authorization requires tenant admin.
+        from app.models.auth import TenantMembership
+
+        m = (
+            db_session.query(TenantMembership)
+            .filter_by(user_id=test_user.id, tenant_id=test_tenant.id)
+            .first()
+        )
+        if m:
+            m.role = "admin"
+            db_session.commit()
+
+
     def test_create_list_revoke(self, authenticated_client, test_tenant):
         tid = test_tenant.id
         payload = {
