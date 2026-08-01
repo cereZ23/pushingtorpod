@@ -36,6 +36,7 @@ def list_services(
     has_tls: Optional[bool] = Query(None),
     product: Optional[str] = Query(None),
     enrichment_source: Optional[str] = Query(None),
+    min_risk_level: Optional[str] = Query(None, description="Only services at or above this risk level"),
     search: Optional[str] = Query(None),
     sort_by: str = Query("last_seen"),
     sort_order: str = Query("desc"),
@@ -86,6 +87,15 @@ def list_services(
 
     if enrichment_source:
         query = query.filter(Service.enrichment_source == enrichment_source)
+
+    if min_risk_level:
+        # Global filter on the persisted risk level: keep services at or above
+        # the given level (unscored/NULL are excluded). Applied pre-pagination.
+        _ORDER = ["info", "low", "medium", "high", "critical"]
+        lvl = min_risk_level.lower()
+        if lvl in _ORDER:
+            allowed = _ORDER[_ORDER.index(lvl) :]
+            query = query.filter(Service.risk_level.in_(allowed))
 
     if search:
         safe_search = escape_like(search)

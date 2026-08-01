@@ -22,6 +22,7 @@ const totalPages = ref(0)
 const searchQuery = ref('')
 const selectedProtocol = ref('')
 const hasTlsFilter = ref('')
+const minRiskFilter = ref('')
 
 const currentTenantId = computed(() => tenantStore.currentTenantId)
 
@@ -70,6 +71,8 @@ async function loadServices() {
       search: searchQuery.value || undefined,
       protocol: selectedProtocol.value || undefined,
       has_tls: hasTlsFilter.value === 'true' ? true : hasTlsFilter.value === 'false' ? false : undefined,
+      min_risk_level: minRiskFilter.value || undefined,
+      sort_by: minRiskFilter.value ? 'risk_score' : undefined,
     }
 
     const response: PaginatedResponse<Service> = await serviceApi.list(currentTenantId.value, params)
@@ -193,6 +196,21 @@ function riskBadgeClass(level: string): string {
             <option value="">All</option>
             <option value="true">TLS Enabled</option>
             <option value="false">No TLS</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-dark-text-secondary mb-2">Risk (min)</label>
+          <select
+            v-model="minRiskFilter"
+            @change="handleSearch"
+            class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-md text-gray-900 dark:text-dark-text-primary dark:bg-dark-bg-tertiary focus:outline-none focus:ring-2 focus:ring-primary-500"
+          >
+            <option value="">All</option>
+            <option value="critical">Critical</option>
+            <option value="high">High &amp; up</option>
+            <option value="medium">Medium &amp; up</option>
+            <option value="low">Low &amp; up</option>
           </select>
         </div>
 
