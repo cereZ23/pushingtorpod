@@ -791,6 +791,43 @@ def _phase_11_risk_scoring(tenant_id, project_id, scan_run_id, db, tenant_logger
     db.flush()
 
     # ------------------------------------------------------------------
+    # 2b. Score each active service (persisted for global sort/filter + UI).
+    # ------------------------------------------------------------------
+    try:
+        from app.services.risk_scoring import RiskScoringEngine
+        from app.models.database import Service, FindingStatus
+
+        engine = RiskScoringEngine(db)
+        asset_ids = [a.id for a in assets]
+        identifier_by_asset = {a.id: a.identifier for a in assets}
+        services = db.query(Service).filter(Service.asset_id.in_(asset_ids)).all() if asset_ids else []
+
+        # Batch the assets' OPEN findings once (N+1-free).
+        svc_findings_by_asset: dict = {}
+        if asset_ids:
+            for f in (
+                db.query(Finding).filter(Finding.asset_id.in_(asset_ids), Finding.status == FindingStatus.OPEN).all()
+            ):
+                svc_findings_by_asset.setdefault(f.asset_id, []).append(f)
+
+        for svc in services:
+            try:
+                r = engine.calculate_service_risk(
+                    svc,
+                    asset_findings=svc_findings_by_asset.get(svc.asset_id, []),
+                    asset_identifier=identifier_by_asset.get(svc.asset_id, ""),
+                )
+                svc.risk_score = r["risk_score"]
+                svc.risk_level = r["risk_level"]
+                svc.risk_components = r["components"]
+            except Exception as exc:
+                tenant_logger.warning("Service risk scoring failed for service %d: %s", svc.id, exc)
+        db.flush()
+        tenant_logger.info("Service risk scored for %d services", len(services))
+    except Exception as exc:
+        tenant_logger.error("Service risk scoring pass failed: %s", exc, exc_info=True)
+
+    # ------------------------------------------------------------------
     # 3. Org score (top-weighted aggregation with dampening)
     # ------------------------------------------------------------------
     if asset_scores:

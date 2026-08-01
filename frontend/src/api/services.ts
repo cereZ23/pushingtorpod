@@ -9,6 +9,7 @@ export interface ServiceListParams {
   protocol?: string
   product?: string
   has_tls?: boolean
+  min_risk_level?: string
   search?: string
   sort_by?: string
   sort_order?: 'asc' | 'desc'
