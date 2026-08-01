@@ -50,6 +50,20 @@ function showImg(tech: TechnologyItem): boolean {
   return !!tech.icon && !failedIcons.value.has(tech.name);
 }
 
+// Deterministic brand-ish color for the letter monogram shown when no brand
+// icon is available (unknown tech, or the icon CDN is unreachable from the
+// viewer's network). A colored avatar reads as intentional; a bare grey letter
+// reads as broken.
+function monogramColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = (hash << 5) - hash + name.charCodeAt(i);
+    hash |= 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 55%, 45%)`;
+}
+
 const availableCategories = computed<CategoryInfo[]>(() => {
   const cats: Record<string, { label: string; count: number }> = {};
   for (const tech of technologies.value) {
@@ -241,21 +255,26 @@ function topVersions(
       >
         <div class="flex items-start justify-between mb-2">
           <div class="flex items-center gap-3 min-w-0">
-            <!-- Tech icon (falls back to a letter monogram on CDN failure) -->
+            <!-- Tech icon: real brand icon when reachable, else a colored
+                 letter monogram (never an empty square). -->
             <div
+              v-if="showImg(tech)"
               class="flex-shrink-0 w-8 h-8 rounded bg-gray-100 dark:bg-gray-700 flex items-center justify-center"
             >
               <img
-                v-if="showImg(tech)"
                 :src="iconUrl(tech.icon)"
                 :alt="tech.name"
                 class="w-5 h-5 dark:invert dark:brightness-200"
                 loading="lazy"
                 @error="onIconError(tech.name)"
               />
-              <span v-else class="text-xs font-bold text-gray-400">
-                {{ tech.name.charAt(0).toUpperCase() }}
-              </span>
+            </div>
+            <div
+              v-else
+              class="flex-shrink-0 w-8 h-8 rounded flex items-center justify-center text-sm font-bold text-white"
+              :style="{ backgroundColor: monogramColor(tech.name) }"
+            >
+              {{ tech.name.charAt(0).toUpperCase() }}
             </div>
             <div class="min-w-0">
               <h3
