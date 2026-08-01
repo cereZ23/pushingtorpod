@@ -146,6 +146,39 @@ class TestUpdatePhase:
         _update_phase(mock_db, scan_run_id=1, phase_id="1", status=PhaseStatus.RUNNING)
         assert existing.started_at is not None
 
+    def test_partial_status_exists(self):
+        """PARTIAL must be a first-class phase status."""
+        from app.models.scanning import PhaseStatus
+
+        assert PhaseStatus.PARTIAL.value == "partial"
+
+    def test_classify_completed_on_clean_result(self):
+        from app.tasks.pipeline import _classify_phase_outcome
+        from app.models.scanning import PhaseStatus
+
+        assert _classify_phase_outcome({"findings_created": 3})[0] == PhaseStatus.COMPLETED
+        assert _classify_phase_outcome(None)[0] == PhaseStatus.COMPLETED
+        # coverage_complete True must NOT be partial
+        assert _classify_phase_outcome({"coverage_complete": True})[0] == PhaseStatus.COMPLETED
+
+    def test_classify_partial_on_incomplete_coverage(self):
+        from app.tasks.pipeline import _classify_phase_outcome
+        from app.models.scanning import PhaseStatus
+
+        status, reason = _classify_phase_outcome(
+            {"coverage_complete": False, "truncated_passes": ["cves", "misconfig"]}
+        )
+        assert status == PhaseStatus.PARTIAL
+        assert "cves" in reason and "misconfig" in reason
+
+    def test_classify_partial_on_explicit_flag(self):
+        from app.tasks.pipeline import _classify_phase_outcome
+        from app.models.scanning import PhaseStatus
+
+        status, reason = _classify_phase_outcome({"partial": True, "partial_reason": "12/20 targets resolved"})
+        assert status == PhaseStatus.PARTIAL
+        assert reason == "12/20 targets resolved"
+
     @patch("app.tasks.pipeline.SessionLocal")
     def test_sets_error_on_failure(self, mock_sl):
         from app.tasks.pipeline import _update_phase
