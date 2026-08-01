@@ -15,15 +15,10 @@ class TestScanAuthorizationApi:
         # Creating/revoking a legal authorization requires tenant admin.
         from app.models.auth import TenantMembership
 
-        m = (
-            db_session.query(TenantMembership)
-            .filter_by(user_id=test_user.id, tenant_id=test_tenant.id)
-            .first()
-        )
+        m = db_session.query(TenantMembership).filter_by(user_id=test_user.id, tenant_id=test_tenant.id).first()
         if m:
             m.role = "admin"
             db_session.commit()
-
 
     def test_create_list_revoke(self, authenticated_client, test_tenant):
         tid = test_tenant.id
