@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useTenantStore } from '@/stores/tenant'
 import { serviceApi } from '@/api/services'
 import type { Service, PaginatedResponse } from '@/api/types'
@@ -7,6 +8,7 @@ import { formatDate } from '@/utils/formatters'
 import { useWindowedPagination } from '@/composables/usePagination'
 
 const tenantStore = useTenantStore()
+const route = useRoute()
 
 const services = ref<Service[]>([])
 const isLoading = ref(true)
@@ -29,6 +31,11 @@ let abortController: AbortController | null = null
 const { pages: paginationPages } = useWindowedPagination(currentPage, totalPages)
 
 onMounted(async () => {
+  // Prefill the search when arriving from a deep link (e.g. a Technologies
+  // card → "services running <tech>").
+  if (typeof route.query.search === 'string') {
+    searchQuery.value = route.query.search
+  }
   await loadServices()
 })
 

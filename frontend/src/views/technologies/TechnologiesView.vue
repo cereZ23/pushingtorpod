@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from "vue";
+import { RouterLink } from "vue-router";
 import { MagnifyingGlassIcon } from "@heroicons/vue/24/outline";
 import { useTenantStore } from "@/stores/tenant";
 import apiClient from "@/api/client";
@@ -31,9 +32,22 @@ const selectedCategory = ref("");
 
 const ICON_BASE = "https://cdn.jsdelivr.net/npm/simple-icons@v11/icons";
 
+// Icons come from an external CDN that can be blocked (CSP) or 404 on an
+// unknown slug. Track which ones failed so we fall back to a letter monogram
+// instead of rendering an empty square.
+const failedIcons = ref<Set<string>>(new Set());
+
 function iconUrl(slug: string): string {
   if (!slug) return "";
   return `${ICON_BASE}/${slug}.svg`;
+}
+
+function onIconError(name: string) {
+  failedIcons.value = new Set(failedIcons.value).add(name);
+}
+
+function showImg(tech: TechnologyItem): boolean {
+  return !!tech.icon && !failedIcons.value.has(tech.name);
 }
 
 const availableCategories = computed<CategoryInfo[]>(() => {
@@ -218,29 +232,29 @@ function topVersions(
 
     <!-- Technology grid -->
     <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      <div
+      <RouterLink
         v-for="tech in filteredTechnologies"
         :key="tech.name"
-        class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 hover:shadow-md hover:border-gray-300 dark:hover:border-gray-600 transition-all"
+        :to="{ name: 'ServiceList', query: { search: tech.name } }"
+        class="block bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 hover:shadow-md hover:border-blue-400 dark:hover:border-blue-500 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
+        :title="`View services running ${tech.name}`"
       >
         <div class="flex items-start justify-between mb-2">
           <div class="flex items-center gap-3 min-w-0">
-            <!-- Tech icon -->
+            <!-- Tech icon (falls back to a letter monogram on CDN failure) -->
             <div
               class="flex-shrink-0 w-8 h-8 rounded bg-gray-100 dark:bg-gray-700 flex items-center justify-center"
             >
               <img
-                v-if="tech.icon"
+                v-if="showImg(tech)"
                 :src="iconUrl(tech.icon)"
                 :alt="tech.name"
                 class="w-5 h-5 dark:invert dark:brightness-200"
                 loading="lazy"
-                @error="
-                  ($event.target as HTMLImageElement).style.display = 'none'
-                "
+                @error="onIconError(tech.name)"
               />
               <span v-else class="text-xs font-bold text-gray-400">
-                {{ tech.name.charAt(0) }}
+                {{ tech.name.charAt(0).toUpperCase() }}
               </span>
             </div>
             <div class="min-w-0">
@@ -299,7 +313,7 @@ function topVersions(
             +{{ versionCount(tech.versions) - 3 }} more
           </span>
         </div>
-      </div>
+      </RouterLink>
     </div>
   </div>
 </template>
