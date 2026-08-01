@@ -5,7 +5,7 @@ import { useTenantStore } from "@/stores/tenant";
 import { useScanStore } from "@/stores/scans";
 import type { PhaseStatus, ScanHealth } from "@/stores/scans";
 import { useToastStore } from "@/stores/toast";
-import { formatDate } from "@/utils/formatters";
+import { formatDate, parseApiDate } from "@/utils/formatters";
 
 const route = useRoute();
 const router = useRouter();
@@ -191,9 +191,9 @@ function formatPhaseDuration(phase: {
   completed_at: string | null;
 }): string {
   if (!phase.started_at) return "-";
-  const start = new Date(phase.started_at).getTime();
+  const start = parseApiDate(phase.started_at).getTime();
   const end = phase.completed_at
-    ? new Date(phase.completed_at).getTime()
+    ? parseApiDate(phase.completed_at).getTime()
     : Date.now();
   const seconds = Math.floor((end - start) / 1000);
 
@@ -207,9 +207,9 @@ function formatPhaseDuration(phase: {
 function formatTotalDuration(): string {
   const run = scanStore.currentScanRun;
   if (!run?.started_at) return "-";
-  const start = new Date(run.started_at).getTime();
+  const start = parseApiDate(run.started_at).getTime();
   const end = run.completed_at
-    ? new Date(run.completed_at).getTime()
+    ? parseApiDate(run.completed_at).getTime()
     : Date.now();
   const seconds = Math.floor((end - start) / 1000);
 
