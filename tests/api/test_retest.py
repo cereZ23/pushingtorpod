@@ -269,7 +269,7 @@ class TestRetestStatus:
 
 
 class TestBulkRetest:
-    def test_bulk_retest_route_shadowed_by_finding_id(
+    def test_bulk_retest_route_not_shadowed_by_finding_id(
         self,
         authenticated_client,
         test_tenant,
@@ -278,19 +278,18 @@ class TestBulkRetest:
         second_open_finding,
         mock_nuclei_task,
     ):
-        """The /findings/bulk/retest path is currently shadowed by
-        /findings/{finding_id}/retest in route registration. FastAPI tries
-        to coerce ``bulk`` to int and returns 422 before the bulk endpoint
-        is evaluated. This test documents the current behaviour so the
-        regression is visible if/when the route order is fixed."""
+        """/findings/bulk/retest must reach the bulk endpoint, not be captured by
+        /findings/{finding_id}/retest. The parametric route uses an ``:int`` path
+        converter, so ``bulk`` no longer matches it regardless of route order."""
         response = authenticated_client.post(
             f"/api/v1/tenants/{test_tenant.id}/findings/bulk/retest",
             json={"finding_ids": [open_finding.id, second_open_finding.id]},
         )
-        # Either the historical 422 (current) or the intended 200 (future fix)
-        assert response.status_code in (200, 422)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["queued"] == 2
 
-    def test_bulk_retest_partial_request_accepts_expected_status(
+    def test_bulk_retest_partial_request_skips_unknown(
         self,
         authenticated_client,
         test_tenant,
@@ -298,12 +297,15 @@ class TestBulkRetest:
         open_finding,
         mock_nuclei_task,
     ):
-        """See test_bulk_retest_route_shadowed_by_finding_id for context."""
+        """A mixed request queues the valid finding and skips the unknown one."""
         response = authenticated_client.post(
             f"/api/v1/tenants/{test_tenant.id}/findings/bulk/retest",
             json={"finding_ids": [open_finding.id, 999999]},
         )
-        assert response.status_code in (200, 422)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["queued"] == 1
+        assert body["skipped"] == 1
 
     def test_bulk_retest_empty_list_returns_422(self, authenticated_client, test_tenant, mock_nuclei_task):
         response = authenticated_client.post(
