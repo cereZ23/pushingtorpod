@@ -190,6 +190,15 @@ class Settings(BaseSettings):
     fingerprintx_timeout: int = 300  # 5 min
     interactsh_enabled: bool = True  # OOB callback detection for T3 scans
     interactsh_server: str = "oast.pro"  # Public interactsh server
+
+    # Nuclei detection canary (scan-engine health) — runs nuclei against a known
+    # target and asserts a known finding fires, so detection regressions go red.
+    fuzzing_templates_path: str = "/opt/fuzzing-templates"
+    fuzzing_templates_url: str = "https://github.com/projectdiscovery/fuzzing-templates/archive/refs/heads/main.tar.gz"
+    nuclei_canary_target: str = "https://public-firing-range.appspot.com/reflected/parameter/body?q=test"
+    nuclei_canary_expected: list[str] = ["reflected-xss"]
+    nuclei_canary_aggression: str = "medium"
+    nuclei_canary_timeout: int = 240
     puredns_resolvers_path: str = "/app/data/resolvers.txt"
     puredns_wordlist_path: str = "/app/data/dns-wordlist.txt"
 
