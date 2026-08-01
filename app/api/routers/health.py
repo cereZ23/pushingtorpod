@@ -18,12 +18,15 @@ import logging
 import time
 
 import redis
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, text
 
+from app.api.dependencies import get_current_user
 from app.config import settings
+from app.core.cache import cache_get_sync
 from app.database import engine
+from app.models.auth import User
 
 logger = logging.getLogger(__name__)
 
@@ -173,3 +176,29 @@ def health_metrics() -> Response:
     data["redis"] = redis_status
 
     return JSONResponse(content=data)
+
+
+@router.get("/health/scan-engine")
+def scan_engine_health(current_user: User = Depends(get_current_user)):
+    """Superuser-only: last nuclei detection-canary result (is nuclei still detecting?).
+
+    Returns the cached canary result (ok / degraded / failing / unavailable) with the
+    expected vs matched template ids, or never_run if it hasn't run yet.
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superuser access required")
+    result = cache_get_sync("scan_engine:nuclei_canary")
+    if result is None:
+        return {"status": "never_run", "detail": "canary has not run yet — trigger a run"}
+    return result
+
+
+@router.post("/health/scan-engine/run")
+def trigger_scan_engine_canary(current_user: User = Depends(get_current_user)):
+    """Superuser-only: queue a fresh nuclei detection-canary run (async)."""
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superuser access required")
+    from app.tasks.scan_engine_health import run_nuclei_efficacy_canary
+
+    task = run_nuclei_efficacy_canary.delay()
+    return {"status": "queued", "task_id": task.id}
