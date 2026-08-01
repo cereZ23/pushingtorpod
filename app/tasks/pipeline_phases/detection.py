@@ -26,12 +26,19 @@ def _phase_8_misconfig_detection(tenant_id, project_id, scan_run_id, db, tenant_
     result = run_misconfig_detection(tenant_id, scan_run_id=scan_run_id)
 
     if isinstance(result, dict):
+        checked = result.get("assets_checked", 0)
+        errors = result.get("errors", 0)
         return {
             "findings_created": result.get("findings_created", 0),
             "findings_updated": result.get("findings_updated", 0),
-            "assets_checked": result.get("assets_checked", 0),
+            "assets_checked": checked,
             "controls_executed": result.get("controls_executed", 0),
             "status": result.get("status", "unknown"),
+            # Standard phase counters (errors are per-asset → real partial signal).
+            "items_total": checked + errors,
+            "items_succeeded": checked,
+            "items_failed": errors,
+            "items_skipped": 0,
         }
     return {"findings_created": 0, "status": "unknown"}
 
