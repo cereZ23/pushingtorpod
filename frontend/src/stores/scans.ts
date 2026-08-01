@@ -122,7 +122,7 @@ export const SCAN_TIERS: ScanTier[] = [
     tier: 3,
     name: "Aggressive",
     description:
-      "Full scan. All tier 2 tools + interactsh OOB callbacks, all ports, all Nuclei templates, 100 req/s. Use with caution.",
+      "Full scan. All tier 2 tools + interactsh OOB callbacks, all ports, all Nuclei templates, 100 req/s. Includes active DAST fuzzing (nuclei -dast on crawled parameters — reflected XSS / error SQLi / SSRF) when enabled + a scan authorization exists (off by default). Use with caution.",
     ports: "Full (65535)",
     rate: "100 req/s",
   },
