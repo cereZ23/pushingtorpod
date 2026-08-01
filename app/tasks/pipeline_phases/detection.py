@@ -176,15 +176,48 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             f"(custom error pages), {len(all_assets)} remain for Nuclei HTTP scan"
         )
 
+    # Dead-host pruning: soft-404 only catches hosts that return 200 on a random
+    # path. Hosts that are 5xx-on-everything or timing out still pass and cost
+    # nuclei up to `-mhe × -timeout` (~500s) of hanging sockets each, collapsing
+    # throughput and eating the phase budget. Probe the survivors once (reusing the
+    # concurrent probe machinery) and route the genuinely dead ones OUT of the heavy
+    # CVE loop and INTO the light SSL/takeover pass below (so cert/takeover findings
+    # are kept). Conservative: dropped only if EVERY probe URL fails. Reversible flag.
+    from app.config import settings as _settings
+
+    dead_asset_ids: set = set()
+    if getattr(_settings, "nuclei_prune_dead_hosts", True) and all_assets:
+        from app.utils.soft404 import detect_dead_hosts
+        from collections import Counter
+
+        survivor_ids = {a.id for a in all_assets}
+        survivor_urls = {u: aid for u, aid in probe_urls.items() if aid in survivor_ids}
+        dead_urls = detect_dead_hosts(
+            list(survivor_urls.keys()),
+            timeout=6.0,
+            max_workers=30,
+            min_status=getattr(_settings, "nuclei_dead_host_min_status", 500),
+        )
+        # A host is dead only when ALL its probe URLs (https + http) are dead.
+        probes_per_asset = Counter(survivor_urls.values())
+        dead_probes_per_asset = Counter(survivor_urls[u] for u in dead_urls)
+        dead_asset_ids = {aid for aid, n in dead_probes_per_asset.items() if n == probes_per_asset[aid]}
+        if dead_asset_ids:
+            tenant_logger.info(
+                f"Dead-host prune: {len(dead_asset_ids)} unresponsive/5xx hosts routed to the "
+                f"light SSL/takeover pass (out of the heavy CVE loop) to protect the scan budget"
+            )
+
     tenant_logger.info(
         f"Nuclei: {len(live_asset_ids)} assets with live HTTP, "
         f"{len(all_assets)} targets ({len(hostname_assets)} hostnames + {len(standalone_ips)} standalone IPs)"
     )
 
-    # Split assets: CDN-fronted hosts only get takeover/ssl checks (CVE scans
-    # would hit the CDN edge, not the origin, producing false positives).
-    direct_assets = [a for a in all_assets if not getattr(a, "cdn_name", None)]
-    cdn_assets = [a for a in all_assets if getattr(a, "cdn_name", None)]
+    # Split assets: CDN-fronted AND dead hosts get takeover/ssl checks only (a full
+    # CVE scan would hit the CDN edge / a dead host, wasting the budget). Direct,
+    # live, non-CDN hosts get the full CVE passes.
+    direct_assets = [a for a in all_assets if not getattr(a, "cdn_name", None) and a.id not in dead_asset_ids]
+    cdn_assets = [a for a in all_assets if getattr(a, "cdn_name", None) or a.id in dead_asset_ids]
 
     if not all_assets:
         return {"findings_created": 0, "scan_tier": scan_tier}
