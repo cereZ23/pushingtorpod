@@ -199,6 +199,15 @@ class Settings(BaseSettings):
     nuclei_canary_expected: list[str] = ["reflected-xss"]
     nuclei_canary_aggression: str = "medium"
     nuclei_canary_timeout: int = 240
+
+    # Active DAST (nuclei -dast fuzzing). Payload injection is intrusive → OFF by
+    # default and only runs on Tier 3 with an active ScanAuthorization.
+    dast_enabled: bool = False
+    dast_aggression: str = "medium"  # low|medium|high (payload count)
+    dast_max_urls: int = 300  # cap the fuzz target set per scan (params × payloads is costly)
+    dast_rate_limit: int = 30
+    dast_concurrency: int = 10
+    dast_timeout: int = 1800
     puredns_resolvers_path: str = "/app/data/resolvers.txt"
     puredns_wordlist_path: str = "/app/data/dns-wordlist.txt"
 
