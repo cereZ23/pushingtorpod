@@ -54,6 +54,11 @@ su 38, 92 errori ESLint soppressi in CI.
   - Pulizia rumore: rimosso "No SCT" (falso positivo su ogni cert, #63) + **cancellati 117** finding
     SCT da tutti i tenant in prod; asset-detail finding host-level + conteggi coerenti (#62); cloud
     provider "(estimated)" (#65); nuovo **EXP-012** per cluster di porte non-web non identificate (#64).
+- **Health engine nuclei — detection canary (1 ago, PR #71)** — primo passo del pilastro #5.
+  Sappiamo che nuclei *gira* ma non se *rileva* ciò che deve. Canary: `nuclei -dast` contro un
+  target noto (Google Firing Range → `reflected-xss`, **provato live**) → verifica che il template
+  atteso scatti, altrimenti engine-health rosso. `evaluate_canary` (puro) + task self-contained
+  (scarica i fuzzing-templates se assenti) + `GET/POST /health/scan-engine` (superuser) + cache Redis.
 - **Fix UX gestione tenant (30 lug)** — bug RBAC vero: due `currentTenantId` separati (dati vs
   permessi) → dopo login/switch un admin non-superuser perdeva le voci admin finché non ricaricava.
   Unificato il source-of-truth (auth deriva dal tenant store). + switcher chiaro (mono-tenant
@@ -126,12 +131,21 @@ _Consistenza UX, salute del codice, qualità dei finding._
   - **#3 deep service-ID**: probe protocollo-specifici (fgfm/541, RDP-NTLM su porte non-standard come
     1042/1043) + **`nmap -sV` di secondo passaggio** sugli Unknown vivi dietro firewall → identificare
     i servizi come fa nmap a mano (oggi restano "Unknown" e non generano finding mirati).
-  - **#5 verifica + recall**: gate di **ri-verifica attiva** sui finding high-value prima di mostrarli;
-    **harness di precision/recall** su target noti → numeri sulla qualità nel tempo, non a sensazione.
+  - **#5 verifica + recall**: canary nuclei **fatto** (PR #71); restano — indicatore UI superuser,
+    pannello coverage (`coverage_complete`/`truncated`) nello scan-detail, schedule beat giornaliero,
+    e gate di **ri-verifica attiva** sui finding high-value prima di mostrarli.
   - Follow-up #1: route i 4 upsert-asset inline (fasi 1/2/3, crt.sh) via `_upsert_hostname_assets`;
     `run_dnsx` same-run sui nuovi SAN così si arricchiscono nello stesso scan.
   - Follow-up #3: estendere `device_fingerprint` a più vendor (Palo Alto, SonicWall, Cisco ASA) col
     serial/model nel cert.
+- [ ] **DAST attivo (nuclei -dast) + dashboard OWASP Top 10** — **verificato live che funziona**:
+  `katana -f qurl` → `nuclei -dast -fa high -t fuzzing-templates` trova vuln vere (reflected-XSS su
+  Firing Range). Requisiti provati: (1) installare il repo **`projectdiscovery/fuzzing-templates`**
+  nell'immagine worker (i bundle hanno solo 12 template base, **niente SQLi/XSS**); (2) fase DAST
+  dedicata `_phase_9d_dast` gated **T3 + scan-authorization** + rate-limit, `dast_enabled` off di
+  default. **Limite onesto**: è **signal-based** → prende XSS-riflesso, SQLi error-based, SSRF via OAST;
+  **non** blind/UNION/DOM/logica (per quello serve ZAP/Burp — backlog). Poi la **dashboard OWASP Top 10**
+  (classificatore finding→A01-A10 + 10 card + filtro `?owasp=`), con A04/A09 onestamente vuoti da esterno.
 
 ## P2 — Feature / scala (backlog)
 
