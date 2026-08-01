@@ -112,49 +112,29 @@ def list_services(
         "product": Service.product,
         "last_seen": Service.last_seen,
         "has_tls": Service.has_tls,
+        "risk_score": Service.risk_score,  # persisted → global "riskiest services" sort
     }
     sort_column = ALLOWED_SORT_COLUMNS.get(sort_by, Service.last_seen)
+    # NULLs last in both directions — unscored services shouldn't top a
+    # "riskiest first" sort (risk is backfilled by phase 11 on the next scan).
     if sort_order.lower() == "desc":
-        query = query.order_by(sort_column.desc())
+        query = query.order_by(sort_column.desc().nullslast())
     else:
-        query = query.order_by(sort_column.asc())
+        query = query.order_by(sort_column.asc().nullslast())
 
     # Apply pagination
     query = pagination.paginate_query(query)
 
     services = query.all()
 
-    # Explainable per-service risk (same model as assets/findings). Batch-load
-    # the page's OPEN findings once (grouped by asset) so scoring is N+1-free.
-    from app.services.risk_scoring import RiskScoringEngine
-    from app.models.database import Finding, FindingStatus
-
-    risk_svc = RiskScoringEngine(db)
-    page_asset_ids = {s.asset_id for s in services}
-    findings_by_asset: dict[int, list] = {}
-    if page_asset_ids:
-        for f in (
-            db.query(Finding).filter(Finding.asset_id.in_(page_asset_ids), Finding.status == FindingStatus.OPEN).all()
-        ):
-            findings_by_asset.setdefault(f.asset_id, []).append(f)
-
-    # Build responses with asset info + risk
+    # Risk is persisted on the Service (phase 11) — read it, don't recompute.
+    # model_validate pulls risk_score/risk_level/risk_components from the ORM.
     items = []
     for s in services:
         resp = ServiceResponse.model_validate(s)
-        asset_identifier = None
         if s.asset:
-            asset_identifier = s.asset.identifier
-            resp.asset_identifier = asset_identifier
+            resp.asset_identifier = s.asset.identifier
             resp.asset_type = s.asset.type.value if hasattr(s.asset.type, "value") else str(s.asset.type)
-        risk = risk_svc.calculate_service_risk(
-            s,
-            asset_findings=findings_by_asset.get(s.asset_id, []),
-            asset_identifier=asset_identifier or "",
-        )
-        resp.risk_score = risk["risk_score"]
-        resp.risk_level = risk["risk_level"]
-        resp.risk_components = risk["components"]
         items.append(resp)
 
     return PaginatedEnvelope(
@@ -180,39 +160,25 @@ def get_technology_stack(tenant_id: int, db: Session = Depends(get_db), membersh
     - License tracking
     - Security posture assessment
     """
-    from app.services.risk_scoring import RiskScoringEngine
-    from app.models.database import Finding, FindingStatus
-
-    # Load the services (with their asset) so we can both aggregate and score.
+    # Read persisted per-service risk (phase 11) — the product's risk_level is
+    # the worst of its services'. Only product/version/risk are needed.
     services = (
-        db.query(Service)
+        db.query(Service.product, Service.version, Service.risk_level)
         .join(Asset, Asset.id == Service.asset_id)
         .filter(Asset.tenant_id == tenant_id, Service.product.isnot(None))
         .all()
     )
 
-    # Batch OPEN findings by asset once (N+1-free explainable risk).
-    asset_ids = {s.asset_id for s in services}
-    findings_by_asset: dict[int, list] = {}
-    if asset_ids:
-        for f in db.query(Finding).filter(Finding.asset_id.in_(asset_ids), Finding.status == FindingStatus.OPEN).all():
-            findings_by_asset.setdefault(f.asset_id, []).append(f)
-
-    risk_svc = RiskScoringEngine(db)
     _RANK = {None: -1, "info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 
-    # Aggregate by product; risk_level per product = the worst of its services'
-    # explainable risk (same model as assets/findings).
     tech_stack: dict = {}
-    for s in services:
-        product = s.product
+    for product, version, risk_level in services:
         entry = tech_stack.setdefault(product, {"technology": product, "count": 0, "versions": {}, "risk_level": None})
         entry["count"] += 1
-        if s.version:
-            entry["versions"][s.version] = entry["versions"].get(s.version, 0) + 1
-        level = risk_svc.calculate_service_risk(s, asset_findings=findings_by_asset.get(s.asset_id, []))["risk_level"]
-        if _RANK[level] > _RANK[entry["risk_level"]]:
-            entry["risk_level"] = level
+        if version:
+            entry["versions"][version] = entry["versions"].get(version, 0) + 1
+        if _RANK.get(risk_level, -1) > _RANK.get(entry["risk_level"], -1):
+            entry["risk_level"] = risk_level
 
     return [
         TechnologyStackResponse(

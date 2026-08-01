@@ -119,12 +119,20 @@ class Service(Base):
     enriched_at = Column(DateTime)  # Last enrichment timestamp
     enrichment_source = Column(String(50))  # httpx, naabu, tlsx
 
+    # Explainable per-service risk, persisted by phase 11 (same model as assets/
+    # findings). Persisted so the API can sort/filter globally by risk before
+    # paginating, and expose the factor breakdown without recomputing.
+    risk_score = Column(Float)  # 0-100
+    risk_level = Column(String(20))  # info/low/medium/high/critical
+    risk_components = Column(JSON)  # factor breakdown behind the score
+
     asset = relationship("Asset", back_populates="services")
 
     __table_args__ = (
         Index("idx_asset_port", "asset_id", "port"),
         Index("idx_enrichment_source", "enrichment_source"),  # Sprint 2
         Index("idx_has_tls", "has_tls"),  # Sprint 2
+        Index("idx_service_risk_score", "risk_score"),  # global "riskiest services" sort
     )
 
     def __repr__(self):

@@ -84,6 +84,45 @@ NEW_ASSET_BONUS = 5.0
 # so its bonus alone clears the "low" threshold (>20) even without a finding.
 HTTP_LOGIN_BONUS = 25.0  # a login page served over plaintext HTTP
 PLAINTEXT_HTTP_BONUS = 3.0  # any web service without TLS
+# A finding on the host that is NOT tied to this service's port still matters as
+# context (lateral risk), but at a reduced weight so e.g. SSH doesn't inherit a
+# web-server CVE at full severity.
+ASSET_CONTEXT_WEIGHT = 0.5
+
+
+def _finding_service_port(finding) -> Optional[int]:
+    """Best-effort port a finding pertains to, from ``evidence.matched_at``.
+
+    Findings are stored per-asset, not per-service; ``matched_at`` (a URL or
+    host:port) is the only link back to a specific service. Returns the explicit
+    port, or the scheme default (443 for https, 80 for http), or None when it
+    can't be determined (so the finding falls back to asset-level context).
+    """
+    ev = finding.evidence
+    if isinstance(ev, str):
+        try:
+            import json
+
+            ev = json.loads(ev)
+        except (ValueError, TypeError):
+            return None
+    if not isinstance(ev, dict):
+        return None
+    matched = ev.get("matched_at") or ev.get("host") or ev.get("url") or ""
+    if not matched:
+        return None
+    from urllib.parse import urlparse
+
+    parsed = urlparse(matched if "//" in matched else f"//{matched}", scheme="")
+    if parsed.port:
+        return parsed.port
+    scheme = (parsed.scheme or "").lower()
+    if scheme == "https" or matched.lower().startswith("https"):
+        return 443
+    if scheme == "http" or matched.lower().startswith("http"):
+        return 80
+    return None
+
 
 # High-risk ports with individual penalties (kept for detailed breakdown)
 HIGH_RISK_PORTS = {
@@ -742,13 +781,28 @@ class RiskScoringEngine:
         if threat_svc is None and any(f.cve_id for f in asset_findings):
             threat_svc = self._get_threat_intel()
 
-        # 1. Finding context (asset-level max — findings are not port-scoped).
-        max_finding = 0.0
+        # 1. Findings — correlated to this service by port where possible.
+        #    A finding whose matched_at resolves to this service's port drives the
+        #    score at full weight; other host findings count only as reduced
+        #    context (so SSH doesn't inherit a web-server CVE at full severity).
+        matched_max = 0.0
+        context_max = 0.0
         for f in asset_findings:
             epss, is_kev = _get_finding_threat_intel(f, threat_svc)
-            max_finding = max(max_finding, compute_finding_score(f, epss_score=epss, is_kev=is_kev))
-        score = max_finding
-        components: Dict = {"max_finding_score": round(max_finding, 2), "finding_scope": "asset"}
+            fscore = compute_finding_score(f, epss_score=epss, is_kev=is_kev)
+            fport = _finding_service_port(f)
+            if fport is not None and fport == service.port:
+                matched_max = max(matched_max, fscore)
+            else:
+                context_max = max(context_max, fscore)
+        finding_component = max(matched_max, context_max * ASSET_CONTEXT_WEIGHT)
+        score = finding_component
+        components: Dict = {
+            "finding_score": round(finding_component, 2),
+            "matched_finding_score": round(matched_max, 2),
+            "asset_context_score": round(context_max, 2),
+            "finding_scope": "service+asset-context",
+        }
         recommendations: List[Dict] = []
 
         # 2. High-risk port (DB/admin/remote-access).

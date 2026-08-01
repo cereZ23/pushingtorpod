@@ -95,15 +95,31 @@ class TestServiceRisk:
         assert r["components"]["high_risk_port"]["name"] == "Redis"
         assert r["risk_level"] == _get_risk_level(r["risk_score"])
 
-    def test_finding_context_dominates_and_caps(self):
-        """A critical CVE on the host + internet exposure → critical, capped at 100."""
-        f = _make_finding(severity=FindingSeverity.CRITICAL, cvss=9.8)
+    def test_port_matched_finding_dominates_and_caps(self):
+        """A critical CVE whose matched_at is on THIS service's port drives it to
+        critical (full weight) + internet exposure, capped at 100."""
+        f = _make_finding(
+            severity=FindingSeverity.CRITICAL, cvss=9.8, evidence={"matched_at": "https://web.ex.com/admin"}
+        )
         svc = _make_service(port=443, has_tls=True)
         r = self._engine().calculate_service_risk(svc, asset_findings=[f], asset_identifier="web.ex.com")
         assert r["risk_score"] == 100.0
         assert r["risk_level"] == "critical"
         assert r["components"]["internet_exposed"] is True
-        assert r["components"]["max_finding_score"] >= 98.0
+        assert r["components"]["matched_finding_score"] >= 98.0
+
+    def test_unmatched_finding_is_only_reduced_context(self):
+        """A critical web CVE (port 443) must NOT make the host's SSH (22)
+        critical — it counts only as reduced asset-level context."""
+        web_cve = _make_finding(
+            severity=FindingSeverity.CRITICAL, cvss=9.8, evidence={"matched_at": "https://web.ex.com/"}
+        )
+        ssh = _make_service(port=22, has_tls=False, http_status=None)
+        r = self._engine().calculate_service_risk(ssh, asset_findings=[web_cve], asset_identifier="web.ex.com")
+        # 98 * 0.5 context + 8 (SSH high-risk port) = 57 → high, not critical
+        assert r["risk_level"] != "critical"
+        assert r["components"]["asset_context_score"] >= 98.0
+        assert r["components"]["matched_finding_score"] == 0.0
 
     def test_plaintext_login_clears_low_without_a_finding(self):
         """A login page over plaintext HTTP is a real issue on its own (>= low)."""

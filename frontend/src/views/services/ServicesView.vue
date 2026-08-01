@@ -112,6 +112,22 @@ function getPortColor(port: number): string {
   return 'text-gray-900 dark:text-dark-text-primary'
 }
 
+const expandedServiceId = ref<number | null>(null)
+
+function toggleRiskDetail(service: Service): void {
+  if (!service.risk_components) return
+  expandedServiceId.value = expandedServiceId.value === service.id ? null : service.id
+}
+
+function riskComponentEntries(components?: Record<string, unknown>): Array<{ key: string; value: string }> {
+  if (!components) return []
+  return Object.entries(components).map(([key, value]) => ({
+    key: key.replace(/_/g, ' '),
+    value:
+      value && typeof value === 'object' ? JSON.stringify(value) : String(value),
+  }))
+}
+
 function riskBadgeClass(level: string): string {
   const classes: Record<string, string> = {
     critical: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400',
@@ -234,7 +250,8 @@ function riskBadgeClass(level: string): string {
             </tr>
           </thead>
           <tbody class="bg-white dark:bg-dark-bg-secondary divide-y divide-gray-200 dark:divide-dark-border">
-            <tr v-for="service in services" :key="service.id" class="hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary">
+            <template v-for="service in services" :key="service.id">
+            <tr class="hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary">
               <td class="px-6 py-4">
                 <router-link
                   v-if="service.asset_identifier"
@@ -263,14 +280,17 @@ function riskBadgeClass(level: string): string {
                 <div v-if="service.version" class="text-xs text-gray-500 dark:text-dark-text-secondary">v{{ service.version }}</div>
               </td>
               <td class="px-6 py-4 whitespace-nowrap">
-                <span
+                <button
                   v-if="service.risk_level"
-                  class="text-xs px-2 py-0.5 rounded-full font-medium capitalize"
+                  type="button"
+                  class="text-xs px-2 py-0.5 rounded-full font-medium capitalize cursor-pointer hover:ring-2 hover:ring-primary-400"
                   :class="riskBadgeClass(service.risk_level)"
-                  :title="service.risk_score != null ? `Risk score: ${service.risk_score}/100` : undefined"
+                  :title="service.risk_score != null ? `Risk score: ${service.risk_score}/100 — click for the breakdown` : undefined"
+                  @click="toggleRiskDetail(service)"
                 >
                   {{ service.risk_level }}
-                </span>
+                  <span v-if="service.risk_score != null" class="opacity-70">{{ Math.round(service.risk_score) }}</span>
+                </button>
                 <span v-else class="text-sm text-gray-400">-</span>
               </td>
               <td class="px-6 py-4">
@@ -308,6 +328,25 @@ function riskBadgeClass(level: string): string {
                 {{ formatDate(service.first_seen) }}
               </td>
             </tr>
+            <!-- Expandable risk breakdown (explainability in the UX) -->
+            <tr v-if="expandedServiceId === service.id" class="bg-gray-50 dark:bg-dark-bg-tertiary">
+              <td colspan="7" class="px-6 py-3">
+                <div class="text-xs font-semibold text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider mb-2">
+                  Risk breakdown
+                </div>
+                <div class="flex flex-wrap gap-x-6 gap-y-1">
+                  <div
+                    v-for="c in riskComponentEntries(service.risk_components)"
+                    :key="c.key"
+                    class="text-sm"
+                  >
+                    <span class="text-gray-500 dark:text-dark-text-secondary capitalize">{{ c.key }}:</span>
+                    <span class="ml-1 font-medium text-gray-900 dark:text-dark-text-primary">{{ c.value }}</span>
+                  </div>
+                </div>
+              </td>
+            </tr>
+            </template>
           </tbody>
         </table>
       </div>
