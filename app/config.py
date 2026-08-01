@@ -254,6 +254,18 @@ class Settings(BaseSettings):
     naabu_default_ports: str = "top-1000"  # top-100, top-1000, or "1-65535"
     naabu_blocked_ports: list[int] = [22, 445, 3389, 3306, 5432]  # SSH, SMB, RDP, MySQL, PostgreSQL
 
+    # Nuclei - per-tier exclude-tags.
+    # The default (T1) now ALLOWS version-based CVE detection templates
+    # (sqli/xss/rce/... matchers that don't send attack payloads) so the
+    # default scan actually finds CVEs. We still exclude the genuinely
+    # intrusive/payload-sending families (intrusive,fuzz,dos,bruteforce,
+    # upload) — those are what cause i/o timeouts and get a host blacklisted
+    # by nuclei as "permanently unresponsive", starving every later template.
+    # Override any of these via env if a target set regresses (fully reversible).
+    nuclei_exclude_tags_t1: str = "dos,headless,fuzz,osint,token-spray,intrusive,bruteforce,credential-stuffing,upload"
+    nuclei_exclude_tags_t2: str = "dos,headless,fuzz,osint,token-spray,intrusive,credential-stuffing,bruteforce,upload"
+    nuclei_exclude_tags_t3: str = "dos,headless,fuzz,osint,intrusive,credential-stuffing"
+
     # TLSx - TLS/SSL Certificate Analysis
     tlsx_timeout: int = 300  # 5 minutes
     tlsx_expiry_warning_days: int = 30  # Alert if cert expires within N days
