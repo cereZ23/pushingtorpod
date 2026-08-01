@@ -59,6 +59,33 @@ su 38, 92 errori ESLint soppressi in CI.
   target noto (Google Firing Range → `reflected-xss`, **provato live**) → verifica che il template
   atteso scatti, altrimenti engine-health rosso. `evaluate_canary` (puro) + task self-contained
   (scarica i fuzzing-templates se assenti) + `GET/POST /health/scan-engine` (superuser) + cache Redis.
+- **DAST attivo end-to-end + Scan Authorizations (1 ago, PR #73-75)** — fase **9d `_phase_9d_dast`**
+  (`katana -f qurl` → `nuclei -dast -fa`), gated **hard**: T3 **+** ScanAuthorization attiva (finestra
+  `valid_from/until` verificata) **+** `dast_enabled` off di default; immagine worker con
+  `projectdiscovery/fuzzing-templates` (i bundle non hanno SQLi/XSS). UI: descrizioni per-tier +
+  badge "DAST" su T3, progresso scan. Nuova pagina **Scan Authorizations** (store + view +
+  nav Configuration + rotta `settings/scan-authorizations`), create/revoke **admin-only**.
+- **Inferenza version→CVE — fase 9e (1 ago, PR #76)** — *il differenziatore*: fingerprintiamo già
+  product/version e arricchiamo i CVE con EPSS/KEV, ma non trasformavamo il fingerprint **in** CVE
+  (dipendevamo solo dal match template nuclei → "0 CVE" su host reali). Ora `cve_inference.py` (puro,
+  mappa curata product→CPE + parsing NVD 2.0) + fase 9e: per ogni servizio cerca i CVE noti (NVD via
+  CPE, **cache Redis per-CPE** cross-run, coppie distinte cap + rate-limit) → finding **presumptive**
+  con EPSS/KEV. Trova CVE senza template nuclei e funziona **anche su host che filtrano i probe**.
+- **Il tier di default (T1) ora trova le CVE (1 ago, PR #77)** — l'exclude-tags di nuclei droppava
+  `sqli,xss,ssrf,ssti,rce` sul T1, che però sono anche i **CVE matcher version/path-based** (benigni,
+  senza payload) → causa vera dello "0 CVE" sul default. Fix: exclude-tags **config-driven**
+  (`nuclei_exclude_tags_t1/t2/t3`, reversibile da env), T1 tiene esclusi solo i payload-sender veri
+  (`intrusive,fuzz,dos,bruteforce,upload` — la protezione contro il blacklist Azure resta) e ammette
+  i CVE matcher. Test che blinda l'invariante.
+- **Porte DB/admin scoperte su ogni tier (1 ago, PR #79)** — la top-1000 di naabu **manca**
+  redis 6379/mongo 27017/memcached 11211/kibana 5601/rabbitmq 15672 (validato sul worker), e il
+  `top_ports` per-tier era codice morto. Fix: unione `-tp` + `-p <naabu_sensitive_ports>` (naabu fonde
+  i due, validato) → un datastore esposto (finding EASM top-value) ora si vede su T1/T2/T3 e nel rescan.
+- **Pagina Technologies navigabile + icone (1 ago, PR #78, #80)** — card cliccabili → lista Services
+  **filtrata per tecnologia** (search esteso all'array JSON `http_technologies`, così jQuery/Bootstrap/
+  Analytics atterrano su liste piene); icona brand (CDN simple-icons) con **fallback monogram colorato**
+  (mai più quadrati vuoti / lettere nude). *Nota: se la rete del viewer blocca jsdelivr si vedono i
+  monogram; icone brand garantite = self-host `simple-icons` inline (follow-up).*
 - **Fix UX gestione tenant (30 lug)** — bug RBAC vero: due `currentTenantId` separati (dati vs
   permessi) → dopo login/switch un admin non-superuser perdeva le voci admin finché non ricaricava.
   Unificato il source-of-truth (auth deriva dal tenant store). + switcher chiaro (mono-tenant
@@ -138,14 +165,23 @@ _Consistenza UX, salute del codice, qualità dei finding._
     `run_dnsx` same-run sui nuovi SAN così si arricchiscono nello stesso scan.
   - Follow-up #3: estendere `device_fingerprint` a più vendor (Palo Alto, SonicWall, Cisco ASA) col
     serial/model nel cert.
-- [ ] **DAST attivo (nuclei -dast) + dashboard OWASP Top 10** — **verificato live che funziona**:
-  `katana -f qurl` → `nuclei -dast -fa high -t fuzzing-templates` trova vuln vere (reflected-XSS su
-  Firing Range). Requisiti provati: (1) installare il repo **`projectdiscovery/fuzzing-templates`**
-  nell'immagine worker (i bundle hanno solo 12 template base, **niente SQLi/XSS**); (2) fase DAST
-  dedicata `_phase_9d_dast` gated **T3 + scan-authorization** + rate-limit, `dast_enabled` off di
-  default. **Limite onesto**: è **signal-based** → prende XSS-riflesso, SQLi error-based, SSRF via OAST;
-  **non** blind/UNION/DOM/logica (per quello serve ZAP/Burp — backlog). Poi la **dashboard OWASP Top 10**
-  (classificatore finding→A01-A10 + 10 card + filtro `?owasp=`), con A04/A09 onestamente vuoti da esterno.
+- [~] **DAST attivo (nuclei -dast) + dashboard OWASP Top 10** — **[FASE DAST FATTA, PR #73-75]**
+  `katana -f qurl` → `nuclei -dast -fa -t fuzzing-templates` trova vuln vere (reflected-XSS su Firing
+  Range, provato live). Fatto: (1) immagine worker con **`projectdiscovery/fuzzing-templates`** (i
+  bundle hanno solo template base, **niente SQLi/XSS**); (2) fase **`_phase_9d_dast`** gated **T3 +
+  ScanAuthorization attiva + `dast_enabled`** off di default + rate-limit; (3) UI tier + pagina Scan
+  Authorizations. **Limite onesto**: **signal-based** → prende XSS-riflesso, SQLi error-based, SSRF via
+  OAST; **non** blind/UNION/DOM/logica (serve ZAP/Burp — backlog). **Resta**: la **dashboard OWASP Top
+  10** (classificatore finding→A01-A10 + 10 card + filtro `?owasp=`), con A04/A09 onestamente vuoti da
+  esterno — da costruire quando ci sono dati DAST reali. Follow-up gated: pannello per-run con scope +
+  ack, banner `dast_skipped` friendly nello ScanDetail, scope-matching reale delle authorization.
+- [ ] **Detection quality — follow-up (dopo PR #76-79)** — piccoli, alto rapporto valore/sforzo:
+  - **#4 rumore `info`**: i finding `info` di service-detection non dovrebbero contare come "findings"
+    nei conteggi/board (default board già su Exposures, ma i contatori li includono).
+  - **version→CVE**: allargare la mappa curata `_PRODUCT_CPE` (oggi ~20 prodotti) e valutare una
+    `nvd_api_key` in prod per togliere il rate-limit anonimo (6s/coppia).
+  - **porte**: verificare al primo scan reale che i datastore esposti emergano (redis/mongo) e, se
+    utile, un finding `EXP` dedicato "datastore esposto senza auth".
 
 ## P2 — Feature / scala (backlog)
 
