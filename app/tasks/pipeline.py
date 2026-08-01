@@ -68,6 +68,7 @@ from app.tasks.pipeline_phases.reconnaissance import (
     _phase_7_visual_recon,
 )
 from app.tasks.pipeline_phases.dast import _phase_9d_dast
+from app.tasks.pipeline_phases.version_cve import _phase_9e_version_cve
 from app.tasks.pipeline_phases.detection import (
     _phase_8_misconfig_detection,
     _phase_8c_origin_discovery,
@@ -138,6 +139,7 @@ PHASE_DEFS = {
     "9": {"name": "Vulnerability Scanning", "required": True},
     "9b": {"name": "DNSTwist Typosquatting", "required": False},
     "9d": {"name": "Active DAST", "required": False},
+    "9e": {"name": "Version-CVE Inference", "required": False},
     "10": {"name": "Correlation & Dedup", "required": True},
     "11": {"name": "Risk Scoring", "required": True},
     "12": {"name": "Diff & Alerting", "required": True},
@@ -163,7 +165,8 @@ EXECUTION_PLAN = [
     # - 7: Playwright screenshots add no security findings, cost 2-3 min +
     #   ~1GB RAM. HTTPx title + tech detection (phase 4) provides the same
     #   metadata. Katana endpoints (6b) replace the "see what's there" value.
-    ["8", "8c", "9", "9b", "9d"],  # Misconfig + Origin + Nuclei + DNSTwist + DAST (9d T3+authorized) in parallel
+    # Misconfig + Origin + Nuclei + DNSTwist + DAST (9d T3+authorized) + Version-CVE (9e) in parallel
+    ["8", "8c", "9", "9b", "9d", "9e"],
     ["10", "11"],  # Correlation + Risk scoring in parallel
     "12",  # Diff & alerting
 ]
@@ -693,6 +696,8 @@ def _execute_phase(
         return _phase_9b_dnstwist(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == "9d":
         return _phase_9d_dast(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier)
+    elif phase_id == "9e":
+        return _phase_9e_version_cve(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier)
     elif phase_id == "10":
         return _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
     elif phase_id == "11":

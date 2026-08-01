@@ -208,6 +208,15 @@ class Settings(BaseSettings):
     dast_rate_limit: int = 30
     dast_concurrency: int = 10
     dast_timeout: int = 1800
+
+    # Version -> CVE inference (NVD). Turns fingerprinted product/version into
+    # presumptive CVE findings. Cached per CPE; NVD is rate-limited so we cap distinct
+    # (product,version) pairs queried per run and let the cache warm across runs.
+    version_cve_enabled: bool = True
+    nvd_api_key: Optional[str] = None
+    version_cve_max_pairs: int = 25
+    version_cve_max_per_service: int = 10
+    version_cve_cache_ttl: int = 60 * 60 * 24 * 7  # 7 days per CPE
     puredns_resolvers_path: str = "/app/data/resolvers.txt"
     puredns_wordlist_path: str = "/app/data/dns-wordlist.txt"
 

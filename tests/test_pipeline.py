@@ -46,6 +46,7 @@ class TestPipelineStructure:
             "9",
             "9b",
             "9d",
+            "9e",
             "10",
             "11",
             "12",
