@@ -193,6 +193,18 @@ class TestUpdatePhase:
         # all succeeded → COMPLETED
         assert _classify_phase_outcome({"items_total": 10, "items_succeeded": 10})[0] == PhaseStatus.COMPLETED
 
+    def test_classify_skipped_is_informational_not_partial(self):
+        """Deliberate skips (dead IPs, dedup) must NOT flap a phase to partial —
+        only genuine failures do."""
+        from app.tasks.pipeline import _classify_phase_outcome
+        from app.models.scanning import PhaseStatus
+
+        # 8 processed, 2 deliberately skipped, 0 failed → COMPLETED
+        assert (
+            _classify_phase_outcome({"items_total": 10, "items_succeeded": 8, "items_failed": 0, "items_skipped": 2})[0]
+            == PhaseStatus.COMPLETED
+        )
+
     def test_classify_zero_succeeded_is_failed_not_completed(self):
         """0/N succeeded with failures must be FAILED, never COMPLETED."""
         from app.tasks.pipeline import _classify_phase_outcome

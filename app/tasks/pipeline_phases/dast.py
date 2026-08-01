@@ -148,7 +148,16 @@ def _phase_9d_dast(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_t
             _, stdout, _ = executor.execute("nuclei", args, timeout=settings.dast_timeout)
     except Exception as exc:
         tenant_logger.error("DAST nuclei run failed: %s", exc)
-        return {"dast_targets": len(targets), "findings_created": 0, "error": str(exc)[:200]}
+        return {
+            "dast_targets": len(targets),
+            "findings_created": 0,
+            "error": str(exc)[:200],
+            # The whole fuzzing run failed → no target was covered.
+            "items_total": len(targets),
+            "items_succeeded": 0,
+            "items_failed": len(targets),
+            "items_skipped": 0,
+        }
 
     for line in (stdout or "").splitlines():
         line = line.strip()
@@ -182,4 +191,13 @@ def _phase_9d_dast(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_t
         res = FindingRepository(db).bulk_upsert_findings(findings, tenant_id)
         created = res.get("created", 0)
     tenant_logger.info("DAST: %d findings from %d targets", len(findings), len(targets))
-    return {"dast_targets": len(targets), "findings_created": created, "findings_total": len(findings)}
+    return {
+        "dast_targets": len(targets),
+        "findings_created": created,
+        "findings_total": len(findings),
+        # All targets were fuzzed (the run completed).
+        "items_total": len(targets),
+        "items_succeeded": len(targets),
+        "items_failed": 0,
+        "items_skipped": 0,
+    }

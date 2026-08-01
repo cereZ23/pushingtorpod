@@ -357,6 +357,7 @@ def _phase_3_dns_resolution(tenant_id, project_id, scan_run_id, db, tenant_logge
         f"Phase 3 relationships: {relationships_created} edges created (resolves_to, cname_to, parent_domain)"
     )
 
+    hosts_that_resolved = sum(1 for a in subdomains if a.identifier.lower() in resolved_hosts)
     return {
         "records_resolved": len(resolved),
         "ips_created": ips_created,
@@ -364,6 +365,13 @@ def _phase_3_dns_resolution(tenant_id, project_id, scan_run_id, db, tenant_logge
         "hosts_resolved": len(subdomain_list),
         "relationships_created": relationships_created,
         "stale_hosts_deactivated": deactivated,
+        # Standard phase counters. A non-resolving host is "no record", not a
+        # tool failure, so items_failed stays 0 (DNS yield never flaps to partial);
+        # stale hosts pruned this run are reported as skipped.
+        "items_total": len(subdomain_list),
+        "items_succeeded": hosts_that_resolved,
+        "items_failed": 0,
+        "items_skipped": deactivated,
     }
 
 
@@ -497,12 +505,19 @@ def _phase_4_http_probing(tenant_id, project_id, scan_run_id, db, tenant_logger)
 
     tenant_logger.info(f"Phase 4 relationships: {relationships_created} 'hosts' edges created")
 
+    httpx_failed = len(asset_ids) if isinstance(result, dict) and result.get("error") else 0
     return {
         "services_discovered": services_created + services_updated,
         "services_created": services_created,
         "services_updated": services_updated,
         "hosts_probed": len(asset_ids),
         "relationships_created": relationships_created,
+        # Standard phase counters. A host with no live HTTP is "probed, nothing
+        # there" (not a failure); only a tool error marks the batch failed.
+        "items_total": len(asset_ids) + skipped_ips,
+        "items_succeeded": len(asset_ids) - httpx_failed,
+        "items_failed": httpx_failed,
+        "items_skipped": skipped_ips,
     }
 
 
@@ -561,12 +576,19 @@ def _phase_4b_tls_collection(tenant_id, project_id, scan_run_id, db, tenant_logg
     except Exception as exc:  # never fail cert collection over the feedback step
         tenant_logger.warning("TLS SAN feedback failed: %s", exc)
 
+    tlsx_failed = len(asset_ids) if isinstance(result, dict) and result.get("error") else 0
     return {
         "certificates_collected": certificates_collected,
         "certificates_created": certificates_created,
         "certificates_updated": certificates_updated,
         "hosts_analyzed": hosts_analyzed,
         "san_assets_added": san_assets_added,
+        # Standard phase counters. A host with no TLS is not a failure; only a
+        # tool error marks the batch failed.
+        "items_total": len(asset_ids),
+        "items_succeeded": len(asset_ids) - tlsx_failed,
+        "items_failed": tlsx_failed,
+        "items_skipped": 0,
     }
 
 
@@ -726,6 +748,8 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         db.commit()
         tenant_logger.info(f"Deactivated {deactivated} dead IP asset(s) with no open ports")
 
+    naabu_failed = len(asset_ids) if isinstance(result, dict) and result.get("error") else 0
+    naabu_skipped = covered_ip_count + ip_dedup_skipped
     return {
         "ports_discovered": result.get("ports_discovered", 0) if isinstance(result, dict) else 0,
         "services_created": result.get("services_created", 0) if isinstance(result, dict) else 0,
@@ -734,6 +758,12 @@ def _phase_5_port_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         "scan_tier": scan_tier,
         "top_ports": config["top_ports"],
         "rate": config["rate"],
+        # Standard phase counters. An IP with no open ports is not a failure;
+        # covered/deduped IPs are deliberate skips; only a tool error fails.
+        "items_total": len(asset_ids) + naabu_skipped,
+        "items_succeeded": len(asset_ids) - naabu_failed,
+        "items_failed": naabu_failed,
+        "items_skipped": naabu_skipped,
     }
 
 

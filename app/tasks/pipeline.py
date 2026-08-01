@@ -250,12 +250,13 @@ def _classify_phase_outcome(result) -> tuple:
         succeeded = result.get("items_succeeded", 0) or 0
         failed = result.get("items_failed", 0) or 0
         skipped = result.get("items_skipped", 0) or 0
-        # Nothing succeeded while work actually failed → the phase FAILED; it must
-        # not read as COMPLETED. (All-skipped with no failures is legitimate.)
+        # Only genuine FAILURES degrade a phase — `skipped` is deliberate
+        # exclusion (dead IPs, out-of-scope, dedup) and is purely informational.
+        # Nothing succeeded while work failed → FAILED (must not read COMPLETED).
         if succeeded == 0 and failed > 0:
             return PhaseStatus.FAILED, f"0/{total} succeeded ({failed} failed, {skipped} skipped)"
-        # Some, but not all, of the input succeeded → PARTIAL.
-        if 0 < succeeded < total and (failed + skipped) > 0:
+        # Some succeeded, some failed → PARTIAL.
+        if succeeded > 0 and failed > 0:
             return PhaseStatus.PARTIAL, f"{succeeded}/{total} succeeded ({failed} failed, {skipped} skipped)"
     return PhaseStatus.COMPLETED, None
 
