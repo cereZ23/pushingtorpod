@@ -196,7 +196,13 @@ def _update_phase(db, scan_run_id: int, phase_id: str, status: PhaseStatus, stat
 
     if status == PhaseStatus.RUNNING:
         phase_result.started_at = datetime.now(timezone.utc)
-    elif status in (PhaseStatus.COMPLETED, PhaseStatus.FAILED, PhaseStatus.SKIPPED):
+    elif status in (
+        PhaseStatus.COMPLETED,
+        PhaseStatus.PARTIAL,
+        PhaseStatus.FAILED,
+        PhaseStatus.SKIPPED,
+    ):
+        # PARTIAL is a terminal outcome too — stamp completed_at so duration is correct.
         phase_result.completed_at = datetime.now(timezone.utc)
 
     if stats:
@@ -213,11 +219,17 @@ def _classify_phase_outcome(result) -> tuple:
 
     "Partial" = the phase ran and produced usable output but did NOT fully cover
     its input (some templates/targets were skipped, truncated, or unresolved).
-    Normalized, opt-in signals so a healthy phase never flaps to partial:
-      - ``coverage_complete is False`` (+ optional ``truncated_passes``) — the
-        existing nuclei signal (detection.py), the canonical case.
-      - ``partial`` truthy (+ optional ``partial_reason``) — any phase can adopt
-        this to declare it processed only part of its input.
+    Normalized, opt-in signals — checked in priority order — so a healthy phase
+    never flaps to partial:
+      1. ``coverage_complete is False`` (+ optional ``truncated_passes``) — the
+         existing nuclei signal (detection.py), the canonical case.
+      2. ``partial`` truthy (+ optional ``partial_reason``) — any phase can
+         declare it processed only part of its input.
+      3. Standard per-phase counters ``items_total`` / ``items_succeeded`` /
+         ``items_failed`` / ``items_skipped`` — when present and some, but not
+         all, of the input succeeded. This is the uniform, forward-compatible
+         convention phases should adopt so partial is computed the same way
+         everywhere (and the counters surface in the UI/notification reason).
     Returns ``(PhaseStatus, reason|None)``.
     """
     if not isinstance(result, dict):
@@ -232,6 +244,16 @@ def _classify_phase_outcome(result) -> tuple:
         return PhaseStatus.PARTIAL, reason
     if result.get("partial"):
         return PhaseStatus.PARTIAL, str(result.get("partial_reason") or "partial result")
+    # Standard counters: partial iff some input was covered but some was not.
+    total = result.get("items_total")
+    if isinstance(total, int) and total > 0:
+        succeeded = result.get("items_succeeded", 0) or 0
+        failed = result.get("items_failed", 0) or 0
+        skipped = result.get("items_skipped", 0) or 0
+        incomplete = failed + skipped
+        if 0 < succeeded < total and incomplete > 0:
+            reason = f"{succeeded}/{total} succeeded ({failed} failed, {skipped} skipped)"
+            return PhaseStatus.PARTIAL, reason
     return PhaseStatus.COMPLETED, None
 
 
