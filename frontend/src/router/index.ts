@@ -175,6 +175,12 @@ const router = createRouter({
           meta: { title: "Suppression Rules" },
         },
         {
+          path: "settings/scan-authorizations",
+          name: "ScanAuthorizations",
+          component: () => import("@/views/settings/ScanAuthorizationsView.vue"),
+          meta: { requiresAdmin: true, title: "Scan Authorizations" },
+        },
+        {
           path: "settings/users",
           name: "Users",
           component: () => import("@/views/settings/UsersView.vue"),

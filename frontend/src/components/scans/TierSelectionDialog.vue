@@ -1,17 +1,36 @@
 <script setup lang="ts">
+import { computed, watch } from "vue";
+import { useRouter } from "vue-router";
 import { SCAN_TIERS } from "@/stores/scans";
+import { useAuthorizationStore } from "@/stores/authorizations";
 
 interface Props {
   open: boolean;
   isLoading: boolean;
 }
 
-defineProps<Props>();
+const props = defineProps<Props>();
 
 const emit = defineEmits<{
   close: [];
   submit: [tier: number];
 }>();
+
+// Tier 3 DAST needs an active scan authorization — surface it so the operator
+// knows whether DAST will actually fire, and can create one if not.
+const router = useRouter();
+const authorizationStore = useAuthorizationStore();
+const activeAuth = computed(() => authorizationStore.activeAuthorization);
+watch(
+  () => props.open,
+  (o) => {
+    if (o) authorizationStore.fetchAuthorizations();
+  },
+);
+function goCreateAuth() {
+  emit("close");
+  router.push("/settings/scan-authorizations");
+}
 
 function getTierBadgeClass(tier: number): string {
   if (tier === 1)
@@ -164,6 +183,21 @@ function getTierIconClass(tier: number): string {
               >
                 {{ tier.description }}
               </p>
+
+              <!-- DAST authorization signal (Tier 3 only) -->
+              <div v-if="tier.tier === 3" class="mb-3 text-center">
+                <span
+                  v-if="activeAuth"
+                  class="text-[11px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                  >✓ DAST authorized</span
+                >
+                <span v-else class="text-[11px] text-amber-600 dark:text-amber-400">
+                  DAST off — no authorization ·
+                  <button type="button" class="underline" @click.stop="goCreateAuth">
+                    Create one →
+                  </button>
+                </span>
+              </div>
 
               <!-- Stats -->
               <div

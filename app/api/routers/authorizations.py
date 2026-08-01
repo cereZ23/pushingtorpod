@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db, verify_tenant_access
+from app.api.dependencies import get_db, verify_tenant_access, require_tenant_permission
 from app.api.schemas.authorization import ScanAuthorizationCreate, ScanAuthorizationResponse
 from app.core.audit import log_data_modification
 from app.models.authorization import ScanAuthorization
@@ -53,7 +53,7 @@ def create_scan_authorization(
     tenant_id: int,
     body: ScanAuthorizationCreate,
     db: Session = Depends(get_db),
-    membership=Depends(verify_tenant_access),
+    membership=Depends(require_tenant_permission("admin")),
 ) -> ScanAuthorization:
     """Create a scan authorization (requires tenant write access)."""
     _verify_tenant_exists(db, tenant_id)
@@ -89,7 +89,7 @@ def revoke_scan_authorization(
     tenant_id: int,
     auth_id: int,
     db: Session = Depends(get_db),
-    membership=Depends(verify_tenant_access),
+    membership=Depends(require_tenant_permission("admin")),
 ) -> dict:
     """Revoke (deactivate) a scan authorization."""
     _verify_tenant_exists(db, tenant_id)

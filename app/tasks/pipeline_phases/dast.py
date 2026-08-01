@@ -65,11 +65,21 @@ def select_dast_targets(urls, cap: int) -> list[str]:
 
 
 def _has_active_scan_authorization(db, tenant_id: int) -> bool:
+    """True if the tenant has an authorization that is active AND currently in its
+    validity window (valid_from <= now <= valid_until; NULLs = open-ended)."""
+    from datetime import datetime, timezone
+    from sqlalchemy import or_
     from app.models.authorization import ScanAuthorization
 
+    now = datetime.now(timezone.utc)
     return (
         db.query(ScanAuthorization.id)
-        .filter(ScanAuthorization.tenant_id == tenant_id, ScanAuthorization.is_active.is_(True))
+        .filter(
+            ScanAuthorization.tenant_id == tenant_id,
+            ScanAuthorization.is_active.is_(True),
+            or_(ScanAuthorization.valid_from.is_(None), ScanAuthorization.valid_from <= now),
+            or_(ScanAuthorization.valid_until.is_(None), ScanAuthorization.valid_until >= now),
+        )
         .first()
         is not None
     )
