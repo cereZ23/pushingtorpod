@@ -69,6 +69,58 @@ def _make_finding(
     return f
 
 
+def _make_service(port=443, http_title=None, has_tls=True, http_status=200, asset_id=1, sid=1):
+    """A Service-like object without touching the DB."""
+    return MagicMock(
+        id=sid, asset_id=asset_id, port=port, http_title=http_title, has_tls=has_tls, http_status=http_status
+    )
+
+
+# ---------------------------------------------------------------------------
+# calculate_service_risk — explainable, same model as assets/findings
+# ---------------------------------------------------------------------------
+
+
+class TestServiceRisk:
+    """The per-service risk must reuse the shared primitives and stay explainable."""
+
+    def _engine(self):
+        return RiskScoringEngine(MagicMock())
+
+    def test_high_risk_port_is_explained(self):
+        """An exposed datastore port contributes its penalty AND names itself."""
+        svc = _make_service(port=6379, has_tls=False, http_status=None)
+        r = self._engine().calculate_service_risk(svc, asset_findings=[], asset_identifier="db.ex.com")
+        assert r["risk_score"] == 7.0  # Redis penalty
+        assert r["components"]["high_risk_port"]["name"] == "Redis"
+        assert r["risk_level"] == _get_risk_level(r["risk_score"])
+
+    def test_finding_context_dominates_and_caps(self):
+        """A critical CVE on the host + internet exposure → critical, capped at 100."""
+        f = _make_finding(severity=FindingSeverity.CRITICAL, cvss=9.8)
+        svc = _make_service(port=443, has_tls=True)
+        r = self._engine().calculate_service_risk(svc, asset_findings=[f], asset_identifier="web.ex.com")
+        assert r["risk_score"] == 100.0
+        assert r["risk_level"] == "critical"
+        assert r["components"]["internet_exposed"] is True
+        assert r["components"]["max_finding_score"] >= 98.0
+
+    def test_plaintext_login_clears_low_without_a_finding(self):
+        """A login page over plaintext HTTP is a real issue on its own (>= low)."""
+        svc = _make_service(port=80, http_title="Admin Login", has_tls=False)
+        r = self._engine().calculate_service_risk(svc, asset_findings=[], asset_identifier="legacy.ex.com")
+        assert r["components"]["http_login_exposed"] is True
+        assert r["risk_level"] in ("low", "medium", "high", "critical")
+
+    def test_clean_service_is_info(self):
+        """A TLS web service with no findings and no risky port → info, no noise."""
+        svc = _make_service(port=443, has_tls=True, http_title="Docs")
+        r = self._engine().calculate_service_risk(svc, asset_findings=[], asset_identifier="ok.ex.com")
+        # only the internet-exposed modifier applies → stays info
+        assert r["risk_level"] == "info"
+        assert "high_risk_port" not in r["components"]
+
+
 # ---------------------------------------------------------------------------
 # compute_finding_score unit tests
 # ---------------------------------------------------------------------------

@@ -124,13 +124,37 @@ def list_services(
 
     services = query.all()
 
-    # Build responses with asset info
+    # Explainable per-service risk (same model as assets/findings). Batch-load
+    # the page's OPEN findings once (grouped by asset) so scoring is N+1-free.
+    from app.services.risk_scoring import RiskScoringEngine
+    from app.models.database import Finding, FindingStatus
+
+    risk_svc = RiskScoringEngine(db)
+    page_asset_ids = {s.asset_id for s in services}
+    findings_by_asset: dict[int, list] = {}
+    if page_asset_ids:
+        for f in (
+            db.query(Finding).filter(Finding.asset_id.in_(page_asset_ids), Finding.status == FindingStatus.OPEN).all()
+        ):
+            findings_by_asset.setdefault(f.asset_id, []).append(f)
+
+    # Build responses with asset info + risk
     items = []
     for s in services:
         resp = ServiceResponse.model_validate(s)
+        asset_identifier = None
         if s.asset:
-            resp.asset_identifier = s.asset.identifier
+            asset_identifier = s.asset.identifier
+            resp.asset_identifier = asset_identifier
             resp.asset_type = s.asset.type.value if hasattr(s.asset.type, "value") else str(s.asset.type)
+        risk = risk_svc.calculate_service_risk(
+            s,
+            asset_findings=findings_by_asset.get(s.asset_id, []),
+            asset_identifier=asset_identifier or "",
+        )
+        resp.risk_score = risk["risk_score"]
+        resp.risk_level = risk["risk_level"]
+        resp.risk_components = risk["components"]
         items.append(resp)
 
     return PaginatedEnvelope(
@@ -156,32 +180,46 @@ def get_technology_stack(tenant_id: int, db: Session = Depends(get_db), membersh
     - License tracking
     - Security posture assessment
     """
-    # Query for products
-    products = (
-        db.query(Service.product, Service.version, func.count(Service.id).label("count"))
-        .join(Asset)
+    from app.services.risk_scoring import RiskScoringEngine
+    from app.models.database import Finding, FindingStatus
+
+    # Load the services (with their asset) so we can both aggregate and score.
+    services = (
+        db.query(Service)
+        .join(Asset, Asset.id == Service.asset_id)
         .filter(Asset.tenant_id == tenant_id, Service.product.isnot(None))
-        .group_by(Service.product, Service.version)
         .all()
     )
 
-    # Aggregate by product
-    tech_stack = {}
-    for product, version, count in products:
-        if product not in tech_stack:
-            tech_stack[product] = {"technology": product, "count": 0, "versions": {}}
+    # Batch OPEN findings by asset once (N+1-free explainable risk).
+    asset_ids = {s.asset_id for s in services}
+    findings_by_asset: dict[int, list] = {}
+    if asset_ids:
+        for f in db.query(Finding).filter(Finding.asset_id.in_(asset_ids), Finding.status == FindingStatus.OPEN).all():
+            findings_by_asset.setdefault(f.asset_id, []).append(f)
 
-        tech_stack[product]["count"] += count
-        if version:
-            tech_stack[product]["versions"][version] = count
+    risk_svc = RiskScoringEngine(db)
+    _RANK = {None: -1, "info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 
-    # Convert to response format
+    # Aggregate by product; risk_level per product = the worst of its services'
+    # explainable risk (same model as assets/findings).
+    tech_stack: dict = {}
+    for s in services:
+        product = s.product
+        entry = tech_stack.setdefault(product, {"technology": product, "count": 0, "versions": {}, "risk_level": None})
+        entry["count"] += 1
+        if s.version:
+            entry["versions"][s.version] = entry["versions"].get(s.version, 0) + 1
+        level = risk_svc.calculate_service_risk(s, asset_findings=findings_by_asset.get(s.asset_id, []))["risk_level"]
+        if _RANK[level] > _RANK[entry["risk_level"]]:
+            entry["risk_level"] = level
+
     return [
         TechnologyStackResponse(
             technology=tech["technology"],
             count=tech["count"],
             versions=tech["versions"],
-            risk_level=None,  # TODO: Add risk assessment logic
+            risk_level=tech["risk_level"],
         )
         for tech in sorted(tech_stack.values(), key=lambda x: x["count"], reverse=True)
     ]

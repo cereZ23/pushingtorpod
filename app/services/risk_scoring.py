@@ -80,6 +80,11 @@ EXPIRED_CERT_BONUS = 10.0
 NEW_ASSET_DAYS = 7
 NEW_ASSET_BONUS = 5.0
 
+# Per-service exposure bonuses. A plaintext-HTTP login is a real issue on its own,
+# so its bonus alone clears the "low" threshold (>20) even without a finding.
+HTTP_LOGIN_BONUS = 25.0  # a login page served over plaintext HTTP
+PLAINTEXT_HTTP_BONUS = 3.0  # any web service without TLS
+
 # High-risk ports with individual penalties (kept for detailed breakdown)
 HIGH_RISK_PORTS = {
     22: ("SSH", 8.0),
@@ -698,6 +703,96 @@ class RiskScoringEngine:
             "components": components,
             "recommendations": recommendations,
             "last_calculated": datetime.now(timezone.utc).isoformat(),
+        }
+
+    # -- Service-level risk --------------------------------------------------
+
+    def calculate_service_risk(
+        self,
+        service: Service,
+        asset_findings: Optional[List[Finding]] = None,
+        asset_identifier: Optional[str] = None,
+        threat_svc=None,
+    ) -> Dict:
+        """Explainable per-service risk, using the SAME primitives as the asset
+        model (:func:`compute_finding_score`, ``HIGH_RISK_PORTS``,
+        :func:`_get_risk_level``) so asset, service and finding all speak one
+        vocabulary.
+
+        A service's risk = the asset's finding context (a host CVE elevates its
+        exposed services) **plus** the service's own attack-surface factors:
+        high-risk port, internet exposure, and an insecure/plaintext login.
+
+        ``asset_findings`` (the asset's OPEN findings) can be preloaded to avoid
+        an N+1 in list views; when ``None`` they are queried here.
+
+        Returns ``{service_id, port, risk_score, risk_level, components,
+        recommendations}`` — the same shape as the asset result.
+        """
+        if asset_findings is None:
+            asset_findings = (
+                self.db.query(Finding)
+                .filter(Finding.asset_id == service.asset_id, Finding.status == FindingStatus.OPEN)
+                .all()
+            )
+        if asset_identifier is None:
+            row = self.db.query(Asset.identifier).filter(Asset.id == service.asset_id).first()
+            asset_identifier = row.identifier if row else ""
+
+        if threat_svc is None and any(f.cve_id for f in asset_findings):
+            threat_svc = self._get_threat_intel()
+
+        # 1. Finding context (asset-level max — findings are not port-scoped).
+        max_finding = 0.0
+        for f in asset_findings:
+            epss, is_kev = _get_finding_threat_intel(f, threat_svc)
+            max_finding = max(max_finding, compute_finding_score(f, epss_score=epss, is_kev=is_kev))
+        score = max_finding
+        components: Dict = {"max_finding_score": round(max_finding, 2), "finding_scope": "asset"}
+        recommendations: List[Dict] = []
+
+        # 2. High-risk port (DB/admin/remote-access).
+        port = service.port
+        if port in HIGH_RISK_PORTS:
+            port_name, penalty = HIGH_RISK_PORTS[port]
+            score += penalty
+            components["high_risk_port"] = {"port": port, "name": port_name, "penalty": penalty}
+            recommendations.append(
+                {
+                    "priority": "high" if port in (23, 3389) else "medium",
+                    "message": f"High-risk {port_name} service exposed on {asset_identifier}:{port}",
+                }
+            )
+
+        # 3. Internet-exposed web port.
+        if port in INTERNET_EXPOSED_PORTS:
+            score += INTERNET_EXPOSED_BONUS
+            components["internet_exposed"] = True
+
+        # 4. Insecure login / plaintext HTTP.
+        title = (service.http_title or "").lower()
+        is_login = any(indicator in title for indicator in LOGIN_INDICATORS)
+        if is_login and not service.has_tls:
+            score += HTTP_LOGIN_BONUS
+            components["http_login_exposed"] = True
+            recommendations.append(
+                {
+                    "priority": "critical",
+                    "message": f"Login page exposed over plaintext HTTP on {asset_identifier}:{port}",
+                }
+            )
+        elif service.http_status and not service.has_tls:
+            score += PLAINTEXT_HTTP_BONUS
+            components["plaintext_http"] = True
+
+        score = round(min(score, 100.0), 2)
+        return {
+            "service_id": service.id,
+            "port": port,
+            "risk_score": score,
+            "risk_level": _get_risk_level(score),
+            "components": components,
+            "recommendations": recommendations,
         }
 
     # -- Tenant scorecard ----------------------------------------------------
