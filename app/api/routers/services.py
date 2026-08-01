@@ -93,9 +93,13 @@ def list_services(
         # the given level (unscored/NULL are excluded). Applied pre-pagination.
         _ORDER = ["info", "low", "medium", "high", "critical"]
         lvl = min_risk_level.lower()
-        if lvl in _ORDER:
-            allowed = _ORDER[_ORDER.index(lvl) :]
-            query = query.filter(Service.risk_level.in_(allowed))
+        if lvl not in _ORDER:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid min_risk_level '{min_risk_level}'. Allowed: {', '.join(_ORDER)}",
+            )
+        allowed = _ORDER[_ORDER.index(lvl) :]
+        query = query.filter(Service.risk_level.in_(allowed))
 
     if search:
         safe_search = escape_like(search)

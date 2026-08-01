@@ -128,6 +128,31 @@ class TestServiceRisk:
         assert r["components"]["http_login_exposed"] is True
         assert r["risk_level"] in ("low", "medium", "high", "critical")
 
+    def test_matched_at_port_parsing_edge_cases(self):
+        """_finding_service_port must survive IPv6, malformed URLs, non-standard
+        ports, and findings with no URL."""
+        from app.services.risk_scoring import _finding_service_port
+
+        def ev(matched):
+            return _make_finding(evidence={"matched_at": matched})
+
+        # scheme defaults
+        assert _finding_service_port(ev("https://host/path")) == 443
+        assert _finding_service_port(ev("http://host/path")) == 80
+        # explicit / non-standard port
+        assert _finding_service_port(ev("https://host:8443/x")) == 8443
+        assert _finding_service_port(ev("http://host:8080")) == 8080
+        # bracketed IPv6 with port
+        assert _finding_service_port(ev("https://[2001:db8::1]:9443/")) == 9443
+        assert _finding_service_port(ev("[::1]:6379")) == 6379
+        # malformed port → None, not a crash
+        assert _finding_service_port(ev("http://host:notaport/")) is None
+        assert _finding_service_port(ev("http://host:99999999/")) is None
+        # no URL / empty / non-string
+        assert _finding_service_port(_make_finding(evidence={})) is None
+        assert _finding_service_port(_make_finding(evidence=None)) is None
+        assert _finding_service_port(ev("")) is None
+
     def test_clean_service_is_info(self):
         """A TLS web service with no findings and no risky port → info, no noise."""
         svc = _make_service(port=443, has_tls=True, http_title="Docs")

@@ -109,17 +109,25 @@ def _finding_service_port(finding) -> Optional[int]:
     if not isinstance(ev, dict):
         return None
     matched = ev.get("matched_at") or ev.get("host") or ev.get("url") or ""
-    if not matched:
+    if not isinstance(matched, str) or not matched.strip():
         return None
+    matched = matched.strip()
     from urllib.parse import urlparse
 
-    parsed = urlparse(matched if "//" in matched else f"//{matched}", scheme="")
-    if parsed.port:
-        return parsed.port
+    # Give bare host[:port] (incl. bracketed IPv6 like [::1]:8443) an authority so
+    # urlparse populates .port; a scheme'd URL is parsed as-is.
+    try:
+        parsed = urlparse(matched if "//" in matched else f"//{matched}", scheme="")
+        port = parsed.port  # raises ValueError on a malformed/out-of-range port
+    except ValueError:
+        return None
+    if port:
+        return port
     scheme = (parsed.scheme or "").lower()
-    if scheme == "https" or matched.lower().startswith("https"):
+    low = matched.lower()
+    if scheme == "https" or low.startswith("https"):
         return 443
-    if scheme == "http" or matched.lower().startswith("http"):
+    if scheme == "http" or low.startswith("http"):
         return 80
     return None
 

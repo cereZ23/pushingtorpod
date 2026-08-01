@@ -244,16 +244,19 @@ def _classify_phase_outcome(result) -> tuple:
         return PhaseStatus.PARTIAL, reason
     if result.get("partial"):
         return PhaseStatus.PARTIAL, str(result.get("partial_reason") or "partial result")
-    # Standard counters: partial iff some input was covered but some was not.
+    # Standard counters.
     total = result.get("items_total")
     if isinstance(total, int) and total > 0:
         succeeded = result.get("items_succeeded", 0) or 0
         failed = result.get("items_failed", 0) or 0
         skipped = result.get("items_skipped", 0) or 0
-        incomplete = failed + skipped
-        if 0 < succeeded < total and incomplete > 0:
-            reason = f"{succeeded}/{total} succeeded ({failed} failed, {skipped} skipped)"
-            return PhaseStatus.PARTIAL, reason
+        # Nothing succeeded while work actually failed → the phase FAILED; it must
+        # not read as COMPLETED. (All-skipped with no failures is legitimate.)
+        if succeeded == 0 and failed > 0:
+            return PhaseStatus.FAILED, f"0/{total} succeeded ({failed} failed, {skipped} skipped)"
+        # Some, but not all, of the input succeeded → PARTIAL.
+        if 0 < succeeded < total and (failed + skipped) > 0:
+            return PhaseStatus.PARTIAL, f"{succeeded}/{total} succeeded ({failed} failed, {skipped} skipped)"
     return PhaseStatus.COMPLETED, None
 
 
@@ -262,14 +265,20 @@ def _mark_phase_outcome(db, scan_run_id: int, phase_id: str, result, pipeline_st
     into ``pipeline_stats`` for operational propagation. Returns the PhaseStatus."""
     status, reason = _classify_phase_outcome(result)
     stats = result if isinstance(result, dict) else None
+    name = PHASE_DEFS[phase_id]["name"]
+    # 0/N succeeded → the phase FAILED (a result dict, no exception raised).
+    if status == PhaseStatus.FAILED:
+        _update_phase(db, scan_run_id, phase_id, PhaseStatus.FAILED, stats=stats, error=reason)
+        pipeline_stats["phases_failed"] += 1
+        if tenant_logger:
+            tenant_logger.error("Phase %s (%s) FAILED: %s", phase_id, name, reason)
+        return status
     if status == PhaseStatus.PARTIAL:
         stats = dict(stats or {})
         stats["partial_reason"] = reason
-        pipeline_stats.setdefault("partial_phases", []).append(
-            {"phase": phase_id, "name": PHASE_DEFS[phase_id]["name"], "reason": reason}
-        )
+        pipeline_stats.setdefault("partial_phases", []).append({"phase": phase_id, "name": name, "reason": reason})
         if tenant_logger:
-            tenant_logger.warning("Phase %s (%s) PARTIAL: %s", phase_id, PHASE_DEFS[phase_id]["name"], reason)
+            tenant_logger.warning("Phase %s (%s) PARTIAL: %s", phase_id, name, reason)
     _update_phase(db, scan_run_id, phase_id, status, stats=stats)
     # A partial phase still ran — count it toward "phases that executed" so the
     # X/Y ratio stays honest; partial_phases carries the degraded detail.
@@ -840,10 +849,13 @@ def run_single_phase(self, scan_run_id: int, phase_id: str):
             result = _execute_phase(phase_id, tenant_id, project_id, scan_run_id, db, tenant_logger, scan_tier)
             status, reason = _classify_phase_outcome(result)
             stats = result if isinstance(result, dict) else None
+            error = None
             if status == PhaseStatus.PARTIAL:
                 stats = dict(stats or {})
                 stats["partial_reason"] = reason
-            _update_phase(db, scan_run_id, phase_id, status, stats=stats)
+            elif status == PhaseStatus.FAILED:
+                error = reason  # 0/N succeeded
+            _update_phase(db, scan_run_id, phase_id, status, stats=stats, error=error)
             db.commit()
             tenant_logger.info(f"Phase {phase_id} {status.value}: {result}")
             return result

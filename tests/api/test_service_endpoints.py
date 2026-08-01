@@ -216,3 +216,80 @@ def other_tenant_services(db_session, other_tenant):
     db_session.add_all(services)
     db_session.commit()
     return services
+
+
+@pytest.fixture
+def tenant_with_risk_services(db_session, test_tenant):
+    """One asset with services carrying explicit persisted risk levels."""
+    asset = Asset(
+        tenant_id=test_tenant.id,
+        identifier="risk.example.com",
+        type=AssetType.SUBDOMAIN,
+        is_active=True,
+    )
+    db_session.add(asset)
+    db_session.commit()
+    db_session.refresh(asset)
+
+    levels = [("critical", 95.0), ("high", 70.0), ("medium", 50.0), ("low", 25.0), ("info", 5.0)]
+    services = [
+        Service(asset_id=asset.id, port=1000 + i, protocol="tcp", risk_level=lvl, risk_score=score)
+        for i, (lvl, score) in enumerate(levels)
+    ]
+    db_session.add_all(services)
+    db_session.commit()
+    return services
+
+
+class TestServiceRiskFilterSortPaginate:
+    """min_risk_level filter, risk_score sort, pagination, and tenant isolation."""
+
+    def _services(self, response):
+        data = response.json()
+        return data["data"] if isinstance(data, dict) and "data" in data else data
+
+    def test_min_risk_level_filters_at_or_above(self, authenticated_client, test_tenant, tenant_with_risk_services):
+        response = authenticated_client.get(
+            f"/api/v1/tenants/{test_tenant.id}/services", params={"min_risk_level": "high"}
+        )
+        assert response.status_code == 200
+        levels = {s["risk_level"] for s in self._services(response)}
+        assert levels <= {"high", "critical"}
+        assert "medium" not in levels and "low" not in levels
+
+    def test_invalid_min_risk_level_is_422(self, authenticated_client, test_tenant, tenant_with_risk_services):
+        response = authenticated_client.get(
+            f"/api/v1/tenants/{test_tenant.id}/services", params={"min_risk_level": "bogus"}
+        )
+        assert response.status_code == 422
+
+    def test_sort_by_risk_score_desc(self, authenticated_client, test_tenant, tenant_with_risk_services):
+        response = authenticated_client.get(
+            f"/api/v1/tenants/{test_tenant.id}/services",
+            params={"sort_by": "risk_score", "sort_order": "desc"},
+        )
+        assert response.status_code == 200
+        scores = [s["risk_score"] for s in self._services(response) if s["risk_score"] is not None]
+        assert scores == sorted(scores, reverse=True)
+        assert scores[0] == 95.0
+
+    def test_pagination_limits_page_size(self, authenticated_client, test_tenant, tenant_with_risk_services):
+        response = authenticated_client.get(
+            f"/api/v1/tenants/{test_tenant.id}/services",
+            params={"page": 1, "page_size": 2, "sort_by": "risk_score", "sort_order": "desc"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert len(self._services(response)) == 2
+        assert body["meta"]["total"] == 5
+        assert body["meta"]["total_pages"] == 3
+
+    def test_min_risk_level_respects_tenant_isolation(
+        self, authenticated_client, test_tenant, other_tenant, other_tenant_services
+    ):
+        response = authenticated_client.get(
+            f"/api/v1/tenants/{test_tenant.id}/services", params={"min_risk_level": "info"}
+        )
+        assert response.status_code == 200
+        # other_tenant's services must never leak, regardless of filter
+        assert self._services(response) == []
