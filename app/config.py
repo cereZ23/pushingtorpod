@@ -266,6 +266,16 @@ class Settings(BaseSettings):
         "2375,2376,2379,2380,5984,8086,8500,9042,2181,7474,7687,26257,50070,8088,1521,9090,3000"
     )
 
+    # Vuln-scan performance: prune hosts that are unresponsive or 5xx-on-every-probe
+    # OUT of the heavy nuclei CVE passes before they run. A dead host costs nuclei up
+    # to `-mhe × -timeout` seconds (~500s) of hanging sockets before it's abandoned,
+    # which dominates the wall-clock and eats the phase budget → truncated coverage on
+    # large sites. Pruned hosts still get the light SSL/takeover pass (cert-expiry and
+    # subdomain-takeover findings are preserved) and the DNS/network pass. A host is
+    # dropped only if EVERY probe (https + http, root + /robots.txt) fails. Reversible.
+    nuclei_prune_dead_hosts: bool = True
+    nuclei_dead_host_min_status: int = 500  # status >= this counts as "not alive"
+
     # Nuclei - per-tier exclude-tags.
     # The default (T1) now ALLOWS version-based CVE detection templates
     # (sqli/xss/rce/... matchers that don't send attack payloads) so the

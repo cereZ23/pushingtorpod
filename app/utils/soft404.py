@@ -82,6 +82,75 @@ def _probe_host(base_url: str, timeout: float = 5.0) -> bool:
         return False
 
 
+def _probe_host_alive(base_url: str, timeout: float = 6.0, min_status: int = 500) -> bool:
+    """Return True if the host is ALIVE.
+
+    Alive = at least one sampled probe returns a status < ``min_status``. Dead =
+    every probe is a timeout / connection-error OR a status >= ``min_status``
+    (e.g. a host that answers 500 on everything, or is behind a dead CDN edge).
+    A 404/403 counts as alive — the host is responsive, it just lacks that path.
+    Two samples (root + /robots.txt) guard against a single transient blip.
+    """
+    base = base_url.rstrip("/")
+    for url in (base + "/", base + "/robots.txt"):
+        try:
+            with httpx.Client(
+                timeout=timeout,
+                follow_redirects=True,
+                verify=False,
+                headers={"User-Agent": "Mozilla/5.0 (EASM Scanner)"},
+            ) as client:
+                resp = client.get(url)
+                if resp.status_code < min_status:
+                    return True
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPError):
+            continue
+        except Exception:
+            continue
+    return False
+
+
+def detect_dead_hosts(
+    base_urls: list[str],
+    timeout: float = 6.0,
+    max_workers: int = 30,
+    min_status: int = 500,
+) -> Set[str]:
+    """Probe hosts in parallel and return the set that are DEAD.
+
+    A dead host (unresponsive or 5xx on every sampled probe) costs nuclei up to
+    ``-mhe × -timeout`` seconds of hanging sockets before it is abandoned, which
+    dominates the vuln-scan wall-clock and eats the phase budget. Pruning them
+    before nuclei redirects that fixed budget to live hosts — more real coverage,
+    not less. Conservative: a host is dropped only if EVERY probe fails.
+    """
+    if not base_urls:
+        return set()
+
+    dead_hosts: set[str] = set()
+
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(base_urls))) as pool:
+        future_to_url = {pool.submit(_probe_host_alive, url, timeout, min_status): url for url in base_urls}
+
+        for future in as_completed(future_to_url):
+            url = future_to_url[future]
+            try:
+                if not future.result():
+                    dead_hosts.add(url)
+            except Exception:
+                pass
+
+    if dead_hosts:
+        logger.info(
+            "Dead-host prune: %d/%d hosts unresponsive or >=%d on every probe",
+            len(dead_hosts),
+            len(base_urls),
+            min_status,
+        )
+
+    return dead_hosts
+
+
 def detect_soft404_hosts(
     base_urls: list[str],
     timeout: float = 5.0,
