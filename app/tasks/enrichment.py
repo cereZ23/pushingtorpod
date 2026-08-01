@@ -688,6 +688,14 @@ def run_naabu(
                 # Strip "top-" prefix if present from legacy config
                 top_ports = top_ports.replace("top-", "")
                 args.extend(["-tp", top_ports])
+                # Union in the curated high-value DB/admin ports that top-N
+                # misses (Redis/Mongo/Memcached/etc.). naabu merges -tp and -p,
+                # so an exposed datastore is found on every tier. full_scan
+                # already covers all ports, so this augments top-N scans only.
+                sensitive_ports = (settings.naabu_sensitive_ports or "").strip()
+                if sensitive_ports:
+                    args.extend(["-p", sensitive_ports])
+                    tenant_logger.info(f"Naabu sensitive ports (union with top-{top_ports}): {sensitive_ports}")
 
             # Exclude blocked ports. Caller can override via `blocked_ports`
             # (e.g., tier-aware policy in _phase_5_port_scanning). Pass an
