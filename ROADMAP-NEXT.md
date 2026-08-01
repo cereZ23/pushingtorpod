@@ -59,6 +59,24 @@ su 38, 92 errori ESLint soppressi in CI.
   target noto (Google Firing Range → `reflected-xss`, **provato live**) → verifica che il template
   atteso scatti, altrimenti engine-health rosso. `evaluate_canary` (puro) + task self-contained
   (scarica i fuzzing-templates se assenti) + `GET/POST /health/scan-engine` (superuser) + cache Redis.
+- **Robustezza pipeline: PARTIAL first-class + bulk-retest + rischio servizio (1 ago, PR #82-87)** —
+  arco "scanner correctness":
+  - **PARTIAL first-class (#82, #86, #87)**: `PhaseStatus.PARTIAL` (no migration, VARCHAR) con
+    `completed_at`; criterio unico `_classify_phase_outcome` (coverage nuclei / flag `partial` /
+    contatori standard `items_total|succeeded|failed|skipped`); **0/N riusciti → FAILED** (non
+    COMPLETED); `skipped` **informativo** (esclusioni volontarie non degradano la fase, solo i
+    fallimenti reali). Propagazione: rollup scan-level (`completeness`+`partial_phases`), notifica
+    "partial coverage", API + banner UI ambra. Contatori `items_*` adottati in **DNS/HTTPX/TLSx/Naabu/
+    DAST/misconfig** (failed = errore reale del tool, non "trovato nulla").
+  - **Bulk retest sbloccato (#83)**: `/findings/{finding_id:int}/retest` con converter `:int` →
+    `bulk/retest` non è più catturata dalla parametrica (order-independent).
+  - **Rischio servizio spiegabile e persistito (#84, #85, #86)**: `calculate_service_risk` riusa i
+    primitivi di asset/finding (`compute_finding_score`/`HIGH_RISK_PORTS`/`_get_risk_level`);
+    **correlazione finding↔servizio via `matched_at`/porta** (SSH non eredita più la CVE del web a
+    piena gravità; altri finding = contesto ridotto 0.5×). **Persistito** su `Service` (colonne
+    risk_score/level/components, migration 023, calcolo in fase 11 batch) → API **sort/filter globale**
+    (`sort_by=risk_score` NULL-last, `min_risk_level` validato→422) **prima** della paginazione; UI:
+    colonna Risk + breakdown `risk_components` espandibile + dropdown filtro. Backfill al prossimo scan.
 - **DAST attivo end-to-end + Scan Authorizations (1 ago, PR #73-75)** — fase **9d `_phase_9d_dast`**
   (`katana -f qurl` → `nuclei -dast -fa`), gated **hard**: T3 **+** ScanAuthorization attiva (finestra
   `valid_from/until` verificata) **+** `dast_enabled` off di default; immagine worker con
@@ -182,6 +200,15 @@ _Consistenza UX, salute del codice, qualità dei finding._
     `nvd_api_key` in prod per togliere il rate-limit anonimo (6s/coppia).
   - **porte**: verificare al primo scan reale che i datastore esposti emergano (redis/mongo) e, se
     utile, un finding `EXP` dedicato "datastore esposto senza auth".
+- [ ] **Follow-up robustezza pipeline / rischio (dopo PR #82-87)**:
+  - **PARTIAL per-target fine-grained** per i tool batch (dnsx/httpx/naabu/tlsx): oggi il `failed` è
+    tutto-o-niente sul run (i runner non tracciano l'errore per-target). Per un partial granulare
+    servirebbe far riportare ai runner gli errori per-host (come già fa misconfig e nuclei via
+    `coverage_complete`).
+  - **Backfill rischio servizio**: i servizi esistenti hanno risk NULL finché la fase 11 del prossimo
+    scan non gira. Opzionale: comando/endpoint di **recalc on-demand** per popolarli subito.
+  - **Precisione correlazione**: `matched_at` è best-effort (porta esplicita o default di schema); i
+    finding senza URL restano contesto asset-level (documentato in `finding_scope`).
 
 ## P2 — Feature / scala (backlog)
 
