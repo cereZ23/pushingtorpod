@@ -80,6 +80,7 @@ def _persist_pass_catalog(
     except Exception:  # noqa: BLE001 — observational: never break the scan
         logger.exception("coverage: catalog persist crashed for policy %s — emit continues", manifest.policy_hash)
 
+
 # Where the stock nuclei templates live inside the worker image (see nuclei_service).
 NUCLEI_TEMPLATES_DIR = "/home/appuser/nuclei-templates"
 

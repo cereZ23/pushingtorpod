@@ -129,9 +129,7 @@ class CoverageRepository:
         templates when the policy is unchanged (the catalog is immutable per policy_hash).
         """
         return (
-            self.db.query(ScanPolicyTemplate.policy_hash)
-            .filter(ScanPolicyTemplate.policy_hash == policy_hash)
-            .first()
+            self.db.query(ScanPolicyTemplate.policy_hash).filter(ScanPolicyTemplate.policy_hash == policy_hash).first()
             is not None
         )
 
