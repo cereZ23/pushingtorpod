@@ -59,6 +59,26 @@ su 38, 92 errori ESLint soppressi in CI.
   target noto (Google Firing Range → `reflected-xss`, **provato live**) → verifica che il template
   atteso scatti, altrimenti engine-health rosso. `evaluate_canary` (puro) + task self-contained
   (scarica i fuzzing-templates se assenti) + `GET/POST /health/scan-engine` (superuser) + cache Redis.
+- **Vuln-scan performance + affidabilità scan (1-2 ago, PR #89-92)** — arco nato dal vivo mentre
+  uno scan T2 falliva a 60 min:
+  - **Pruning host morti prima di nuclei (#89)** — il wall-clock del vuln-scan era dominato dalla
+    *tassa di timeout* di nuclei su host morti-ma-prima-vivi (soft-404 becca solo i 200; i 5xx/timeout
+    passavano e ognuno costava ~`-mhe 50 × -timeout 10s` ≈ 500s di socket appesi → FAILED a 60 min).
+    `detect_dead_hosts` (probe root+/robots https+http) instrada i morti nella **pass leggera
+    SSL/takeover** (fuori dal loop CVE), preservando cert/takeover. **Provato dal vivo**: da FAILED-a-
+    60min a **pass da 6-34s / 0 errori**. Flag `nuclei_prune_dead_hosts`.
+  - **Watchdog stale-scan (#92)** — reaper Celery Beat (ogni 5 min) che auto-**FAILa** gli scan
+    `RUNNING` fermi oltre *budget-tier + grace* (heartbeat = ultimo PhaseResult, no migration). Chiude
+    lo **zombie** lasciato quando un worker muore a metà (deploy/OOM) — il `time_limit` interno non
+    scatta senza processo vivo. Soglia generosa (mai reare uno scan lungo-ma-vivo). Config +8 test.
+  - **Fix Duration timezone (#90)** — il backend serializza datetime **naive senza `Z`** → il browser
+    li leggeva come ora locale → Duration gonfiata dell'offset UTC (uno scan di 31 min mostrato "2h27m"
+    in CEST). `parseApiDate` (naive→UTC) nel formatter condiviso + durate ScanDetail. Corregge durate
+    e orari in tutta l'app, senza toccare l'API.
+  - **Messaggio Test-alert chiaro (#91)** — "Failed: webhook" (sembrava un 500) ora riporta il
+    *perché* + segnala l'URL placeholder del seed-defaults.
+  - Chiarito **`xss-fuzz`**: NON è una falla né il DAST — è un template `http/vulnerabilities/generic/`
+    (tag `xss,vuln`, no `fuzzing:`, gira senza `-dast`), detection XSS legittima su T2. Gating DAST intatto.
 - **Robustezza pipeline: PARTIAL first-class + bulk-retest + rischio servizio (1 ago, PR #82-87)** —
   arco "scanner correctness":
   - **PARTIAL first-class (#82, #86, #87)**: `PhaseStatus.PARTIAL` (no migration, VARCHAR) con
@@ -209,6 +229,20 @@ _Consistenza UX, salute del codice, qualità dei finding._
     scan non gira. Opzionale: comando/endpoint di **recalc on-demand** per popolarli subito.
   - **Precisione correlazione**: `matched_at` è best-effort (porta esplicita o default di schema); i
     finding senza URL restano contesto asset-level (documentato in `finding_scope`).
+- [ ] **Tuning volume vuln-scan T2 (dopo il pruning #89) — da validare su tenant grande**: anche col
+  pruning, un sito *grande* in T2 fa tanto lavoro (host vivi × endpoint katana × template, batch
+  sequenziali, budget ~54 min) e può sfiorare il budget → troncamento. Leve, **una alla volta e
+  misurate** (durata fase 9 ↓, `coverage_complete` resta True, conteggio finding invariato):
+  1. **`nuclei_max_endpoints_per_host` 200 → ~75 (tier-aware)** — taglio di volume maggiore, rischio
+     recall basso (lo shape-dedup già collassa `/id=1..N`); tenere 200 per T3.
+  2. **`-timeout` 10 → 6s (T1/T2)** — riduce l'attesa sugli host vivi-ma-lenti; T3 resta 10s.
+  3. **(se serve) batching 2× parallelo** — ora sicuro *dopo* il pruning (niente più socket appesi);
+     gate basso, monitorando i 429 via adaptive-throttle.
+  Non urgente: il pruning ha già reso i T2 correnti veloci; serve solo se un tenant davvero grande
+  resta lungo. NON fare per primo: alzare `-c`/rate o abbassare `-mhe` (regressione documentata).
+- [x] **Watchdog stale-scan** — **[FATTO, PR #92]** reaper beat auto-FAIL degli scan zombie (worker
+  morto a metà). Fase B futura: colonna `ScanRun.heartbeat_at` timbrata intra-nuclei per reaping più
+  veloce (oggi soglia generosa = budget-tier + grace, ~90 min per T2).
 
 ## P2 — Feature / scala (backlog)
 
