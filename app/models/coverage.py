@@ -102,9 +102,7 @@ class ScanPolicyTemplate(Base):
     __tablename__ = "scan_policy_templates"
 
     id = Column(Integer, primary_key=True)
-    policy_hash = Column(
-        String(64), ForeignKey("scan_policy.policy_hash", ondelete="CASCADE"), nullable=False
-    )
+    policy_hash = Column(String(64), ForeignKey("scan_policy.policy_hash", ondelete="CASCADE"), nullable=False)
     detector_id = Column(String(255), nullable=False)  # nuclei template id / misconfig control id
     relative_path = Column(String(1024), nullable=False)
     content_digest = Column(String(64), nullable=False)
@@ -143,7 +141,10 @@ class ScanCoverage(Base):
     status = Column(_coverage_status_enum(), nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(
-        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
     )
 
     __table_args__ = (

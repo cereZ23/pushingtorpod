@@ -274,9 +274,7 @@ def test_misconfig_revision_disagreement_is_fail_closed():
 
 def test_nuclei_policy_rejected_by_misconfig_enumerator():
     controls = [{"id": "HDR-001", "enabled": True, "config": {}}]
-    nuclei = build_nuclei_policy_manifest(
-        nuclei_version="3.3.1", template_revision="x", pass_name="http_stock", tier=1
-    )
+    nuclei = build_nuclei_policy_manifest(nuclei_version="3.3.1", template_revision="x", pass_name="http_stock", tier=1)
     with pytest.raises(RuleCatalogError):
         enumerate_misconfig_applicable_rules(nuclei, controls)
 

@@ -208,7 +208,8 @@ def test_persist_catalog_extra_and_missing_leaves_db_unchanged(db_session):
     with pytest.raises(CoverageWriteError):
         repo.persist_catalog(_catalog(m.policy_hash))  # ruleset {CVE-A, CVE-B}
     stored = {
-        t.detector_id for t in db_session.query(ScanPolicyTemplate).filter(ScanPolicyTemplate.policy_hash == m.policy_hash)
+        t.detector_id
+        for t in db_session.query(ScanPolicyTemplate).filter(ScanPolicyTemplate.policy_hash == m.policy_hash)
     }
     assert stored == {"CVE-A", "CVE-C"}  # unchanged: B never inserted
 

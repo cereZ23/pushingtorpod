@@ -347,9 +347,7 @@ def _resolve_nuclei_files(base_dir, rule_roots, read_bytes) -> dict[str, Resolve
 
                 prev_rel = real_to_rel.get(real_path)
                 if prev_rel is not None and prev_rel != rel:
-                    raise RuleResolutionError(
-                        f"ambiguous rule: {rel!r} and {prev_rel!r} resolve to the same file"
-                    )
+                    raise RuleResolutionError(f"ambiguous rule: {rel!r} and {prev_rel!r} resolve to the same file")
                 if rel in files:  # same logical path via overlapping roots — count once
                     continue
                 try:

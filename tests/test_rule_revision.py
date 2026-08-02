@@ -67,7 +67,9 @@ def test_rule_revision_changes_with_path():
 
 
 def test_rule_revision_path_normalised():
-    assert compute_rule_revision(_entries(("./http/a.yaml", b"A"))) == compute_rule_revision(_entries(("http/a.yaml", b"A")))
+    assert compute_rule_revision(_entries(("./http/a.yaml", b"A"))) == compute_rule_revision(
+        _entries(("http/a.yaml", b"A"))
+    )
 
 
 def test_rule_revision_empty_is_fail_closed():
@@ -258,9 +260,7 @@ def test_misconfig_non_finite_float_is_fail_closed(bad):
 
 def test_misconfig_error_path_points_at_offender():
     try:
-        compute_misconfig_rule_revision(
-            [{"id": "a"}, {"id": "b"}, {"id": "c", "config": {"timeout": {1, 2}}}]
-        )
+        compute_misconfig_rule_revision([{"id": "a"}, {"id": "b"}, {"id": "c", "config": {"timeout": {1, 2}}}])
         raise AssertionError("expected RuleResolutionError")
     except RuleResolutionError as exc:
         assert "$.controls[2].config.timeout" in str(exc)
@@ -482,7 +482,10 @@ def test_resolve_version_from_stdout():
 
 def test_resolve_version_from_stderr():
     # nuclei prints its banner to stderr
-    assert resolve_nuclei_version(lambda argv: CompletedCommand(0, stderr="[INF] Nuclei Engine Version: v3.3.1")) == "3.3.1"
+    assert (
+        resolve_nuclei_version(lambda argv: CompletedCommand(0, stderr="[INF] Nuclei Engine Version: v3.3.1"))
+        == "3.3.1"
+    )
 
 
 def test_resolve_version_nonzero_exit_is_fail_closed():

@@ -98,7 +98,9 @@ class CoverageRepository:
             "exclude_tags": list(manifest.exclude_tags),
             "relevant_flags": dict(manifest.relevant_flags),
         }
-        stmt = insert(ScanPolicy).values(policy_hash=manifest.policy_hash, created_at=datetime.now(timezone.utc), **expected)
+        stmt = insert(ScanPolicy).values(
+            policy_hash=manifest.policy_hash, created_at=datetime.now(timezone.utc), **expected
+        )
         stmt = stmt.on_conflict_do_nothing(index_elements=["policy_hash"])
         self.db.execute(stmt)
         self.db.commit()
@@ -208,9 +210,7 @@ class CoverageRepository:
 
         owned = {
             row[0]
-            for row in self.db.query(Asset.id)
-            .filter(Asset.id.in_(asset_ids), Asset.tenant_id == tenant_id)
-            .all()
+            for row in self.db.query(Asset.id).filter(Asset.id.in_(asset_ids), Asset.tenant_id == tenant_id).all()
         }
         stray = [a for a in asset_ids if a not in owned]
         if stray:
@@ -273,9 +273,7 @@ class CoverageRepository:
         result = self.db.execute(stmt)
         if result.rowcount != len(rows):
             self.db.rollback()
-            raise CoverageWriteError(
-                "concurrent coverage write under a different policy_hash (atomic guard tripped)"
-            )
+            raise CoverageWriteError("concurrent coverage write under a different policy_hash (atomic guard tripped)")
         self.db.commit()
 
     # --- read helpers (for the auto-close consumer, later) -------------------

@@ -174,13 +174,9 @@ class ScanPolicyManifest:
         # --- pass binds phase AND engine (no semantically-false identity) ----
         exp_phase, exp_engine = spec
         if self.phase != exp_phase:
-            raise ValueError(
-                f"scan policy: pass {pass_name!r} runs in phase {exp_phase!r}, got phase {self.phase!r}"
-            )
+            raise ValueError(f"scan policy: pass {pass_name!r} runs in phase {exp_phase!r}, got phase {self.phase!r}")
         if engine_name != exp_engine:
-            raise ValueError(
-                f"scan policy: pass {pass_name!r} runs on engine {exp_engine!r}, got {engine_name!r}"
-            )
+            raise ValueError(f"scan policy: pass {pass_name!r} runs on engine {exp_engine!r}, got {engine_name!r}")
 
         try:
             tier = int(self.tier)
@@ -203,9 +199,7 @@ class ScanPolicyManifest:
         if engine_name == ENGINE_BUILTIN_MISCONFIG:
             for fld in ("severity", "rule_roots", "exclude_tags"):
                 if getattr(self, fld):
-                    raise ValueError(
-                        f"scan policy: {engine_name} carries no {fld} filter (got {getattr(self, fld)})"
-                    )
+                    raise ValueError(f"scan policy: {engine_name} carries no {fld} filter (got {getattr(self, fld)})")
 
     def canonical(self) -> dict:
         """The exact, normalised structure the hash is taken over (already canonical)."""
