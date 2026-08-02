@@ -113,45 +113,59 @@ class CoverageRepository:
 
     # --- applicable detector catalog -----------------------------------------
 
+    def _read_catalog(self, policy_hash: str) -> dict:
+        return {
+            t.detector_id: (t.relative_path, t.content_digest, t.severity, tuple(t.tags or []))
+            for t in self.db.query(ScanPolicyTemplate).filter(ScanPolicyTemplate.policy_hash == policy_hash).all()
+        }
+
     def persist_catalog(self, ruleset: ApplicableRuleSet) -> int:
-        """Insert the applicable detectors if absent, then VERIFY the persisted catalog
-        matches the ruleset exactly. The catalog is as immutable as the policy: a stored
-        detector with a divergent digest/path/severity/tags, a missing rule, or an extra
-        rule raises ``CoverageWriteError``. Returns the number of ruleset detectors."""
+        """Insert-if-absent the applicable detectors and VERIFY the persisted catalog
+        matches the ruleset exactly — the catalog is as immutable as the policy.
+
+        Verify BEFORE writing: any pre-existing row that is extra (not in the ruleset) or
+        divergent (different path/digest/severity/tags) raises with NO write, so a failed
+        verification never leaves the DB modified. Only genuinely-missing rows are
+        inserted; a post-insert re-read guards against a concurrent writer, and on
+        mismatch the inserts are rolled back. Commit happens only at the end.
+        """
         if self.db.query(ScanPolicy.policy_hash).filter(ScanPolicy.policy_hash == ruleset.policy_hash).first() is None:
             raise CoverageWriteError(f"unknown policy_hash {ruleset.policy_hash!r} (persist the policy first)")
 
         expected = {
             r.detector_id: (r.relative_path, r.content_digest, r.severity, tuple(r.tags)) for r in ruleset.rules
         }
-        rows = [
-            {
-                "policy_hash": ruleset.policy_hash,
-                "detector_id": r.detector_id,
-                "relative_path": r.relative_path,
-                "content_digest": r.content_digest,
-                "severity": r.severity,
-                "tags": list(r.tags),
-            }
-            for r in ruleset.rules
-        ]
-        if rows:
-            stmt = insert(ScanPolicyTemplate).values(rows).on_conflict_do_nothing(constraint="uq_policy_template")
-            self.db.execute(stmt)
-            self.db.commit()
+        stored_before = self._read_catalog(ruleset.policy_hash)
+        bad = sorted(d for d in stored_before if stored_before[d] != expected.get(d))
+        if bad:  # extra or divergent rows already present — refuse without writing
+            raise CoverageWriteError(f"catalog for {ruleset.policy_hash} has extra/divergent rows: {bad}")
 
-        stored = {
-            t.detector_id: (t.relative_path, t.content_digest, t.severity, tuple(t.tags or []))
-            for t in self.db.query(ScanPolicyTemplate).filter(ScanPolicyTemplate.policy_hash == ruleset.policy_hash).all()
-        }
-        if stored != expected:
-            missing = sorted(set(expected) - set(stored))
-            extra = sorted(set(stored) - set(expected))
-            divergent = sorted(d for d in set(expected) & set(stored) if expected[d] != stored[d])
-            raise CoverageWriteError(
-                f"catalog for {ruleset.policy_hash} diverges (missing={missing}, extra={extra}, divergent={divergent})"
+        missing = [r for r in ruleset.rules if r.detector_id not in stored_before]
+        if missing:
+            self.db.execute(
+                insert(ScanPolicyTemplate)
+                .values(
+                    [
+                        {
+                            "policy_hash": ruleset.policy_hash,
+                            "detector_id": r.detector_id,
+                            "relative_path": r.relative_path,
+                            "content_digest": r.content_digest,
+                            "severity": r.severity,
+                            "tags": list(r.tags),
+                        }
+                        for r in missing
+                    ]
+                )
+                .on_conflict_do_nothing(constraint="uq_policy_template")
             )
-        return len(rows)
+            self.db.flush()
+            if self._read_catalog(ruleset.policy_hash) != expected:  # concurrent divergent write
+                self.db.rollback()
+                raise CoverageWriteError(f"catalog for {ruleset.policy_hash} diverged during write (concurrent?)")
+
+        self.db.commit()
+        return len(expected)
 
     # --- per-pass coverage ----------------------------------------------------
 
@@ -169,13 +183,12 @@ class CoverageRepository:
         """Atomically upsert one coverage verdict per asset for a pass.
 
         Fail-closed verification before any write: the run must belong to ``tenant_id``;
-        the policy must exist; every asset must belong to ``tenant_id``. Returns the
-        number of coverage rows written (0 if ``asset_ids`` is empty).
+        the policy must exist and match ``phase``/``pass_name``; every asset must belong
+        to ``tenant_id``; and no existing coverage for the same (run, phase, pass, asset)
+        may name a DIFFERENT policy_hash. Returns the number of coverage rows written.
         """
-        asset_ids = sorted({int(a) for a in asset_ids})
-        if not asset_ids:
-            return 0
-
+        # Validate run/policy/phase/pass BEFORE the empty-asset shortcut, so a wiring
+        # error is never hidden by an empty asset list.
         run = self.db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
         if run is None or run.tenant_id != tenant_id:
             raise CoverageWriteError(f"scan_run {scan_run_id} does not belong to tenant {tenant_id}")
@@ -189,6 +202,10 @@ class CoverageRepository:
                 f"not {phase!r}/{pass_name!r}"
             )
 
+        asset_ids = sorted({int(a) for a in asset_ids})
+        if not asset_ids:
+            return 0
+
         owned = {
             row[0]
             for row in self.db.query(Asset.id)
@@ -198,6 +215,25 @@ class CoverageRepository:
         stray = [a for a in asset_ids if a not in owned]
         if stray:
             raise CoverageWriteError(f"assets {stray} do not belong to tenant {tenant_id}")
+
+        # A coverage row already recorded under a different policy is ambiguous: refuse
+        # rather than silently keep the old policy_hash while reporting success.
+        conflicting = [
+            row[0]
+            for row in self.db.query(ScanCoverage.asset_id, ScanCoverage.policy_hash)
+            .filter(
+                ScanCoverage.scan_run_id == scan_run_id,
+                ScanCoverage.phase == phase,
+                ScanCoverage.pass_name == pass_name,
+                ScanCoverage.asset_id.in_(asset_ids),
+            )
+            .all()
+            if row[1] != policy_hash
+        ]
+        if conflicting:
+            raise CoverageWriteError(
+                f"coverage for assets {conflicting} already recorded under a different policy_hash"
+            )
 
         now = datetime.now(timezone.utc)
         rows = [

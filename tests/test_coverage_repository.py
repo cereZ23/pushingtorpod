@@ -178,6 +178,41 @@ def test_persist_catalog_unknown_policy_is_rejected(db_session):
         repo.persist_catalog(_catalog("deadbeef" * 8))
 
 
+def test_persist_catalog_extra_and_missing_leaves_db_unchanged(db_session):
+    # pre-existing catalog {CVE-A (matches), CVE-C (extra)}; ruleset is {CVE-A, CVE-B}
+    # → one extra (C) + one missing (B). Must raise WITHOUT inserting B.
+    repo = CoverageRepository(db_session)
+    m = _manifest()
+    repo.persist_policy(m)
+    db_session.add_all(
+        [
+            ScanPolicyTemplate(
+                policy_hash=m.policy_hash,
+                detector_id="CVE-A",
+                relative_path="http/cves/a.yaml",
+                content_digest="a" * 64,
+                severity="high",
+                tags=["cve"],
+            ),
+            ScanPolicyTemplate(
+                policy_hash=m.policy_hash,
+                detector_id="CVE-C",
+                relative_path="http/cves/c.yaml",
+                content_digest="c" * 64,
+                severity="high",
+                tags=["cve"],
+            ),
+        ]
+    )
+    db_session.commit()
+    with pytest.raises(CoverageWriteError):
+        repo.persist_catalog(_catalog(m.policy_hash))  # ruleset {CVE-A, CVE-B}
+    stored = {
+        t.detector_id for t in db_session.query(ScanPolicyTemplate).filter(ScanPolicyTemplate.policy_hash == m.policy_hash)
+    }
+    assert stored == {"CVE-A", "CVE-C"}  # unchanged: B never inserted
+
+
 # --- coverage upsert + idempotency -------------------------------------------
 
 
@@ -284,6 +319,58 @@ def test_policy_phase_pass_mismatch_is_rejected(db_session, test_tenant):
             pass_name="misconfig",  # wrong for this policy
             policy_hash=m.policy_hash,
             asset_ids=[a.id],
+            status=CoverageStatus.COVERED,
+        )
+
+
+def test_coverage_with_different_policy_hash_is_rejected(db_session, test_tenant):
+    repo = CoverageRepository(db_session)
+    m1 = _manifest()
+    m2 = build_nuclei_policy_manifest(
+        nuclei_version="3.3.1",
+        template_revision="DIFFERENT-rev",  # → different policy_hash, same phase 9/http_stock
+        pass_name="http_stock",
+        tier=1,
+        severity=["critical", "high"],
+        template_roots=["http/cves"],
+        exclude_tags=["fuzz"],
+    )
+    assert m1.policy_hash != m2.policy_hash
+    repo.persist_policy(m1)
+    repo.persist_policy(m2)
+    run = _run(db_session, test_tenant)
+    a = _asset(db_session, test_tenant, "a.test.com")
+    _cover(repo, test_tenant, run, m1, a, CoverageStatus.COVERED)
+
+    with pytest.raises(CoverageWriteError):
+        repo.record_pass_coverage(
+            tenant_id=test_tenant.id,
+            scan_run_id=run.id,
+            phase="9",
+            pass_name="http_stock",
+            policy_hash=m2.policy_hash,  # different policy for the same run/pass/asset
+            asset_ids=[a.id],
+            status=CoverageStatus.PARTIAL,
+        )
+    row = db_session.query(ScanCoverage).filter(ScanCoverage.scan_run_id == run.id).one()
+    assert row.policy_hash == m1.policy_hash and row.status == CoverageStatus.COVERED  # original intact
+
+
+def test_empty_assets_still_validates_run(db_session, test_tenant):
+    # a wiring error (bad run) must NOT be hidden by an empty asset list
+    repo = CoverageRepository(db_session)
+    m = _manifest()
+    repo.persist_policy(m)
+    other = _second_tenant(db_session)
+    other_run = _run(db_session, other)
+    with pytest.raises(CoverageWriteError):
+        repo.record_pass_coverage(
+            tenant_id=test_tenant.id,
+            scan_run_id=other_run.id,  # belongs to `other`
+            phase="9",
+            pass_name="http_stock",
+            policy_hash=m.policy_hash,
+            asset_ids=[],  # empty, but the run is still invalid
             status=CoverageStatus.COVERED,
         )
 
