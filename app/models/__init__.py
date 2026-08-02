@@ -67,6 +67,13 @@ from app.models.report_schedule import (
     ReportSchedule,
 )
 
+from app.models.coverage import (
+    ScanPolicy,
+    ScanPolicyTemplate,
+    ScanCoverage,
+    CoverageStatus,
+)
+
 __all__ = [
     "Base",
     "Tenant",
@@ -106,4 +113,8 @@ __all__ = [
     "UserInvitation",
     "Certificate",
     "Endpoint",
+    "ScanPolicy",
+    "ScanPolicyTemplate",
+    "ScanCoverage",
+    "CoverageStatus",
 ]

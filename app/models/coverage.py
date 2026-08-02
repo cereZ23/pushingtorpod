@@ -1,0 +1,154 @@
+"""Coverage-ledger models — the persistent side of the scan-policy / rule-catalog foundation.
+
+Three tables turn the pure services ([[scan_policy]], [[rule_revision]],
+[[rule_catalog]]) into a durable record that a coverage-aware auto-close can trust:
+
+- ``scan_policy``           — the immutable identity of what a pass executes, keyed by
+                              ``policy_hash`` (GLOBAL: the hash is content-derived and
+                              tenant-independent, so identical policies dedupe).
+- ``scan_policy_templates`` — the applicable detector catalog for a policy (also global,
+                              FK → scan_policy). One row per (policy_hash, detector_id).
+- ``scan_coverage``         — per (run, pass, asset) coverage status (TENANT-scoped,
+                              under RLS). Conservative to start: a whole pass is declared
+                              covered / partial / failed / skipped for all its assets.
+
+Auto-close (later) is the intersection: a finding on asset A from detector D in pass P
+may be closed only if ``scan_coverage`` has a COVERED row for (run, P, A) AND D is in
+``scan_policy_templates`` for that pass's policy.
+"""
+
+from __future__ import annotations
+
+import enum
+from datetime import datetime, timezone
+
+from sqlalchemy import (
+    JSON,
+    Column,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import relationship
+
+from app.models.database import Base
+
+
+class CoverageStatus(enum.Enum):
+    """Per (run, pass, asset) coverage outcome. Stored as VARCHAR (native_enum=False)."""
+
+    COVERED = "covered"  # pass ran to completion over this asset
+    PARTIAL = "partial"  # pass ran but did not fully cover (e.g. nuclei truncated)
+    FAILED = "failed"  # pass raised for this asset
+    SKIPPED = "skipped"  # pass did not run (informational, not authorising)
+    UNSTARTED = "unstarted"  # planned but never reached
+
+
+def _coverage_status_enum() -> Enum:
+    return Enum(
+        CoverageStatus,
+        values_callable=lambda x: [e.value for e in x],
+        native_enum=False,
+        create_constraint=False,
+    )
+
+
+class ScanPolicy(Base):
+    """Immutable identity of what a scan pass executes (global, keyed by policy_hash).
+
+    Written insert-if-absent and NEVER updated — a changed input yields a different
+    ``policy_hash`` and thus a new row. Mirrors the pure ``ScanPolicyManifest``.
+    """
+
+    __tablename__ = "scan_policy"
+
+    policy_hash = Column(String(64), primary_key=True)
+    schema_version = Column(String(16), nullable=False)
+    engine_name = Column(String(32), nullable=False)
+    engine_version = Column(String(128), nullable=False)
+    rule_revision = Column(String(64), nullable=False)
+    phase = Column(String(10), nullable=False)
+    pass_name = Column(String(64), nullable=False)
+    tier = Column(Integer, nullable=False)
+    severity = Column(JSON, nullable=False)  # sorted list
+    rule_roots = Column(JSON, nullable=False)  # sorted list
+    exclude_tags = Column(JSON, nullable=False)  # sorted list
+    relevant_flags = Column(JSON, nullable=False)  # sorted {k: v}
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    templates = relationship("ScanPolicyTemplate", back_populates="policy", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_scan_policy_pass", "engine_name", "pass_name"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ScanPolicy(policy_hash={self.policy_hash[:12]}…, pass={self.pass_name!r})>"
+
+
+class ScanPolicyTemplate(Base):
+    """One applicable detector for a policy (global; the persisted rule catalog)."""
+
+    __tablename__ = "scan_policy_templates"
+
+    id = Column(Integer, primary_key=True)
+    policy_hash = Column(
+        String(64), ForeignKey("scan_policy.policy_hash", ondelete="CASCADE"), nullable=False
+    )
+    detector_id = Column(String(255), nullable=False)  # nuclei template id / misconfig control id
+    relative_path = Column(String(1024), nullable=False)
+    content_digest = Column(String(64), nullable=False)
+    severity = Column(String(32), nullable=True)
+    tags = Column(JSON, nullable=False, default=list)  # sorted list
+
+    policy = relationship("ScanPolicy", back_populates="templates")
+
+    __table_args__ = (
+        UniqueConstraint("policy_hash", "detector_id", name="uq_policy_template"),
+        Index("idx_policy_template_policy", "policy_hash"),
+        Index("idx_policy_template_detector", "detector_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ScanPolicyTemplate(policy={self.policy_hash[:12]}…, detector={self.detector_id!r})>"
+
+
+class ScanCoverage(Base):
+    """Per (run, pass, asset) coverage status — tenant-scoped, under RLS.
+
+    ``policy_hash`` ties the row to the applicable catalog in ``scan_policy_templates``
+    so auto-close can be per-detector. Unique on (scan_run_id, phase, pass_name,
+    asset_id): one verdict per asset per pass per run, updated idempotently.
+    """
+
+    __tablename__ = "scan_coverage"
+
+    id = Column(Integer, primary_key=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    scan_run_id = Column(Integer, ForeignKey("scan_runs.id", ondelete="CASCADE"), nullable=False)
+    asset_id = Column(Integer, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    phase = Column(String(10), nullable=False)
+    pass_name = Column(String(64), nullable=False)
+    policy_hash = Column(String(64), ForeignKey("scan_policy.policy_hash"), nullable=False)
+    status = Column(_coverage_status_enum(), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("scan_run_id", "phase", "pass_name", "asset_id", name="uq_coverage_run_pass_asset"),
+        Index("idx_coverage_tenant_asset_pass", "tenant_id", "asset_id", "pass_name", "created_at"),
+        Index("idx_coverage_run", "scan_run_id"),
+        Index("idx_coverage_policy", "policy_hash"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ScanCoverage(run={self.scan_run_id}, pass={self.pass_name!r}, "
+            f"asset={self.asset_id}, status={self.status.value if self.status else None})>"
+        )
