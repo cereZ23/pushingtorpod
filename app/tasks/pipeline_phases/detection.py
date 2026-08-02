@@ -491,10 +491,22 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     # Custom templates get buried in the 5000+ stock template queue and
     # never execute before timeout. Running them as a dedicated pass
     # guarantees they always run on every host.
+    # Coverage-ledger wiring: each pass records a conservative per-asset verdict so the
+    # coverage-aware auto-close can prove a detector actually ran on an asset. Import
+    # here (local, like the rest of this phase) and keep every call fail-open.
+    from app.services.coverage_emit import emit_nuclei_pass_coverage
+    from app.services.scan_policy import (
+        PASS_CDN_SSL_TAKEOVER,
+        PASS_CUSTOM_HTTP,
+        PASS_DNS_NETWORK,
+        PASS_HTTP_STOCK,
+    )
+
     if asset_ids:
         tenant_logger.info(
             f"Nuclei custom pass: {len(asset_ids)} direct assets, templates=['/app/custom-nuclei-templates/']"
         )
+        custom_errored = False
         try:
             custom_result = run_nuclei_scan(
                 tenant_id,
@@ -515,7 +527,22 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
                     f"Nuclei custom pass complete: {custom_result.get('findings_created', 0)} new findings"
                 )
         except Exception as exc:
+            custom_errored = True
             tenant_logger.error(f"Nuclei custom pass failed: {exc}")
+        emit_nuclei_pass_coverage(
+            db,
+            tenant_id=tenant_id,
+            scan_run_id=scan_run_id,
+            pass_name=PASS_CUSTOM_HTTP,
+            tier=scan_tier,
+            asset_ids=asset_ids,
+            severity=["critical", "high", "medium", "low"],
+            templates=["/app/custom-nuclei-templates/"],
+            exclude_tags="",
+            ran=True,
+            errored=custom_errored,
+            truncated=False,
+        )
 
     # Run stock passes in PARALLEL — pass 1 (HTTP) and pass 3 (DNS/network) target
     # different protocols so they don't compete for bandwidth. The HTTP-live
@@ -532,11 +559,32 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
 
     tenant_logger.info(f"Nuclei: running {len(active_passes)} passes concurrently: {', '.join(active_passes.keys())}")
 
+    # Per-pass coverage metadata (policy identity inputs), keyed by the internal pass id.
+    coverage_meta = {
+        "pass_1": (PASS_HTTP_STOCK, asset_ids, severity, templates_for_scan, exclude_tags),
+        "pass_2": (
+            PASS_CDN_SSL_TAKEOVER,
+            cdn_asset_ids,
+            ["critical", "high", "medium"],
+            ["http/takeovers/", "ssl/"],
+            tier_exclude_tags[1],
+        ),
+        "pass_3": (
+            PASS_DNS_NETWORK,
+            dns_net_asset_ids,
+            ["critical", "high", "medium", "low", "info"],
+            dns_net_tpls,
+            exclude_tags,
+        ),
+    }
+
     truncated_passes: list[str] = []
     with ContextThreadPoolExecutor(max_workers=len(active_passes) or 1) as executor:
         futures = {executor.submit(fn): name for name, fn in active_passes.items()}
         for future in as_completed(futures):
             pass_name = futures[future]
+            pass_errored = False
+            pass_truncated = False
             try:
                 result = future.result()
                 if isinstance(result, dict):
@@ -545,10 +593,29 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
                     total_scanned += result.get("assets_scanned", 0)
                     total_urls += result.get("urls_scanned", 0)
                     if result.get("truncated"):
+                        pass_truncated = True
                         truncated_passes.append(pass_name)
                     tenant_logger.info(f"Nuclei {pass_name} complete: {result.get('findings_created', 0)} findings")
             except Exception as exc:
+                pass_errored = True
                 tenant_logger.error(f"Nuclei {pass_name} failed: {exc}")
+            meta = coverage_meta.get(pass_name)
+            if meta:
+                policy_pass, pass_assets, pass_sev, pass_tpls, pass_excl = meta
+                emit_nuclei_pass_coverage(
+                    db,
+                    tenant_id=tenant_id,
+                    scan_run_id=scan_run_id,
+                    pass_name=policy_pass,
+                    tier=scan_tier,
+                    asset_ids=pass_assets,
+                    severity=pass_sev,
+                    templates=pass_tpls,
+                    exclude_tags=pass_excl,
+                    ran=True,
+                    errored=pass_errored,
+                    truncated=pass_truncated,
+                )
 
     if truncated_passes:
         tenant_logger.warning(
