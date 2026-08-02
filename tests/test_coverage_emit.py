@@ -10,9 +10,51 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.repositories.coverage_repository import CoverageStatus, conservative_pass_status
 from app.services import coverage_emit
-from app.services.coverage_emit import _split_roots, emit_nuclei_pass_coverage
+from app.services.coverage_emit import _split_roots, emit_nuclei_pass_coverage, nuclei_result_outcome
 from app.services.rule_revision import RuleResolutionError
+
+
+# --- pure: run_nuclei_scan result contract -> coverage status ---------------
+# A dict-reported failure ({"status":"failed"}) never raises; it must NOT become
+# COVERED, or the consumer would authorise a false "fixed".
+
+
+def _status(result, *, exception_occurred=False):
+    errored, truncated = nuclei_result_outcome(result, exception_occurred=exception_occurred)
+    return conservative_pass_status(ran=True, errored=errored, truncated=truncated)
+
+
+def test_outcome_success_clean_is_covered():
+    assert _status({"status": "success", "truncated": False}) is CoverageStatus.COVERED
+
+
+def test_outcome_success_truncated_is_partial():
+    assert _status({"status": "success", "truncated": True}) is CoverageStatus.PARTIAL
+
+
+def test_outcome_dict_failed_without_exception_is_failed():
+    # The critical case: failure returned as a dict, no exception raised.
+    assert _status({"status": "failed", "error": "boom"}) is CoverageStatus.FAILED
+
+
+def test_outcome_success_with_error_key_is_failed():
+    assert _status({"status": "success", "error": "partial boom"}) is CoverageStatus.FAILED
+
+
+def test_outcome_no_urls_is_failed_not_covered():
+    # A pass with nothing live to scan did not verify anything -> non-authorising.
+    assert _status({"status": "no_urls"}) is CoverageStatus.FAILED
+
+
+def test_outcome_exception_is_failed():
+    assert _status(None, exception_occurred=True) is CoverageStatus.FAILED
+
+
+def test_outcome_none_or_malformed_is_failed():
+    assert _status(None) is CoverageStatus.FAILED
+    assert _status("not-a-dict") is CoverageStatus.FAILED
 
 
 # --- pure: root splitting (stock vs absolute custom) -------------------------
