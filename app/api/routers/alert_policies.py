@@ -557,6 +557,7 @@ def test_alert_policy(
     tenant_logger = TenantLoggerAdapter(logger, {"tenant_id": tenant_id})
     channels_ok: list[str] = []
     channels_failed: list[str] = []
+    failed_details: list[str] = []
 
     for ch in channels:
         ch_type = ch.get("type", "unknown")
@@ -566,13 +567,22 @@ def test_alert_policy(
         except Exception as exc:
             logger.warning("Test notification failed for channel %s: %s", ch_type, exc)
             channels_failed.append(ch_type)
+            # Surface WHY it failed so a terse "Failed: webhook" doesn't read like
+            # a server error. The placeholder URL from seed-defaults is by far the
+            # most common cause, so name it explicitly.
+            url = ch.get("webhook_url") or ch.get("url") or ""
+            if "example.com" in url:
+                reason = "placeholder URL not configured — set a real webhook/Slack/email on this policy"
+            else:
+                reason = (str(exc).strip() or exc.__class__.__name__)[:200]
+            failed_details.append(f"{ch_type}: {reason}")
 
     success = len(channels_ok) > 0
     parts = []
     if channels_ok:
         parts.append(f"Sent to {', '.join(channels_ok)}")
-    if channels_failed:
-        parts.append(f"Failed: {', '.join(channels_failed)}")
+    if failed_details:
+        parts.append("Failed — " + "; ".join(failed_details))
     message = ". ".join(parts) if parts else "No channels contacted"
 
     logger.info(
