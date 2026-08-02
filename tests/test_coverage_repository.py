@@ -376,6 +376,7 @@ def test_coverage_atomic_guard_rejects_concurrent_different_policy(db_session, t
     repo.persist_policy(m1)
     repo.persist_policy(m2)
     run = _run(db_session, test_tenant)
+    run_id = run.id
     a = _asset(db_session, test_tenant, "a.test.com")
     _cover(repo, test_tenant, run, m1, a, CoverageStatus.COVERED)  # worker A committed M1
 
@@ -383,7 +384,7 @@ def test_coverage_atomic_guard_rejects_concurrent_different_policy(db_session, t
     m2_rows = [
         {
             "tenant_id": test_tenant.id,
-            "scan_run_id": run.id,
+            "scan_run_id": run_id,
             "asset_id": a.id,
             "phase": "9",
             "pass_name": "http_stock",
@@ -395,7 +396,7 @@ def test_coverage_atomic_guard_rejects_concurrent_different_policy(db_session, t
     ]
     with pytest.raises(CoverageWriteError):
         repo._upsert_coverage_rows(m2_rows)
-    row = db_session.query(ScanCoverage).filter(ScanCoverage.scan_run_id == run.id).one()
+    row = db_session.query(ScanCoverage).filter(ScanCoverage.scan_run_id == run_id).one()
     assert row.policy_hash == m1.policy_hash and row.status == CoverageStatus.COVERED
 
 
