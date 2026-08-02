@@ -36,17 +36,35 @@ def test_split_roots_absolute_custom():
 def test_emit_is_noop_without_run_id():
     # No scan_run_id (manual run) → nothing attempted, no error.
     emit_nuclei_pass_coverage(
-        db=None, tenant_id=1, scan_run_id=None, pass_name="http_stock", tier=1,
-        asset_ids=[1, 2], severity=["high"], templates=["http/"], exclude_tags="",
-        ran=True, errored=False, truncated=False,
+        db=None,
+        tenant_id=1,
+        scan_run_id=None,
+        pass_name="http_stock",
+        tier=1,
+        asset_ids=[1, 2],
+        severity=["high"],
+        templates=["http/"],
+        exclude_tags="",
+        ran=True,
+        errored=False,
+        truncated=False,
     )
 
 
 def test_emit_is_noop_without_assets():
     emit_nuclei_pass_coverage(
-        db=None, tenant_id=1, scan_run_id=99, pass_name="http_stock", tier=1,
-        asset_ids=[], severity=["high"], templates=["http/"], exclude_tags="",
-        ran=True, errored=False, truncated=False,
+        db=None,
+        tenant_id=1,
+        scan_run_id=99,
+        pass_name="http_stock",
+        tier=1,
+        asset_ids=[],
+        severity=["high"],
+        templates=["http/"],
+        exclude_tags="",
+        ran=True,
+        errored=False,
+        truncated=False,
     )
 
 
@@ -59,9 +77,18 @@ def test_emit_swallows_resolution_error(monkeypatch):
     monkeypatch.setattr(coverage_emit, "_cached_nuclei_version", lambda: "3.3.1")
     # db is a dummy — we must never reach it.
     emit_nuclei_pass_coverage(
-        db=object(), tenant_id=1, scan_run_id=5, pass_name="http_stock", tier=1,
-        asset_ids=[1], severity=["high"], templates=["http/"], exclude_tags="",
-        ran=True, errored=False, truncated=False,
+        db=object(),
+        tenant_id=1,
+        scan_run_id=5,
+        pass_name="http_stock",
+        tier=1,
+        asset_ids=[1],
+        severity=["high"],
+        templates=["http/"],
+        exclude_tags="",
+        ran=True,
+        errored=False,
+        truncated=False,
     )
 
 
@@ -81,19 +108,25 @@ def test_emit_records_covered_verdict(db_session, test_tenant, monkeypatch):
     monkeypatch.setattr(coverage_emit, "_cached_nuclei_version", lambda: "3.3.1")
     monkeypatch.setattr(coverage_emit, "resolve_nuclei_rule_revision", lambda *a, **k: _Rev())
 
-    run = ScanRun(tenant_id=test_tenant.id, project_id=None, status="running",
-                  started_at=datetime.now(timezone.utc))
+    run = ScanRun(tenant_id=test_tenant.id, project_id=None, status="running", started_at=datetime.now(timezone.utc))
     db_session.add(run)
-    asset = Asset(tenant_id=test_tenant.id, identifier="a.test.com",
-                  type=AssetType.SUBDOMAIN, is_active=True)
+    asset = Asset(tenant_id=test_tenant.id, identifier="a.test.com", type=AssetType.SUBDOMAIN, is_active=True)
     db_session.add(asset)
     db_session.commit()
 
     emit(
-        db_session, tenant_id=test_tenant.id, scan_run_id=run.id,
-        pass_name="http_stock", tier=1, asset_ids=[asset.id],
-        severity=["critical", "high"], templates=["http/"], exclude_tags="",
-        ran=True, errored=False, truncated=False,
+        db_session,
+        tenant_id=test_tenant.id,
+        scan_run_id=run.id,
+        pass_name="http_stock",
+        tier=1,
+        asset_ids=[asset.id],
+        severity=["critical", "high"],
+        templates=["http/"],
+        exclude_tags="",
+        ran=True,
+        errored=False,
+        truncated=False,
     )
 
     covered = CoverageRepository(db_session).covered_asset_ids(run.id, "http_stock")
@@ -109,19 +142,25 @@ def test_emit_truncated_is_partial_not_covered(db_session, test_tenant, monkeypa
     monkeypatch.setattr(coverage_emit, "_cached_nuclei_version", lambda: "3.3.1")
     monkeypatch.setattr(coverage_emit, "resolve_nuclei_rule_revision", lambda *a, **k: _Rev())
 
-    run = ScanRun(tenant_id=test_tenant.id, project_id=None, status="running",
-                  started_at=datetime.now(timezone.utc))
+    run = ScanRun(tenant_id=test_tenant.id, project_id=None, status="running", started_at=datetime.now(timezone.utc))
     db_session.add(run)
-    asset = Asset(tenant_id=test_tenant.id, identifier="b.test.com",
-                  type=AssetType.SUBDOMAIN, is_active=True)
+    asset = Asset(tenant_id=test_tenant.id, identifier="b.test.com", type=AssetType.SUBDOMAIN, is_active=True)
     db_session.add(asset)
     db_session.commit()
 
     emit(
-        db_session, tenant_id=test_tenant.id, scan_run_id=run.id,
-        pass_name="http_stock", tier=1, asset_ids=[asset.id],
-        severity=["critical", "high"], templates=["http/"], exclude_tags="",
-        ran=True, errored=False, truncated=True,  # hit the timeout
+        db_session,
+        tenant_id=test_tenant.id,
+        scan_run_id=run.id,
+        pass_name="http_stock",
+        tier=1,
+        asset_ids=[asset.id],
+        severity=["critical", "high"],
+        templates=["http/"],
+        exclude_tags="",
+        ran=True,
+        errored=False,
+        truncated=True,  # hit the timeout
     )
 
     # Truncated must NOT authorise auto-close: no COVERED verdict.

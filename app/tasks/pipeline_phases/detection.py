@@ -562,10 +562,20 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     # Per-pass coverage metadata (policy identity inputs), keyed by the internal pass id.
     coverage_meta = {
         "pass_1": (PASS_HTTP_STOCK, asset_ids, severity, templates_for_scan, exclude_tags),
-        "pass_2": (PASS_CDN_SSL_TAKEOVER, cdn_asset_ids, ["critical", "high", "medium"],
-                   ["http/takeovers/", "ssl/"], tier_exclude_tags[1]),
-        "pass_3": (PASS_DNS_NETWORK, dns_net_asset_ids,
-                   ["critical", "high", "medium", "low", "info"], dns_net_tpls, exclude_tags),
+        "pass_2": (
+            PASS_CDN_SSL_TAKEOVER,
+            cdn_asset_ids,
+            ["critical", "high", "medium"],
+            ["http/takeovers/", "ssl/"],
+            tier_exclude_tags[1],
+        ),
+        "pass_3": (
+            PASS_DNS_NETWORK,
+            dns_net_asset_ids,
+            ["critical", "high", "medium", "low", "info"],
+            dns_net_tpls,
+            exclude_tags,
+        ),
     }
 
     truncated_passes: list[str] = []

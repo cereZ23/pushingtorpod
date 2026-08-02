@@ -119,7 +119,11 @@ def emit_nuclei_pass_coverage(
         )
         logger.info(
             "coverage: pass %s -> %s on %d assets (run %s, policy %s)",
-            pass_name, status.value, written, scan_run_id, manifest.policy_hash[:12],
+            pass_name,
+            status.value,
+            written,
+            scan_run_id,
+            manifest.policy_hash[:12],
         )
     except (RuleResolutionError, subprocess.SubprocessError, OSError) as exc:
         logger.warning("coverage emit skipped for pass %s (resolution failed): %s", pass_name, exc)
