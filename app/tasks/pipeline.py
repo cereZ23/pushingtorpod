@@ -287,6 +287,13 @@ def _mark_phase_outcome(db, scan_run_id: int, phase_id: str, result, pipeline_st
     return status
 
 
+def _rollup_completeness(has_partial_phases: bool, discovery_degraded: bool) -> str:
+    """Scan-level completeness. Degraded discovery makes the run partial even when
+    no phase was formally PARTIAL — otherwise API/UI would report 'complete' while
+    ``discovery_health.degraded`` is True (a contradiction). Pure/testable."""
+    return "partial" if (has_partial_phases or discovery_degraded) else "complete"
+
+
 def _update_scan_run(db, scan_run_id: int, status: ScanRunStatus, error: str = None, stats: dict = None):
     """Update scan run status."""
     scan_run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
@@ -625,13 +632,20 @@ def run_scan_pipeline(self, scan_run_id: int):
         # Roll partial phases up to a scan-level completeness signal. Status stays
         # COMPLETED (no new ScanRunStatus → no consumer breakage); "completeness"
         # + "partial_phases" carry the degraded detail for API/UI/notifications.
+        # A degraded discovery-health (persisted by phase 10, may have NO formal
+        # PARTIAL phase) must also read as partial — else the final rollup would
+        # overwrite it back to "complete" and API/UI would contradict discovery_health.
         partial_phases = pipeline_stats.get("partial_phases", [])
-        pipeline_stats["completeness"] = "partial" if partial_phases else "complete"
-        if partial_phases:
+        _sr = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
+        _disc = (_sr.stats or {}).get("discovery_health", {}) if _sr and isinstance(_sr.stats, dict) else {}
+        discovery_degraded = bool(_disc.get("degraded"))
+        pipeline_stats["completeness"] = _rollup_completeness(bool(partial_phases), discovery_degraded)
+        if partial_phases or discovery_degraded:
             tenant_logger.warning(
-                "Scan %s completed with PARTIAL coverage: %s",
+                "Scan %s completed PARTIAL (phases=%s, discovery_degraded=%s)",
                 scan_run_id,
-                ", ".join(p["name"] for p in partial_phases),
+                ", ".join(p["name"] for p in partial_phases) or "none",
+                discovery_degraded,
             )
 
         # Mark scan as completed

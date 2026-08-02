@@ -150,3 +150,29 @@ class TestDiscoveryHealthGuardBlocksClose:
         db_session.refresh(run)
         assert run.stats and run.stats.get("discovery_health", {}).get("healthy") is True
         assert run.stats.get("discovery_scope_hash")
+
+
+class TestAutoCloseAuthorization:
+    """The shared verdict helper that BOTH the nuclei and misconfig closes gate on."""
+
+    def test_missing_run_is_fail_closed(self, db_session, test_tenant):
+        from app.services.discovery_health import evaluate_and_persist_discovery_health
+
+        h = evaluate_and_persist_discovery_health(db_session, test_tenant.id, None, 999_999_999)
+        assert h.auto_close_allowed is False  # no run → never authorize (misconfig manual-run case)
+
+    def test_incomplete_discovery_is_fail_closed(self, db_session, test_tenant):
+        from app.services.discovery_health import evaluate_and_persist_discovery_health
+
+        run = _run(db_session, test_tenant)  # no PhaseResults → INCOMPLETE
+        h = evaluate_and_persist_discovery_health(db_session, test_tenant.id, None, run.id)
+        assert h.auto_close_allowed is False
+        assert h.reason_code == "discovery_incomplete"
+
+    def test_healthy_run_is_authorized(self, db_session, test_tenant):
+        from app.services.discovery_health import evaluate_and_persist_discovery_health
+
+        run = _run(db_session, test_tenant)
+        _healthy_discovery(db_session, test_tenant, run)
+        h = evaluate_and_persist_discovery_health(db_session, test_tenant.id, None, run.id)
+        assert h.auto_close_allowed is True
