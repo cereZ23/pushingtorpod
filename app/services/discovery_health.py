@@ -33,6 +33,7 @@ class ReasonCode(str, enum.Enum):
     NO_COMPARABLE_BASELINE = "no_comparable_baseline"
     DISCOVERY_FAILED = "discovery_failed"
     DISCOVERY_PARTIAL = "discovery_partial"
+    DISCOVERY_INCOMPLETE = "discovery_incomplete"  # missing / non-terminal discovery phase
     EMPTY_OUTPUT = "empty_output"
     ASSET_DROP_THRESHOLD = "asset_drop_threshold"
 
@@ -44,6 +45,10 @@ class DiscoveryHealth:
     reason_code: str
     reason: str
     comparison_performed: bool
+    # auto_close_allowed is STRICTER than healthy: closing findings requires a real
+    # baseline comparison to have happened. "Not suspicious" (e.g. first run / scope
+    # change → NO_COMPARABLE_BASELINE, healthy=True) is NOT authorization to close.
+    auto_close_allowed: bool
     previous_count: Optional[int]
     observed_count: int
     missing_count: int
@@ -88,6 +93,7 @@ def compute_discovery_health(
             reason_code=code.value,
             reason=reason,
             comparison_performed=comparison,
+            auto_close_allowed=bool(healthy and comparison),
             previous_count=previous_count,
             observed_count=observed_count,
             missing_count=missing,
@@ -97,13 +103,19 @@ def compute_discovery_health(
 
     status = (discovery_phase_status or "").upper()
 
-    # 1-2. Explicit failure precedes the heuristic.
+    # 1-3. Explicit failure / non-terminal state precedes the heuristic (fail-closed:
+    # a missing or PENDING/RUNNING discovery phase is UNKNOWN, not COMPLETED).
     if status == "FAILED":
         return make(False, True, ReasonCode.DISCOVERY_FAILED, "discovery phase FAILED", False)
     if status == "PARTIAL":
         return make(False, True, ReasonCode.DISCOVERY_PARTIAL, "discovery phase PARTIAL", False)
+    if status not in ("COMPLETED", "SKIPPED"):
+        # UNKNOWN / INCOMPLETE / PENDING / RUNNING / "" → don't trust the run.
+        return make(
+            False, True, ReasonCode.DISCOVERY_INCOMPLETE, f"discovery not terminal ({status or 'MISSING'})", False
+        )
 
-    # 3. No comparable baseline → not suspicious (first run / changed scope).
+    # 4. No comparable baseline → not suspicious, but NOT authorized to close.
     if not baseline_available or previous_count is None:
         return make(True, False, ReasonCode.NO_COMPARABLE_BASELINE, "no comparable baseline run", False)
 
@@ -135,3 +147,124 @@ def compute_discovery_health(
 
     # 6. Healthy.
     return make(True, False, ReasonCode.OK, "discovery healthy", True, missing=missing, ratio=ratio)
+
+
+# ---------------------------------------------------------------------------
+# Impure wiring (DB) — kept separate from the pure verdict above.
+# ---------------------------------------------------------------------------
+
+_REQUIRED_DISCOVERY_PHASES = ("1", "3")  # Passive Discovery + DNS Resolution
+_TERMINAL = {"COMPLETED", "PARTIAL", "FAILED", "SKIPPED"}
+
+
+def _discovery_phase_status(db, scan_run_id) -> str:
+    """Worst status among the required discovery phases, fail-closed.
+
+    Returns FAILED/PARTIAL/COMPLETED only when BOTH required phases are present and
+    terminal; otherwise UNKNOWN (missing row, or PENDING/RUNNING) so the verdict
+    can refuse to trust the run.
+    """
+    from app.models.scanning import PhaseResult
+
+    rows = {
+        r.phase: (r.status.value if hasattr(r.status, "value") else str(r.status)).upper()
+        for r in db.query(PhaseResult.phase, PhaseResult.status).filter(
+            PhaseResult.scan_run_id == scan_run_id,
+            PhaseResult.phase.in_(_REQUIRED_DISCOVERY_PHASES),
+        )
+    }
+    if any(p not in rows for p in _REQUIRED_DISCOVERY_PHASES):
+        return "UNKNOWN"
+    vals = set(rows.values())
+    if vals - _TERMINAL:  # any non-terminal (PENDING/RUNNING/…)
+        return "UNKNOWN"
+    if "FAILED" in vals:
+        return "FAILED"
+    if "PARTIAL" in vals:
+        return "PARTIAL"
+    return "COMPLETED"
+
+
+def evaluate_and_persist_discovery_health(db, tenant_id: int, project_id: int, scan_run_id: int) -> DiscoveryHealth:
+    """Compute the verdict for this run and persist it to scan_run.stats (idempotent).
+
+    Called once, early (before any auto-close). Both the nuclei and misconfig closes
+    then read scan_run.stats["discovery_health"]["auto_close_allowed"].
+    """
+    from sqlalchemy import distinct, func
+
+    from app.models.scanning import Observation, Project, Scope, ScanRun, ScanRunStatus
+
+    run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
+    if run is None:
+        return DiscoveryHealth(
+            healthy=False,
+            degraded=True,
+            reason_code=ReasonCode.DISCOVERY_INCOMPLETE.value,
+            reason="scan run missing",
+            comparison_performed=False,
+            auto_close_allowed=False,
+            previous_count=None,
+            observed_count=0,
+            missing_count=0,
+            missing_ratio=0.0,
+            baseline_scan_run_id=None,
+        )
+
+    # Idempotent: if already computed for this run, reuse it (same verdict for both closes).
+    existing = (run.stats or {}).get("discovery_health") if isinstance(run.stats, dict) else None
+    if existing:
+        return DiscoveryHealth(**existing)
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    seeds = [str(s) for s in (project.seeds or [])] if project and project.seeds else []
+    scopes = [
+        f"{sc.rule_type}:{sc.match_type}:{sc.pattern}" for sc in db.query(Scope).filter(Scope.project_id == project_id)
+    ]
+    scope_hash = discovery_scope_hash(seeds, scopes)
+
+    # observed = DISTINCT assets recorded by discovery FOR THIS RUN (run-scoped,
+    # immune to enrichment/concurrency/other projects).
+    observed_count = (
+        db.query(func.count(distinct(Observation.asset_id)))
+        .filter(Observation.scan_run_id == scan_run_id, Observation.asset_id.isnot(None))
+        .scalar()
+        or 0
+    )
+
+    disc_status = _discovery_phase_status(db, scan_run_id)
+
+    # Most recent prior COMPLETED run with the SAME scope + a healthy discovery.
+    previous_count = None
+    baseline_id = None
+    for r in (
+        db.query(ScanRun)
+        .filter(ScanRun.project_id == project_id, ScanRun.id != scan_run_id, ScanRun.status == ScanRunStatus.COMPLETED)
+        .order_by(ScanRun.id.desc())
+        .limit(20)
+    ):
+        st = r.stats if isinstance(r.stats, dict) else {}
+        dh = st.get("discovery_health")
+        if not dh or st.get("discovery_scope_hash") != scope_hash or not dh.get("healthy"):
+            continue
+        previous_count = dh.get("observed_count")
+        baseline_id = r.id
+        break
+
+    health = compute_discovery_health(
+        discovery_phase_status=disc_status,
+        baseline_available=previous_count is not None,
+        previous_count=previous_count,
+        observed_count=observed_count,
+        baseline_scan_run_id=baseline_id,
+    )
+
+    # Persist (merge, so a later full-stats write can't clobber it).
+    stats = dict(run.stats or {})
+    stats["discovery_health"] = health.to_dict()
+    stats["discovery_scope_hash"] = scope_hash
+    if health.degraded:
+        stats["completeness"] = "partial"
+    run.stats = stats
+    db.commit()
+    return health

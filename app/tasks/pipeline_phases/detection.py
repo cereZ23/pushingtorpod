@@ -603,100 +603,6 @@ def _phase_9b_dnstwist(tenant_id, project_id, scan_run_id, db, tenant_logger):
     return {"findings_created": 0, "domains_scanned": 0}
 
 
-def _evaluate_discovery_health(db, tenant_id, project_id, current_run):
-    """Gather inputs (DB) and compute the discovery-health verdict for this run.
-
-    Impure wrapper around the pure ``compute_discovery_health``. Returns
-    ``(DiscoveryHealth, scope_hash)``. ``observed_count`` is what discovery
-    actually touched THIS run (assets with a fresh last_seen), not the full asset
-    table — the one place the "run-observed, not current-tables" rule lives.
-    """
-    from app.services.discovery_health import (
-        DiscoveryHealth,
-        ReasonCode,
-        compute_discovery_health,
-        discovery_scope_hash,
-    )
-    from app.models.scanning import PhaseResult, PhaseStatus, ScanRun, ScanRunStatus, Project, Scope
-    from app.models.database import Asset
-
-    # scope hash (comparable-baseline key)
-    project = db.query(Project).filter(Project.id == project_id).first()
-    seeds = [str(s) for s in (project.seeds or [])] if project and project.seeds else []
-    scopes = [f"{sc.scope_type}:{sc.value}" for sc in db.query(Scope).filter(Scope.project_id == project_id).all()]
-    scope_hash = discovery_scope_hash(seeds, scopes)
-
-    if current_run is None or current_run.started_at is None:
-        health = DiscoveryHealth(
-            healthy=True,
-            degraded=False,
-            reason_code=ReasonCode.NO_COMPARABLE_BASELINE.value,
-            reason="no current run",
-            comparison_performed=False,
-            previous_count=None,
-            observed_count=0,
-            missing_count=0,
-            missing_ratio=0.0,
-            baseline_scan_run_id=None,
-        )
-        return health, scope_hash
-
-    # Worst status among the required discovery phases (1 Passive, 3 DNS resolution).
-    statuses = {
-        row.status
-        for row in db.query(PhaseResult.status).filter(
-            PhaseResult.scan_run_id == current_run.id, PhaseResult.phase.in_(["1", "3"])
-        )
-    }
-    if PhaseStatus.FAILED in statuses:
-        disc_status = "FAILED"
-    elif PhaseStatus.PARTIAL in statuses:
-        disc_status = "PARTIAL"
-    else:
-        disc_status = "COMPLETED"
-
-    # Observed THIS run = assets touched (fresh last_seen), not the whole table.
-    observed_count = (
-        db.query(Asset)
-        .filter(
-            Asset.tenant_id == tenant_id,
-            Asset.is_active == True,  # noqa: E712
-            Asset.last_seen >= current_run.started_at,
-        )
-        .count()
-    )
-
-    # Most recent prior COMPLETED run with the SAME scope + a healthy discovery.
-    previous_count = None
-    baseline_id = None
-    for r in (
-        db.query(ScanRun)
-        .filter(
-            ScanRun.project_id == project_id,
-            ScanRun.id != current_run.id,
-            ScanRun.status == ScanRunStatus.COMPLETED,
-        )
-        .order_by(ScanRun.id.desc())
-        .limit(20)
-    ):
-        st = r.stats if isinstance(r.stats, dict) else {}
-        dh = st.get("discovery_health")
-        if not dh or st.get("discovery_scope_hash") != scope_hash or not dh.get("healthy"):
-            continue
-        previous_count = dh.get("observed_count")
-        baseline_id = r.id
-        break
-
-    health = compute_discovery_health(
-        discovery_phase_status=disc_status,
-        baseline_available=previous_count is not None,
-        previous_count=previous_count,
-        observed_count=observed_count,
-        baseline_scan_run_id=baseline_id,
-    )
-    return health, scope_hash
-
-
 def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger):
     """Phase 10: Correlation & deduplication.
 
@@ -710,23 +616,17 @@ def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
 
     current_run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
 
-    # Discovery-health guard: auto-closing "not seen this run" findings is only
-    # safe when discovery actually worked. A broken/partial discovery makes every
-    # asset look gone → real open findings would flip to FIXED. Compute + persist a
-    # structured verdict BEFORE any auto-close and fail-closed on it.
-    health, scope_hash = _evaluate_discovery_health(db, tenant_id, project_id, current_run)
-    if current_run is not None:
-        stats = dict(current_run.stats or {})
-        stats["discovery_health"] = health.to_dict()
-        stats["discovery_scope_hash"] = scope_hash
-        if health.degraded:
-            stats["completeness"] = "partial"
-        current_run.stats = stats
-        db.commit()
-    if not health.healthy:
+    # Discovery-health guard (fail-closed): auto-closing "not seen this run" findings
+    # is only safe when discovery actually worked AND we had a comparable baseline.
+    # Computed+persisted once earlier in the run (idempotent here) and consumed by
+    # BOTH this close and the misconfig close.
+    from app.services.discovery_health import evaluate_and_persist_discovery_health
+
+    health = evaluate_and_persist_discovery_health(db, tenant_id, project_id, scan_run_id)
+    if not health.auto_close_allowed:
         tenant_logger.warning(
-            "Auto-close SKIPPED: discovery not healthy (%s: %s) — refusing to close findings on a "
-            "possibly-incomplete run",
+            "Nuclei auto-close SKIPPED: discovery not authorized to close (%s: %s) — refusing to "
+            "close findings on a possibly-incomplete run",
             health.reason_code,
             health.reason,
         )
@@ -735,7 +635,7 @@ def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
     # older than the current scan's started_at are no longer detected.
     # Grace period: 2 scan cycles (findings must be absent for 2 consecutive scans).
     # Gated on discovery health (fail-closed).
-    if health.healthy and current_run and current_run.started_at:
+    if health.auto_close_allowed and current_run and current_run.started_at:
         grace = timedelta(hours=48)
         cutoff = current_run.started_at - grace
         stale_nuclei = (

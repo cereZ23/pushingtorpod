@@ -91,6 +91,44 @@ def test_result_always_carries_raw_counts():
         assert "reason_code" in h.to_dict()
 
 
+# --- fail-closed on non-terminal / missing discovery (#2) --------------------
+
+
+def test_unknown_discovery_status_is_unhealthy():
+    for bad in ("UNKNOWN", "PENDING", "RUNNING", "", None):
+        h = _h(discovery_phase_status=bad)
+        assert h.healthy is False and h.degraded is True
+        assert h.reason_code == ReasonCode.DISCOVERY_INCOMPLETE.value
+        assert h.auto_close_allowed is False
+
+
+# --- auto_close_allowed is stricter than healthy (#6) ------------------------
+
+
+def test_no_baseline_is_healthy_but_not_authorized_to_close():
+    h = compute_discovery_health(
+        discovery_phase_status="COMPLETED", baseline_available=False, previous_count=None, observed_count=5
+    )
+    assert h.healthy is True  # not suspicious
+    assert h.auto_close_allowed is False  # ...but NOT allowed to close
+
+
+def test_healthy_with_baseline_is_authorized_to_close():
+    h = _h(previous_count=20, observed_count=20)
+    assert h.healthy is True and h.comparison_performed is True
+    assert h.auto_close_allowed is True
+
+
+def test_unhealthy_is_never_authorized_to_close():
+    for h in (
+        _h(discovery_phase_status="FAILED"),
+        _h(discovery_phase_status="PARTIAL"),
+        _h(observed_count=0, previous_count=20),
+        _h(previous_count=20, observed_count=2),
+    ):
+        assert h.auto_close_allowed is False
+
+
 # --- scope hash --------------------------------------------------------------
 
 

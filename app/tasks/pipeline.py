@@ -301,7 +301,10 @@ def _update_scan_run(db, scan_run_id: int, status: ScanRunStatus, error: str = N
     if error:
         scan_run.error_message = error
     if stats:
-        scan_run.stats = stats
+        # Merge, don't overwrite: keys written mid-run (e.g. discovery_health,
+        # written by phase 10 for the next run's baseline) must survive the final
+        # full-stats write. pipeline_stats keys take precedence on conflict.
+        scan_run.stats = {**(scan_run.stats or {}), **stats}
 
     db.commit()
 

@@ -2297,25 +2297,43 @@ def run_misconfig_detection(
         # Auto-close stale misconfig findings: any open misconfig finding
         # for this tenant whose last_seen was NOT updated in this scan run
         # is no longer detected -- mark it as fixed.
-        scan_cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
-        stale_findings = (
-            db.query(Finding)
-            .join(Asset)
-            .filter(
-                Asset.tenant_id == tenant_id,
-                Finding.source == "misconfig",
-                Finding.status == FindingStatus.OPEN,
-                Finding.last_seen < scan_cutoff,
-            )
-            .all()
-        )
+        # Discovery-health guard (fail-closed): a broken/partial discovery makes
+        # every asset look gone → don't close on an unauthorized run.
+        allow_close = True
+        if scan_run_id:
+            from app.services.discovery_health import evaluate_and_persist_discovery_health
+            from app.models.scanning import ScanRun as _SR
+
+            _run = db.query(_SR.project_id).filter(_SR.id == scan_run_id).first()
+            if _run and _run.project_id is not None:
+                _health = evaluate_and_persist_discovery_health(db, tenant_id, _run.project_id, scan_run_id)
+                allow_close = _health.auto_close_allowed
+                if not allow_close:
+                    tenant_logger.warning(
+                        "Misconfig auto-close SKIPPED: discovery not authorized to close (%s)",
+                        _health.reason_code,
+                    )
+
         auto_closed = 0
-        for sf in stale_findings:
-            sf.status = FindingStatus.FIXED
-            auto_closed += 1
-        if auto_closed:
-            db.commit()
-            tenant_logger.info(f"Auto-closed {auto_closed} stale misconfig findings not seen in current scan")
+        if allow_close:
+            scan_cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
+            stale_findings = (
+                db.query(Finding)
+                .join(Asset)
+                .filter(
+                    Asset.tenant_id == tenant_id,
+                    Finding.source == "misconfig",
+                    Finding.status == FindingStatus.OPEN,
+                    Finding.last_seen < scan_cutoff,
+                )
+                .all()
+            )
+            for sf in stale_findings:
+                sf.status = FindingStatus.FIXED
+                auto_closed += 1
+            if auto_closed:
+                db.commit()
+                tenant_logger.info(f"Auto-closed {auto_closed} stale misconfig findings not seen in current scan")
         stats["findings_auto_closed"] = auto_closed
 
         tenant_logger.info(
