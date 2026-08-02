@@ -113,6 +113,23 @@ def test_no_baseline_is_healthy_but_not_authorized_to_close():
     assert h.auto_close_allowed is False  # ...but NOT allowed to close
 
 
+def test_zero_observed_baseline_never_authorizes_close():
+    # A prior run that observed 0 assets (e.g. a broken first run) is NOT a usable
+    # baseline — it must never authorize closing everything on the next run.
+    h = compute_discovery_health(
+        discovery_phase_status="COMPLETED", baseline_available=True, previous_count=0, observed_count=0
+    )
+    assert h.reason_code == ReasonCode.NO_COMPARABLE_BASELINE.value
+    assert h.auto_close_allowed is False
+
+
+def test_skipped_required_discovery_is_incomplete():
+    h = _h(discovery_phase_status="SKIPPED")
+    assert h.healthy is False
+    assert h.reason_code == ReasonCode.DISCOVERY_INCOMPLETE.value
+    assert h.auto_close_allowed is False
+
+
 def test_healthy_with_baseline_is_authorized_to_close():
     h = _h(previous_count=20, observed_count=20)
     assert h.healthy is True and h.comparison_performed is True
