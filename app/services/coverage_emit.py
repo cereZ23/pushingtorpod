@@ -24,16 +24,61 @@ from typing import Iterable, Sequence
 
 from sqlalchemy.orm import Session
 
-from app.repositories.coverage_repository import CoverageRepository, conservative_pass_status
+from app.repositories.coverage_repository import (
+    CoverageRepository,
+    CoverageWriteError,
+    conservative_pass_status,
+)
+from app.services.rule_catalog import RuleCatalogError, enumerate_nuclei_from_snapshot
 from app.services.rule_revision import (
     CompletedCommand,
+    ResolvedRuleSnapshot,
     RuleResolutionError,
-    resolve_nuclei_rule_revision,
+    resolve_nuclei_rule_snapshot,
     resolve_nuclei_version,
 )
-from app.services.scan_policy import build_nuclei_policy_manifest
+from app.services.scan_policy import ScanPolicyManifest, build_nuclei_policy_manifest
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_yaml(data: bytes):
+    """Injected YAML loader for detector enumeration (nuclei templates are single-doc)."""
+    import yaml
+
+    return yaml.safe_load(data)
+
+
+def _persist_pass_catalog(
+    repo: CoverageRepository,
+    manifest: ScanPolicyManifest,
+    snapshot: ResolvedRuleSnapshot,
+    *,
+    parse_yaml=_parse_yaml,
+) -> None:
+    """P-B: persist the applicable-detector catalog for this policy, derived from the SAME
+    snapshot the revision came from (single read → no race if templates change mid-emit).
+
+    Observational and idempotent per ``policy_hash``: skip if already catalogued, so a pass
+    with thousands of templates re-parses them only the first time a policy is seen. Fail-open
+    — a catalog gap can only ever PREVENT a future auto-close, never cause a wrong one, so a
+    failure here must never break or slow the scan.
+    """
+    try:
+        if repo.catalog_exists(manifest.policy_hash):
+            return
+        ruleset = enumerate_nuclei_from_snapshot(manifest, snapshot, parse_yaml=parse_yaml)
+        repo.persist_catalog(ruleset)
+        logger.info(
+            "coverage: catalog for pass %s policy %s -> %d applicable detectors",
+            manifest.pass_name,
+            manifest.policy_hash[:12],
+            len(ruleset.rules),
+        )
+    except (RuleCatalogError, RuleResolutionError, CoverageWriteError) as exc:
+        logger.warning("coverage: catalog skipped for policy %s: %s", manifest.policy_hash[:12], exc)
+    except Exception:  # noqa: BLE001 — observational: never break the scan
+        logger.exception("coverage: catalog persist crashed for policy %s — emit continues", manifest.policy_hash)
 
 # Where the stock nuclei templates live inside the worker image (see nuclei_service).
 NUCLEI_TEMPLATES_DIR = "/home/appuser/nuclei-templates"
@@ -112,10 +157,12 @@ def emit_nuclei_pass_coverage(
             else []
         )
         base_dir, roots = _split_roots(list(templates))
-        revision = resolve_nuclei_rule_revision(base_dir, roots).digest
+        # Single filesystem read: the revision AND the exact bytes, so policy identity and
+        # the applicable-detector catalog observe the same snapshot (single-snapshot contract).
+        snapshot = resolve_nuclei_rule_snapshot(base_dir, roots)
         manifest = build_nuclei_policy_manifest(
             nuclei_version=_cached_nuclei_version(),
-            template_revision=revision,
+            template_revision=snapshot.revision.digest,
             pass_name=pass_name,
             tier=tier,
             severity=list(severity),
@@ -124,6 +171,7 @@ def emit_nuclei_pass_coverage(
         )
         repo = CoverageRepository(db)
         repo.persist_policy(manifest)
+        _persist_pass_catalog(repo, manifest, snapshot)
         status = conservative_pass_status(ran=ran, errored=errored, truncated=truncated)
         written = repo.record_pass_coverage(
             tenant_id=tenant_id,

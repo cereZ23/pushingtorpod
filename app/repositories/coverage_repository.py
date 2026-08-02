@@ -121,6 +121,20 @@ class CoverageRepository:
             for t in self.db.query(ScanPolicyTemplate).filter(ScanPolicyTemplate.policy_hash == policy_hash).all()
         }
 
+    def catalog_exists(self, policy_hash: str) -> bool:
+        """Cheap presence check: is the applicable-detector catalog already persisted?
+
+        ``persist_catalog`` is atomic (full set committed or nothing), so a single row
+        implies the whole catalog is present. Lets the emit skip re-parsing thousands of
+        templates when the policy is unchanged (the catalog is immutable per policy_hash).
+        """
+        return (
+            self.db.query(ScanPolicyTemplate.policy_hash)
+            .filter(ScanPolicyTemplate.policy_hash == policy_hash)
+            .first()
+            is not None
+        )
+
     def persist_catalog(self, ruleset: ApplicableRuleSet) -> int:
         """Insert-if-absent the applicable detectors and VERIFY the persisted catalog
         matches the ruleset exactly — the catalog is as immutable as the policy.
