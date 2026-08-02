@@ -193,6 +193,16 @@ class TestUpdatePhase:
         # all succeeded → COMPLETED
         assert _classify_phase_outcome({"items_total": 10, "items_succeeded": 10})[0] == PhaseStatus.COMPLETED
 
+    def test_rollup_completeness_includes_degraded_discovery(self):
+        """A degraded discovery makes the run partial even without a PARTIAL phase,
+        so the final rollup can't overwrite completeness back to 'complete'."""
+        from app.tasks.pipeline import _rollup_completeness
+
+        assert _rollup_completeness(False, False) == "complete"
+        assert _rollup_completeness(True, False) == "partial"  # a partial phase
+        assert _rollup_completeness(False, True) == "partial"  # degraded discovery, no partial phase
+        assert _rollup_completeness(True, True) == "partial"
+
     def test_classify_skipped_is_informational_not_partial(self):
         """Deliberate skips (dead IPs, dedup) must NOT flap a phase to partial —
         only genuine failures do."""

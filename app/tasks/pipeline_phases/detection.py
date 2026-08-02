@@ -612,13 +612,31 @@ def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
     from app.models.database import Finding, FindingStatus, Asset
     from datetime import timedelta
 
-    # Auto-close stale nuclei findings: open findings whose last_seen is
-    # older than the current scan's started_at are no longer detected.
-    # Grace period: 2 scan cycles (findings must be absent for 2 consecutive scans).
     from app.models.scanning import ScanRun
 
     current_run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
-    if current_run and current_run.started_at:
+
+    # Discovery-health guard (fail-closed): auto-closing "not seen this run" findings
+    # is only safe when discovery actually worked AND we had a comparable baseline.
+    # Computed+persisted once earlier in the run (idempotent here) and consumed by
+    # BOTH this close and the misconfig close.
+    from app.services.discovery_health import evaluate_and_persist_discovery_health
+
+    health = evaluate_and_persist_discovery_health(db, tenant_id, project_id, scan_run_id)
+    if not health.auto_close_allowed:
+        tenant_logger.warning(
+            "Nuclei auto-close SKIPPED: discovery not authorized to close (%s: %s) — refusing to "
+            "close findings on a possibly-incomplete run",
+            health.reason_code,
+            health.reason,
+        )
+
+    # Auto-close stale nuclei findings: open findings whose last_seen is
+    # older than the current scan's started_at are no longer detected.
+    # Grace period: 2 scan cycles (findings must be absent for 2 consecutive scans).
+    # Gated on discovery health (fail-closed).
+    auto_closed = 0
+    if health.auto_close_allowed and current_run and current_run.started_at:
         grace = timedelta(hours=48)
         cutoff = current_run.started_at - grace
         stale_nuclei = (
@@ -632,7 +650,6 @@ def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
             )
             .all()
         )
-        auto_closed = 0
         for f in stale_nuclei:
             f.status = FindingStatus.FIXED
             auto_closed += 1
