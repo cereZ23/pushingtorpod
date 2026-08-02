@@ -9,9 +9,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from app.models.coverage import CoverageStatus, ScanCoverage, ScanPolicy, ScanPolicyTemplate
-from app.models.database import Asset, AssetType
+from app.models.database import Asset, AssetType, Tenant
 from app.models.scanning import ScanRun
 from app.repositories.coverage_repository import (
     CoverageRepository,
@@ -76,8 +78,6 @@ def _run(db, tenant):
 
 
 def _second_tenant(db):
-    from app.models.database import Tenant
-
     t = Tenant(name="Other", slug="other-tenant", contact_policy="x@y.com")
     db.add(t)
     db.commit()
@@ -109,6 +109,73 @@ def test_persist_catalog_is_idempotent(db_session):
     assert len(rows) == 2
     assert {r.detector_id for r in rows} == {"CVE-A", "CVE-B"}
     assert repo.applicable_detector_ids(m.policy_hash) == {"CVE-A", "CVE-B"}
+
+
+def test_persist_policy_divergent_row_is_rejected(db_session):
+    # a corrupt/manual row with the same hash but different fields must be detected
+    repo = CoverageRepository(db_session)
+    m = _manifest()
+    db_session.add(
+        ScanPolicy(
+            policy_hash=m.policy_hash,
+            schema_version=m.schema_version,
+            engine_name="nuclei",
+            engine_version="WRONG",  # divergent
+            rule_revision=m.rule_revision,
+            phase=m.phase,
+            pass_name=m.pass_name,
+            tier=m.tier,
+            severity=list(m.severity),
+            rule_roots=list(m.rule_roots),
+            exclude_tags=list(m.exclude_tags),
+            relevant_flags=dict(m.relevant_flags),
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    db_session.commit()
+    with pytest.raises(CoverageWriteError):
+        repo.persist_policy(m)
+
+
+def test_persist_catalog_divergent_digest_is_rejected(db_session):
+    repo = CoverageRepository(db_session)
+    m = _manifest()
+    repo.persist_policy(m)
+    # a stored detector with a divergent digest — ON CONFLICT DO NOTHING keeps it,
+    # so the verify pass must reject the write
+    db_session.add(
+        ScanPolicyTemplate(
+            policy_hash=m.policy_hash,
+            detector_id="CVE-A",
+            relative_path="http/cves/a.yaml",
+            content_digest="f" * 64,  # divergent
+            severity="high",
+            tags=["cve"],
+        )
+    )
+    db_session.commit()
+    with pytest.raises(CoverageWriteError):
+        repo.persist_catalog(_catalog(m.policy_hash))
+
+
+def test_persist_catalog_extra_stored_detector_is_rejected(db_session):
+    repo = CoverageRepository(db_session)
+    m = _manifest()
+    repo.persist_policy(m)
+    repo.persist_catalog(_catalog(m.policy_hash))  # stores {CVE-A, CVE-B}
+    # a ruleset missing CVE-B leaves it as an "extra" stored row → error
+    partial = ApplicableRuleSet(
+        policy_hash=m.policy_hash,
+        rules=(ApplicableRule("nuclei", "CVE-A", "http/cves/a.yaml", "a" * 64, "high", ("cve",)),),
+    )
+    with pytest.raises(CoverageWriteError):
+        repo.persist_catalog(partial)
+
+
+def test_persist_catalog_unknown_policy_is_rejected(db_session):
+    repo = CoverageRepository(db_session)
+    with pytest.raises(CoverageWriteError):
+        repo.persist_catalog(_catalog("deadbeef" * 8))
 
 
 # --- coverage upsert + idempotency -------------------------------------------
@@ -150,6 +217,77 @@ def test_record_pass_coverage_upserts_one_row_per_asset(db_session, test_tenant)
     assert repo.covered_asset_ids(run.id, "http_stock") == set()  # none COVERED anymore
 
 
+def _cover(repo, tenant, run, m, asset, status):
+    repo.record_pass_coverage(
+        tenant_id=tenant.id,
+        scan_run_id=run.id,
+        phase="9",
+        pass_name="http_stock",
+        policy_hash=m.policy_hash,
+        asset_ids=[asset.id],
+        status=status,
+    )
+
+
+def _status_of(db, run, asset):
+    return (
+        db.query(ScanCoverage)
+        .filter(ScanCoverage.scan_run_id == run.id, ScanCoverage.asset_id == asset.id)
+        .one()
+        .status
+    )
+
+
+def test_coverage_never_upgrades_partial_or_failed_to_covered(db_session, test_tenant):
+    repo = CoverageRepository(db_session)
+    m = _manifest()
+    repo.persist_policy(m)
+    run = _run(db_session, test_tenant)
+    a = _asset(db_session, test_tenant, "a.test.com")
+
+    # PARTIAL then a late/concurrent COVERED must NOT authorise
+    _cover(repo, test_tenant, run, m, a, CoverageStatus.PARTIAL)
+    _cover(repo, test_tenant, run, m, a, CoverageStatus.COVERED)
+    assert _status_of(db_session, run, a) == CoverageStatus.PARTIAL
+
+    b = _asset(db_session, test_tenant, "b.test.com")
+    _cover(repo, test_tenant, run, m, b, CoverageStatus.FAILED)
+    _cover(repo, test_tenant, run, m, b, CoverageStatus.COVERED)
+    assert _status_of(db_session, run, b) == CoverageStatus.FAILED
+
+
+def test_coverage_allows_downgrade_and_replaces_unstarted(db_session, test_tenant):
+    repo = CoverageRepository(db_session)
+    m = _manifest()
+    repo.persist_policy(m)
+    run = _run(db_session, test_tenant)
+    a = _asset(db_session, test_tenant, "a.test.com")
+
+    _cover(repo, test_tenant, run, m, a, CoverageStatus.UNSTARTED)
+    _cover(repo, test_tenant, run, m, a, CoverageStatus.COVERED)  # placeholder replaced
+    assert _status_of(db_session, run, a) == CoverageStatus.COVERED
+    _cover(repo, test_tenant, run, m, a, CoverageStatus.FAILED)  # covered → failed allowed
+    assert _status_of(db_session, run, a) == CoverageStatus.FAILED
+
+
+def test_policy_phase_pass_mismatch_is_rejected(db_session, test_tenant):
+    repo = CoverageRepository(db_session)
+    m = _manifest()  # phase 9, pass http_stock
+    repo.persist_policy(m)
+    run = _run(db_session, test_tenant)
+    a = _asset(db_session, test_tenant, "a.test.com")
+    with pytest.raises(CoverageWriteError):
+        repo.record_pass_coverage(
+            tenant_id=test_tenant.id,
+            scan_run_id=run.id,
+            phase="8",  # wrong for this policy
+            pass_name="misconfig",  # wrong for this policy
+            policy_hash=m.policy_hash,
+            asset_ids=[a.id],
+            status=CoverageStatus.COVERED,
+        )
+
+
 def test_record_pass_coverage_empty_assets_is_noop(db_session, test_tenant):
     repo = CoverageRepository(db_session)
     m = _manifest()
@@ -170,6 +308,25 @@ def test_record_pass_coverage_empty_assets_is_noop(db_session, test_tenant):
 
 
 # --- fail-closed verification ------------------------------------------------
+
+
+def test_invalid_status_is_rejected_by_db_check(db_session, test_tenant):
+    # native_enum=False stores VARCHAR, so a raw value could bypass the app enum —
+    # the DB CHECK must still reject it.
+    m = _manifest()
+    CoverageRepository(db_session).persist_policy(m)
+    run = _run(db_session, test_tenant)
+    a = _asset(db_session, test_tenant, "a.test.com")
+    with pytest.raises(IntegrityError):
+        db_session.execute(
+            text(
+                "INSERT INTO scan_coverage "
+                "(tenant_id, scan_run_id, asset_id, phase, pass_name, policy_hash, status, created_at, updated_at) "
+                "VALUES (:t, :r, :a, '9', 'http_stock', :p, 'bogus', now(), now())"
+            ),
+            {"t": test_tenant.id, "r": run.id, "a": a.id, "p": m.policy_hash},
+        )
+        db_session.commit()
 
 
 def test_unknown_policy_hash_is_rejected(db_session, test_tenant):

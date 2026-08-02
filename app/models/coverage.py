@@ -24,10 +24,12 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     Column,
     DateTime,
     Enum,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -83,6 +85,10 @@ class ScanPolicy(Base):
     templates = relationship("ScanPolicyTemplate", back_populates="policy", cascade="all, delete-orphan")
 
     __table_args__ = (
+        # target for scan_coverage's composite FK — ties a coverage row to the policy's
+        # own (phase, pass_name) so a semantically-false pairing is impossible even from
+        # raw SQL. (policy_hash is already the PK; this unique exists to anchor the FK.)
+        UniqueConstraint("policy_hash", "phase", "pass_name", name="uq_policy_phase_pass"),
         Index("idx_scan_policy_pass", "engine_name", "pass_name"),
     )
 
@@ -133,7 +139,7 @@ class ScanCoverage(Base):
     asset_id = Column(Integer, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
     phase = Column(String(10), nullable=False)
     pass_name = Column(String(64), nullable=False)
-    policy_hash = Column(String(64), ForeignKey("scan_policy.policy_hash"), nullable=False)
+    policy_hash = Column(String(64), nullable=False)  # composite FK below → (policy_hash, phase, pass_name)
     status = Column(_coverage_status_enum(), nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(
@@ -142,6 +148,16 @@ class ScanCoverage(Base):
 
     __table_args__ = (
         UniqueConstraint("scan_run_id", "phase", "pass_name", "asset_id", name="uq_coverage_run_pass_asset"),
+        # composite FK: the coverage's (policy_hash, phase, pass_name) MUST match the
+        # policy's own — no coverage can name a policy for a different phase/pass.
+        ForeignKeyConstraint(
+            ["policy_hash", "phase", "pass_name"],
+            ["scan_policy.policy_hash", "scan_policy.phase", "scan_policy.pass_name"],
+            name="fk_coverage_policy_phase_pass",
+        ),
+        CheckConstraint(
+            "status IN ('covered', 'partial', 'failed', 'skipped', 'unstarted')", name="ck_coverage_status"
+        ),
         Index("idx_coverage_tenant_asset_pass", "tenant_id", "asset_id", "pass_name", "created_at"),
         Index("idx_coverage_run", "scan_run_id"),
         Index("idx_coverage_policy", "policy_hash"),

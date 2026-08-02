@@ -16,6 +16,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Iterable
 
+from sqlalchemy import case
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -46,6 +47,31 @@ def conservative_pass_status(*, ran: bool, errored: bool, truncated: bool) -> Co
     return CoverageStatus.COVERED
 
 
+# authorisation rank — higher = more authorising (only COVERED authorises auto-close).
+def _rank_expr(col):
+    return case(
+        (col == CoverageStatus.COVERED, 5),
+        (col == CoverageStatus.PARTIAL, 4),
+        (col == CoverageStatus.SKIPPED, 3),
+        (col == CoverageStatus.FAILED, 2),
+        (col == CoverageStatus.UNSTARTED, 1),
+        else_=0,
+    )
+
+
+def _conservative_merge(new):
+    """SQL CASE for on-conflict: the LESS-authorising status wins, so a late/concurrent
+    write can never promote a PARTIAL/FAILED/SKIPPED verdict to COVERED. UNSTARTED is a
+    pure placeholder — any real verdict replaces it, and it never replaces a real one."""
+    old = ScanCoverage.status
+    return case(
+        (old == CoverageStatus.UNSTARTED, new),
+        (new == CoverageStatus.UNSTARTED, old),
+        (_rank_expr(new) < _rank_expr(old), new),
+        else_=old,
+    )
+
+
 class CoverageRepository:
     """Data access for scan_policy / scan_policy_templates / scan_coverage."""
 
@@ -55,36 +81,49 @@ class CoverageRepository:
     # --- immutable policy identity -------------------------------------------
 
     def persist_policy(self, manifest: ScanPolicyManifest) -> str:
-        """Insert the policy if absent and return its ``policy_hash``. Immutable:
-        a conflict is a no-op (identical identity), never an update."""
-        stmt = (
-            insert(ScanPolicy)
-            .values(
-                policy_hash=manifest.policy_hash,
-                schema_version=manifest.schema_version,
-                engine_name=manifest.engine_name,
-                engine_version=manifest.engine_version,
-                rule_revision=manifest.rule_revision,
-                phase=manifest.phase,
-                pass_name=manifest.pass_name,
-                tier=manifest.tier,
-                severity=list(manifest.severity),
-                rule_roots=list(manifest.rule_roots),
-                exclude_tags=list(manifest.exclude_tags),
-                relevant_flags=dict(manifest.relevant_flags),
-                created_at=datetime.now(timezone.utc),
-            )
-            .on_conflict_do_nothing(index_elements=["policy_hash"])
-        )
+        """Insert the policy if absent and return its ``policy_hash``. Immutable AND
+        verified: after the insert-if-absent, the stored row is re-read and every
+        canonical field compared to the manifest — a divergent row (corruption, a bad
+        migration, a manual insert) raises instead of being silently accepted."""
+        expected = {
+            "schema_version": manifest.schema_version,
+            "engine_name": manifest.engine_name,
+            "engine_version": manifest.engine_version,
+            "rule_revision": manifest.rule_revision,
+            "phase": manifest.phase,
+            "pass_name": manifest.pass_name,
+            "tier": manifest.tier,
+            "severity": list(manifest.severity),
+            "rule_roots": list(manifest.rule_roots),
+            "exclude_tags": list(manifest.exclude_tags),
+            "relevant_flags": dict(manifest.relevant_flags),
+        }
+        stmt = insert(ScanPolicy).values(policy_hash=manifest.policy_hash, created_at=datetime.now(timezone.utc), **expected)
+        stmt = stmt.on_conflict_do_nothing(index_elements=["policy_hash"])
         self.db.execute(stmt)
         self.db.commit()
+
+        row = self.db.query(ScanPolicy).filter(ScanPolicy.policy_hash == manifest.policy_hash).one()
+        diffs = [f for f, v in expected.items() if getattr(row, f) != v]
+        if diffs:
+            raise CoverageWriteError(
+                f"policy_hash {manifest.policy_hash} exists with a different manifest (fields: {diffs})"
+            )
         return manifest.policy_hash
 
     # --- applicable detector catalog -----------------------------------------
 
     def persist_catalog(self, ruleset: ApplicableRuleSet) -> int:
-        """Insert the applicable detectors if absent (idempotent per
-        (policy_hash, detector_id)). Returns the number of rows attempted."""
+        """Insert the applicable detectors if absent, then VERIFY the persisted catalog
+        matches the ruleset exactly. The catalog is as immutable as the policy: a stored
+        detector with a divergent digest/path/severity/tags, a missing rule, or an extra
+        rule raises ``CoverageWriteError``. Returns the number of ruleset detectors."""
+        if self.db.query(ScanPolicy.policy_hash).filter(ScanPolicy.policy_hash == ruleset.policy_hash).first() is None:
+            raise CoverageWriteError(f"unknown policy_hash {ruleset.policy_hash!r} (persist the policy first)")
+
+        expected = {
+            r.detector_id: (r.relative_path, r.content_digest, r.severity, tuple(r.tags)) for r in ruleset.rules
+        }
         rows = [
             {
                 "policy_hash": ruleset.policy_hash,
@@ -96,13 +135,22 @@ class CoverageRepository:
             }
             for r in ruleset.rules
         ]
-        if not rows:
-            return 0
-        stmt = insert(ScanPolicyTemplate).values(rows).on_conflict_do_nothing(
-            constraint="uq_policy_template"
-        )
-        self.db.execute(stmt)
-        self.db.commit()
+        if rows:
+            stmt = insert(ScanPolicyTemplate).values(rows).on_conflict_do_nothing(constraint="uq_policy_template")
+            self.db.execute(stmt)
+            self.db.commit()
+
+        stored = {
+            t.detector_id: (t.relative_path, t.content_digest, t.severity, tuple(t.tags or []))
+            for t in self.db.query(ScanPolicyTemplate).filter(ScanPolicyTemplate.policy_hash == ruleset.policy_hash).all()
+        }
+        if stored != expected:
+            missing = sorted(set(expected) - set(stored))
+            extra = sorted(set(stored) - set(expected))
+            divergent = sorted(d for d in set(expected) & set(stored) if expected[d] != stored[d])
+            raise CoverageWriteError(
+                f"catalog for {ruleset.policy_hash} diverges (missing={missing}, extra={extra}, divergent={divergent})"
+            )
         return len(rows)
 
     # --- per-pass coverage ----------------------------------------------------
@@ -132,8 +180,14 @@ class CoverageRepository:
         if run is None or run.tenant_id != tenant_id:
             raise CoverageWriteError(f"scan_run {scan_run_id} does not belong to tenant {tenant_id}")
 
-        if self.db.query(ScanPolicy.policy_hash).filter(ScanPolicy.policy_hash == policy_hash).first() is None:
+        policy = self.db.query(ScanPolicy).filter(ScanPolicy.policy_hash == policy_hash).first()
+        if policy is None:
             raise CoverageWriteError(f"unknown policy_hash {policy_hash!r} (persist the policy first)")
+        if policy.phase != phase or policy.pass_name != pass_name:
+            raise CoverageWriteError(
+                f"policy {policy_hash} is for phase {policy.phase!r}/pass {policy.pass_name!r}, "
+                f"not {phase!r}/{pass_name!r}"
+            )
 
         owned = {
             row[0]
@@ -154,7 +208,7 @@ class CoverageRepository:
                 "phase": phase,
                 "pass_name": pass_name,
                 "policy_hash": policy_hash,
-                "status": status.value,
+                "status": status,
                 "created_at": now,
                 "updated_at": now,
             }
@@ -163,11 +217,7 @@ class CoverageRepository:
         stmt = insert(ScanCoverage).values(rows)
         stmt = stmt.on_conflict_do_update(
             constraint="uq_coverage_run_pass_asset",
-            set_={
-                "status": stmt.excluded.status,
-                "policy_hash": stmt.excluded.policy_hash,
-                "updated_at": stmt.excluded.updated_at,
-            },
+            set_={"status": _conservative_merge(stmt.excluded.status), "updated_at": stmt.excluded.updated_at},
         )
         self.db.execute(stmt)
         self.db.commit()

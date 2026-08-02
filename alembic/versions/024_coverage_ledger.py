@@ -42,6 +42,8 @@ def upgrade() -> None:
         sa.Column("exclude_tags", sa.JSON(), nullable=False),
         sa.Column("relevant_flags", sa.JSON(), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("now()")),
+        # anchors the coverage composite FK (policy_hash is already the PK)
+        sa.UniqueConstraint("policy_hash", "phase", "pass_name", name="uq_policy_phase_pass"),
     )
     op.create_index("idx_scan_policy_pass", "scan_policy", ["engine_name", "pass_name"])
 
@@ -74,11 +76,20 @@ def upgrade() -> None:
         sa.Column("asset_id", sa.Integer(), sa.ForeignKey("assets.id", ondelete="CASCADE"), nullable=False),
         sa.Column("phase", sa.String(10), nullable=False),
         sa.Column("pass_name", sa.String(64), nullable=False),
-        sa.Column("policy_hash", sa.String(64), sa.ForeignKey("scan_policy.policy_hash"), nullable=False),
+        sa.Column("policy_hash", sa.String(64), nullable=False),
         sa.Column("status", sa.String(16), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("now()")),
         sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.text("now()")),
         sa.UniqueConstraint("scan_run_id", "phase", "pass_name", "asset_id", name="uq_coverage_run_pass_asset"),
+        # coverage's (policy_hash, phase, pass_name) must match the policy's own
+        sa.ForeignKeyConstraint(
+            ["policy_hash", "phase", "pass_name"],
+            ["scan_policy.policy_hash", "scan_policy.phase", "scan_policy.pass_name"],
+            name="fk_coverage_policy_phase_pass",
+        ),
+        sa.CheckConstraint(
+            "status IN ('covered', 'partial', 'failed', 'skipped', 'unstarted')", name="ck_coverage_status"
+        ),
     )
     op.create_index(
         "idx_coverage_tenant_asset_pass", "scan_coverage", ["tenant_id", "asset_id", "pass_name", "created_at"]
