@@ -81,27 +81,17 @@ def db_engine():
 def db_session(db_engine):
     """Create database session with transaction rollback for test isolation.
 
-    Uses the nested savepoint pattern so that session.commit() inside
-    endpoint code only commits a SAVEPOINT, not the outer transaction.
-    The outer transaction is rolled back at the end, undoing everything.
+    Canonical SQLAlchemy 2.0 pattern: with join_transaction_mode="create_savepoint"
+    both session.commit() AND session.rollback() inside the code under test operate
+    on a SAVEPOINT — a rollback (e.g. the coverage atomic guard tripping) no longer
+    tears down the outer transaction and the fixture rows. The outer transaction is
+    rolled back at the end, undoing everything.
     """
-    from sqlalchemy import event
-
     connection = db_engine.connect()
     transaction = connection.begin()
 
-    SessionLocal = sessionmaker(bind=connection)
+    SessionLocal = sessionmaker(bind=connection, join_transaction_mode="create_savepoint")
     session = SessionLocal()
-
-    # Start a nested savepoint
-    session.begin_nested()
-
-    # Restart the nested savepoint after each commit so subsequent
-    # operations within the same test still run inside a savepoint.
-    @event.listens_for(session, "after_transaction_end")
-    def restart_savepoint(sess, trans):
-        if trans.nested and not trans._parent.nested:
-            sess.begin_nested()
 
     yield session
 
