@@ -635,6 +635,7 @@ def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
     # older than the current scan's started_at are no longer detected.
     # Grace period: 2 scan cycles (findings must be absent for 2 consecutive scans).
     # Gated on discovery health (fail-closed).
+    auto_closed = 0
     if health.auto_close_allowed and current_run and current_run.started_at:
         grace = timedelta(hours=48)
         cutoff = current_run.started_at - grace
@@ -649,7 +650,6 @@ def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
             )
             .all()
         )
-        auto_closed = 0
         for f in stale_nuclei:
             f.status = FindingStatus.FIXED
             auto_closed += 1

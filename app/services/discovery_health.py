@@ -109,14 +109,17 @@ def compute_discovery_health(
         return make(False, True, ReasonCode.DISCOVERY_FAILED, "discovery phase FAILED", False)
     if status == "PARTIAL":
         return make(False, True, ReasonCode.DISCOVERY_PARTIAL, "discovery phase PARTIAL", False)
-    if status not in ("COMPLETED", "SKIPPED"):
-        # UNKNOWN / INCOMPLETE / PENDING / RUNNING / "" → don't trust the run.
+    if status != "COMPLETED":
+        # UNKNOWN / INCOMPLETE / PENDING / RUNNING / SKIPPED / "" → don't trust the
+        # run. A required discovery phase that was SKIPPED did NOT prove coverage.
         return make(
-            False, True, ReasonCode.DISCOVERY_INCOMPLETE, f"discovery not terminal ({status or 'MISSING'})", False
+            False, True, ReasonCode.DISCOVERY_INCOMPLETE, f"discovery not COMPLETED ({status or 'MISSING'})", False
         )
 
     # 4. No comparable baseline → not suspicious, but NOT authorized to close.
-    if not baseline_available or previous_count is None:
+    #    A baseline that observed ZERO assets is not a usable comparison either
+    #    (else a broken first run would authorize closing everything next time).
+    if not baseline_available or not previous_count or previous_count <= 0:
         return make(True, False, ReasonCode.NO_COMPARABLE_BASELINE, "no comparable baseline run", False)
 
     # 4. Unexpected empty output when the baseline had assets.
@@ -182,7 +185,27 @@ def _discovery_phase_status(db, scan_run_id) -> str:
         return "FAILED"
     if "PARTIAL" in vals:
         return "PARTIAL"
+    if "SKIPPED" in vals:  # a required discovery phase skipped ≠ coverage
+        return "SKIPPED"
     return "COMPLETED"
+
+
+def _observed_count(db, scan_run_id) -> int:
+    """Assets discovery actually confirmed THIS run — run-scoped and reliable.
+
+    Uses phase 3 (DNS Resolution) items_succeeded (hosts that resolved this run)
+    from its PhaseResult.stats. This is tied to scan_run_id (immune to other
+    projects / enrichment / concurrent scans) and drops when discovery breaks.
+    """
+    from app.models.scanning import PhaseResult
+
+    row = db.query(PhaseResult.stats).filter(PhaseResult.scan_run_id == scan_run_id, PhaseResult.phase == "3").first()
+    stats = (row.stats if row else None) or {}
+    for key in ("items_succeeded", "hosts_resolved", "records_resolved"):
+        v = stats.get(key)
+        if isinstance(v, int):
+            return v
+    return 0
 
 
 def evaluate_and_persist_discovery_health(db, tenant_id: int, project_id: int, scan_run_id: int) -> DiscoveryHealth:
@@ -191,9 +214,7 @@ def evaluate_and_persist_discovery_health(db, tenant_id: int, project_id: int, s
     Called once, early (before any auto-close). Both the nuclei and misconfig closes
     then read scan_run.stats["discovery_health"]["auto_close_allowed"].
     """
-    from sqlalchemy import distinct, func
-
-    from app.models.scanning import Observation, Project, Scope, ScanRun, ScanRunStatus
+    from app.models.scanning import Project, Scope, ScanRun, ScanRunStatus
 
     run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
     if run is None:
@@ -223,15 +244,8 @@ def evaluate_and_persist_discovery_health(db, tenant_id: int, project_id: int, s
     ]
     scope_hash = discovery_scope_hash(seeds, scopes)
 
-    # observed = DISTINCT assets recorded by discovery FOR THIS RUN (run-scoped,
-    # immune to enrichment/concurrency/other projects).
-    observed_count = (
-        db.query(func.count(distinct(Observation.asset_id)))
-        .filter(Observation.scan_run_id == scan_run_id, Observation.asset_id.isnot(None))
-        .scalar()
-        or 0
-    )
-
+    # observed = assets DNS-confirmed this run (run-scoped, from phase 3 stats).
+    observed_count = _observed_count(db, scan_run_id)
     disc_status = _discovery_phase_status(db, scan_run_id)
 
     # Most recent prior COMPLETED run with the SAME scope + a healthy discovery.

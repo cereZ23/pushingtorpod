@@ -2297,9 +2297,11 @@ def run_misconfig_detection(
         # Auto-close stale misconfig findings: any open misconfig finding
         # for this tenant whose last_seen was NOT updated in this scan run
         # is no longer detected -- mark it as fixed.
-        # Discovery-health guard (fail-closed): a broken/partial discovery makes
-        # every asset look gone → don't close on an unauthorized run.
-        allow_close = True
+        # Discovery-health guard (FAIL-CLOSED): default to NOT closing. Only an
+        # explicit healthy + baseline-comparable verdict authorizes closing. A
+        # missing scan_run_id / run / project (e.g. a manual misconfig run) → no
+        # close, because we can't prove discovery covered the surface this run.
+        allow_close = False
         if scan_run_id:
             from app.services.discovery_health import evaluate_and_persist_discovery_health
             from app.models.scanning import ScanRun as _SR
@@ -2313,6 +2315,10 @@ def run_misconfig_detection(
                         "Misconfig auto-close SKIPPED: discovery not authorized to close (%s)",
                         _health.reason_code,
                     )
+            else:
+                tenant_logger.warning("Misconfig auto-close SKIPPED: no run/project context for scan %s", scan_run_id)
+        else:
+            tenant_logger.warning("Misconfig auto-close SKIPPED: no scan_run_id (manual run) — refusing to close")
 
         auto_closed = 0
         if allow_close:
