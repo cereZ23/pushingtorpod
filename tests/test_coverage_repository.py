@@ -356,6 +356,48 @@ def test_coverage_with_different_policy_hash_is_rejected(db_session, test_tenant
     assert row.policy_hash == m1.policy_hash and row.status == CoverageStatus.COVERED  # original intact
 
 
+def test_coverage_atomic_guard_rejects_concurrent_different_policy(db_session, test_tenant):
+    # The pre-check is TOCTOU; this drives the upsert directly with a row already present
+    # under M1 — exactly the statement worker B runs after worker A committed. The
+    # DO UPDATE ... WHERE policy_hash = excluded.policy_hash skips it → rowcount shortfall
+    # → fail-closed, original row untouched.
+    repo = CoverageRepository(db_session)
+    m1 = _manifest()
+    m2 = build_nuclei_policy_manifest(
+        nuclei_version="3.3.1",
+        template_revision="DIFFERENT-rev",
+        pass_name="http_stock",
+        tier=1,
+        severity=["critical", "high"],
+        template_roots=["http/cves"],
+        exclude_tags=["fuzz"],
+    )
+    repo.persist_policy(m1)
+    repo.persist_policy(m2)
+    run = _run(db_session, test_tenant)
+    a = _asset(db_session, test_tenant, "a.test.com")
+    _cover(repo, test_tenant, run, m1, a, CoverageStatus.COVERED)  # worker A committed M1
+
+    now = datetime.now(timezone.utc)
+    m2_rows = [
+        {
+            "tenant_id": test_tenant.id,
+            "scan_run_id": run.id,
+            "asset_id": a.id,
+            "phase": "9",
+            "pass_name": "http_stock",
+            "policy_hash": m2.policy_hash,
+            "status": CoverageStatus.PARTIAL,
+            "created_at": now,
+            "updated_at": now,
+        }
+    ]
+    with pytest.raises(CoverageWriteError):
+        repo._upsert_coverage_rows(m2_rows)
+    row = db_session.query(ScanCoverage).filter(ScanCoverage.scan_run_id == run.id).one()
+    assert row.policy_hash == m1.policy_hash and row.status == CoverageStatus.COVERED
+
+
 def test_empty_assets_still_validates_run(db_session, test_tenant):
     # a wiring error (bad run) must NOT be hidden by an empty asset list
     repo = CoverageRepository(db_session)

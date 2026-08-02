@@ -250,14 +250,33 @@ class CoverageRepository:
             }
             for asset_id in asset_ids
         ]
+        self._upsert_coverage_rows(rows)
+        return len(rows)
+
+    def _upsert_coverage_rows(self, rows: list[dict]) -> None:
+        """Atomic coverage upsert with the policy-hash guard.
+
+        The pre-check in ``record_pass_coverage`` gives a readable early error, but it is
+        TOCTOU: a concurrent worker could insert a row for the same (run, phase, pass,
+        asset) between the read and this write. So the DO UPDATE is gated by
+        ``WHERE scan_coverage.policy_hash = excluded.policy_hash`` — a conflicting row
+        under a DIFFERENT policy is skipped (not updated), making ``rowcount`` fall short
+        of ``len(rows)``. On any shortfall we roll back and fail closed, so a late write
+        can never silently keep the other policy while reporting success.
+        """
         stmt = insert(ScanCoverage).values(rows)
         stmt = stmt.on_conflict_do_update(
             constraint="uq_coverage_run_pass_asset",
             set_={"status": _conservative_merge(stmt.excluded.status), "updated_at": stmt.excluded.updated_at},
+            where=ScanCoverage.policy_hash == stmt.excluded.policy_hash,
         )
-        self.db.execute(stmt)
+        result = self.db.execute(stmt)
+        if result.rowcount != len(rows):
+            self.db.rollback()
+            raise CoverageWriteError(
+                "concurrent coverage write under a different policy_hash (atomic guard tripped)"
+            )
         self.db.commit()
-        return len(rows)
 
     # --- read helpers (for the auto-close consumer, later) -------------------
 
