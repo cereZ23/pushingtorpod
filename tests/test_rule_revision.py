@@ -7,7 +7,9 @@ for real. Locks the change-visible, order-independent, fail-closed contract.
 
 from __future__ import annotations
 
+import enum
 import os
+from pathlib import PurePosixPath
 
 import pytest
 
@@ -15,6 +17,7 @@ from app.services.rule_revision import (
     CompletedCommand,
     RuleResolutionError,
     RuleRevision,
+    canonical_json_value,
     compute_misconfig_rule_revision,
     compute_rule_revision,
     content_digest,
@@ -80,6 +83,60 @@ def test_adding_a_file_changes_revision():
     assert compute_rule_revision(one) != compute_rule_revision(two)
 
 
+# --- compute_rule_revision: pure-function hardening --------------------------
+
+
+def test_rule_revision_rejects_empty_path():
+    with pytest.raises(RuleResolutionError):
+        compute_rule_revision([("", content_digest(b"A"))])
+
+
+def test_rule_revision_rejects_nul_in_path():
+    with pytest.raises(RuleResolutionError):
+        compute_rule_revision([("a\x00b.yaml", content_digest(b"A"))])
+
+
+@pytest.mark.parametrize("bad", ["/etc/passwd.yaml", "C:/x.yaml", "a/../b.yaml", "../a.yaml"])
+def test_rule_revision_rejects_absolute_and_traversal(bad):
+    with pytest.raises(RuleResolutionError):
+        compute_rule_revision([(bad, content_digest(b"A"))])
+
+
+def test_rule_revision_newline_path_valid_and_unambiguous():
+    d1, d2 = content_digest(b"A"), content_digest(b"B")
+    # a filename containing '\n' is accepted (length-prefixed v2)…
+    with_newline = compute_rule_revision([("a\nb.yaml", d1)])
+    assert len(with_newline) == 64
+    # …and cannot collide with two separate entries "a" and "b.yaml".
+    two_entries = compute_rule_revision([("a", d1), ("b.yaml", d2)])
+    assert with_newline != two_entries
+
+
+@pytest.mark.parametrize("bad_digest", ["short", "z" * 64, "A" * 63, "abc123"])
+def test_rule_revision_rejects_non_sha256_digest(bad_digest):
+    with pytest.raises(RuleResolutionError):
+        compute_rule_revision([("a.yaml", bad_digest)])
+
+
+def test_rule_revision_uppercase_digest_normalised():
+    d = content_digest(b"A")
+    assert compute_rule_revision([("a.yaml", d.upper())]) == compute_rule_revision([("a.yaml", d)])
+
+
+def test_rule_revision_duplicate_path_always_rejected():
+    d = content_digest(b"A")
+    # even an identical repeat is rejected now (the pure function has no fs to lean on)
+    with pytest.raises(RuleResolutionError):
+        compute_rule_revision([("a.yaml", d), ("a.yaml", d)])
+    with pytest.raises(RuleResolutionError):
+        compute_rule_revision([("a.yaml", content_digest(b"A")), ("a.yaml", content_digest(b"B"))])
+
+
+def test_rule_revision_deterministic_v2():
+    e = _entries(("http/cves/a.yaml", b"A"), ("http/x/b.yaml", b"B"))
+    assert compute_rule_revision(e) == compute_rule_revision(list(reversed(e)))
+
+
 # --- misconfig revision (pure) -----------------------------------------------
 
 
@@ -126,6 +183,99 @@ def test_misconfig_revision_rejects_empty_id():
 def test_misconfig_revision_empty_controls_is_fail_closed():
     with pytest.raises(RuleResolutionError):
         compute_misconfig_rule_revision([])
+
+
+# --- misconfig config: strict canonical types (no default=str) ---------------
+
+
+class _Sev(enum.Enum):
+    HIGH = "high"
+
+
+def test_misconfig_supported_config_types_are_stable():
+    cfg = {
+        "none": None,
+        "flag": True,
+        "n": 3,
+        "f": 1.5,
+        "s": "x",
+        "list": [1, "a", True],
+        "nested": {"k": "v"},
+        "sev": _Sev.HIGH,  # Enum → .value
+        "path": PurePosixPath("http/cves"),  # Path → POSIX
+    }
+    a = compute_misconfig_rule_revision([{"id": "c1", "config": cfg}])
+    b = compute_misconfig_rule_revision([{"id": "c1", "config": dict(cfg)}])
+    assert a == b and len(a) == 64
+
+
+def test_misconfig_enum_equals_its_value():
+    a = compute_misconfig_rule_revision([{"id": "c1", "config": {"sev": _Sev.HIGH}}])
+    b = compute_misconfig_rule_revision([{"id": "c1", "config": {"sev": "high"}}])
+    assert a == b
+
+
+def test_misconfig_set_config_is_fail_closed():
+    with pytest.raises(RuleResolutionError):
+        compute_misconfig_rule_revision([{"id": "c1", "config": {"x": {1, 2, 3}}}])
+
+
+def test_misconfig_unknown_type_config_is_fail_closed():
+    with pytest.raises(RuleResolutionError):
+        compute_misconfig_rule_revision([{"id": "c1", "config": {"x": object()}}])
+
+
+def test_misconfig_non_string_dict_key_is_fail_closed():
+    with pytest.raises(RuleResolutionError):
+        compute_misconfig_rule_revision([{"id": "c1", "config": {5: "v"}}])
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_misconfig_non_finite_float_is_fail_closed(bad):
+    with pytest.raises(RuleResolutionError):
+        compute_misconfig_rule_revision([{"id": "c1", "config": {"timeout": bad}}])
+
+
+def test_misconfig_error_path_points_at_offender():
+    try:
+        compute_misconfig_rule_revision(
+            [{"id": "a"}, {"id": "b"}, {"id": "c", "config": {"timeout": {1, 2}}}]
+        )
+        raise AssertionError("expected RuleResolutionError")
+    except RuleResolutionError as exc:
+        assert "$.controls[2].config.timeout" in str(exc)
+
+
+def test_misconfig_none_config_is_empty():
+    a = compute_misconfig_rule_revision([{"id": "c1"}])
+    b = compute_misconfig_rule_revision([{"id": "c1", "config": {}}])
+    assert a == b
+
+
+# --- canonical_json_value (direct) -------------------------------------------
+
+
+def test_canonical_json_value_bool_before_int():
+    # bool must stay bool, not collapse to 1/0
+    assert canonical_json_value(True) is True
+    assert canonical_json_value(False) is False
+    assert canonical_json_value(1) == 1 and canonical_json_value(1) is not True
+
+
+def test_canonical_json_value_rejects_set_with_path():
+    try:
+        canonical_json_value({"a": {"b": {1, 2}}})
+        raise AssertionError("expected error")
+    except RuleResolutionError as exc:
+        assert "$.a.b" in str(exc)
+
+
+def test_canonical_json_value_nested_list_path():
+    try:
+        canonical_json_value({"a": [1, object()]})
+        raise AssertionError("expected error")
+    except RuleResolutionError as exc:
+        assert "$.a[1]" in str(exc)
 
 
 # --- filesystem resolver (real tmp_path) -------------------------------------
