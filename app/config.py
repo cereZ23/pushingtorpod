@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     circuit_breaker_threshold: int = 5  # consecutive failures before a host's circuit opens
     circuit_breaker_ttl: int = 900  # seconds a host circuit stays open
 
+    # Stale-scan watchdog: a beat reaper auto-FAILs scans stuck RUNNING with no
+    # phase progress past (tier phase budget + grace). Closes the zombie left when
+    # a worker is killed mid-scan (deploy/OOM) — the task's own time_limit can't
+    # fire without a live process. Grace is generous so a legitimately long nuclei
+    # phase is never reaped.
+    stale_scan_reaper_enabled: bool = True
+    stale_scan_grace_seconds: int = 1800  # margin over the tier's phase budget
+
     # API Server
     api_host: str = "0.0.0.0"
     api_port: int = 8000

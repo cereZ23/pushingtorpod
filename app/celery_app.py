@@ -39,6 +39,7 @@ celery = Celery(
         "app.tasks.alert_evaluation",
         "app.tasks.cleanup",
         "app.tasks.scheduled_scans",
+        "app.tasks.scan_watchdog",
     ],
 )
 
@@ -97,6 +98,11 @@ celery.conf.beat_schedule = {
         "task": "app.tasks.scheduled_scans.dispatch_scheduled_scans",
         "schedule": crontab(minute="*/1"),  # Every minute — checks cron expressions
         "options": {"expires": 55},
+    },
+    "reap-stale-scans": {
+        "task": "app.tasks.scan_watchdog.reap_stale_scans",
+        "schedule": crontab(minute="*/5"),  # Every 5 min — auto-FAIL zombie scans
+        "options": {"expires": 280},
     },
     "weekly-exposure-digest": {
         "task": "app.tasks.exposure_digest.send_weekly_exposure_digests",
