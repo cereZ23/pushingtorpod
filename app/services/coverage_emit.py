@@ -63,6 +63,23 @@ def _split_roots(templates: Sequence[str]) -> tuple[str, list[str]]:
     return NUCLEI_TEMPLATES_DIR, list(templates)
 
 
+def nuclei_result_outcome(result, *, exception_occurred: bool) -> tuple[bool, bool]:
+    """Map a ``run_nuclei_scan()`` return value to ``(errored, truncated)`` for coverage.
+
+    ``run_nuclei_scan`` does NOT always raise: an internal failure comes back as a dict
+    (``{"status": "failed", "error": ...}``), and a pass with nothing to scan returns
+    ``{"status": "no_urls"}`` or ``None``. Keying ``errored`` only off a raised exception
+    would let a dict-reported failure be recorded as COVERED — a false "fixed" once the
+    consumer lands. So anything that is not a clean ``{"status": "success"}`` dict counts
+    as errored; only a successful pass can be truncated (else the outcome is FAILED).
+    """
+    if exception_occurred or not isinstance(result, dict):
+        return True, False
+    errored = result.get("status") != "success" or bool(result.get("error"))
+    truncated = bool(result.get("truncated"))
+    return errored, truncated
+
+
 def emit_nuclei_pass_coverage(
     db: Session,
     *,
@@ -131,4 +148,4 @@ def emit_nuclei_pass_coverage(
         logger.exception("coverage emit failed for pass %s (run %s) — scan unaffected", pass_name, scan_run_id)
 
 
-__all__ = ["emit_nuclei_pass_coverage", "NUCLEI_TEMPLATES_DIR"]
+__all__ = ["emit_nuclei_pass_coverage", "nuclei_result_outcome", "NUCLEI_TEMPLATES_DIR"]

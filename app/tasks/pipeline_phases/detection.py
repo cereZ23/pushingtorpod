@@ -494,7 +494,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     # Coverage-ledger wiring: each pass records a conservative per-asset verdict so the
     # coverage-aware auto-close can prove a detector actually ran on an asset. Import
     # here (local, like the rest of this phase) and keep every call fail-open.
-    from app.services.coverage_emit import emit_nuclei_pass_coverage
+    from app.services.coverage_emit import emit_nuclei_pass_coverage, nuclei_result_outcome
     from app.services.scan_policy import (
         PASS_CDN_SSL_TAKEOVER,
         PASS_CUSTOM_HTTP,
@@ -507,6 +507,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             f"Nuclei custom pass: {len(asset_ids)} direct assets, templates=['/app/custom-nuclei-templates/']"
         )
         custom_errored = False
+        custom_result = None
         try:
             custom_result = run_nuclei_scan(
                 tenant_id,
@@ -529,6 +530,9 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         except Exception as exc:
             custom_errored = True
             tenant_logger.error(f"Nuclei custom pass failed: {exc}")
+        # A dict-reported failure ({"status":"failed"}) never raises — derive the outcome
+        # from the result contract, not just the except path, or it becomes a false COVERED.
+        custom_failed, custom_truncated = nuclei_result_outcome(custom_result, exception_occurred=custom_errored)
         emit_nuclei_pass_coverage(
             db,
             tenant_id=tenant_id,
@@ -540,8 +544,8 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             templates=["/app/custom-nuclei-templates/"],
             exclude_tags="",
             ran=True,
-            errored=custom_errored,
-            truncated=False,
+            errored=custom_failed,
+            truncated=custom_truncated,
         )
 
     # Run stock passes in PARALLEL — pass 1 (HTTP) and pass 3 (DNS/network) target
@@ -584,7 +588,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         for future in as_completed(futures):
             pass_name = futures[future]
             pass_errored = False
-            pass_truncated = False
+            result = None
             try:
                 result = future.result()
                 if isinstance(result, dict):
@@ -592,13 +596,15 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
                     total_updated += result.get("findings_updated", 0)
                     total_scanned += result.get("assets_scanned", 0)
                     total_urls += result.get("urls_scanned", 0)
-                    if result.get("truncated"):
-                        pass_truncated = True
-                        truncated_passes.append(pass_name)
                     tenant_logger.info(f"Nuclei {pass_name} complete: {result.get('findings_created', 0)} findings")
             except Exception as exc:
                 pass_errored = True
                 tenant_logger.error(f"Nuclei {pass_name} failed: {exc}")
+            # A dict-reported failure ({"status":"failed"}) never raises — derive the outcome
+            # from the result contract, not just the except path, or it becomes a false COVERED.
+            pass_failed, pass_truncated = nuclei_result_outcome(result, exception_occurred=pass_errored)
+            if pass_truncated:
+                truncated_passes.append(pass_name)
             meta = coverage_meta.get(pass_name)
             if meta:
                 policy_pass, pass_assets, pass_sev, pass_tpls, pass_excl = meta
@@ -613,7 +619,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
                     templates=pass_tpls,
                     exclude_tags=pass_excl,
                     ran=True,
-                    errored=pass_errored,
+                    errored=pass_failed,
                     truncated=pass_truncated,
                 )
 
