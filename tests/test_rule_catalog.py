@@ -16,11 +16,13 @@ from app.services.rule_catalog import (
     RuleCatalogError,
     enumerate_misconfig_applicable_rules,
     enumerate_nuclei_applicable_rules,
+    enumerate_nuclei_from_snapshot,
 )
 from app.services.rule_revision import (
     compute_misconfig_rule_revision,
     compute_rule_revision,
     content_digest,
+    resolve_nuclei_rule_snapshot,
 )
 from app.services.scan_policy import build_misconfig_policy_manifest, build_nuclei_policy_manifest
 
@@ -90,14 +92,23 @@ def test_empty_severity_whitelist_includes_all():
     assert rs.contains("CVE-LOW")
 
 
-def test_missing_severity_with_whitelist_is_excluded():
+def test_missing_severity_is_fail_closed():
+    # nuclei requires info.severity — a fail-closed catalog rejects a template without it
     files = [
         ("http/cves/a.yaml", _tpl("CVE-HIGH", "high", "cve")),
         ("http/cves/b.yaml", json.dumps({"id": "NO-SEV", "info": {"tags": "cve"}}).encode()),
     ]
-    rs = _enum(files)
-    assert rs.contains("CVE-HIGH")
-    assert not rs.contains("NO-SEV")
+    manifest = _nuclei_manifest(files)
+    with pytest.raises(RuleCatalogError):
+        enumerate_nuclei_applicable_rules(manifest, files, parse_yaml=json.loads)
+
+
+def test_integer_id_is_fail_closed():
+    # an id must be a real string, not an int coerced implicitly
+    files = [("http/cves/a.yaml", json.dumps({"id": 123, "info": {"severity": "high"}}).encode())]
+    manifest = _nuclei_manifest(files)
+    with pytest.raises(RuleCatalogError):
+        enumerate_nuclei_applicable_rules(manifest, files, parse_yaml=json.loads)
 
 
 def test_exclude_tag_applied():
@@ -200,9 +211,8 @@ def test_misconfig_policy_rejected_by_nuclei_enumerator():
 
 
 def _mc_manifest(active_controls):
-    rev = compute_misconfig_rule_revision(
-        [{"id": c["id"], "config": c.get("config")} for c in active_controls]
-    )
+    # revision over the full active controls (id + severity + tags + config)
+    rev = compute_misconfig_rule_revision(active_controls)
     return build_misconfig_policy_manifest(app_version="app-1", rule_revision=rev, tier=1)
 
 
@@ -277,3 +287,51 @@ def test_misconfig_deterministic():
     assert enumerate_misconfig_applicable_rules(manifest, controls) == enumerate_misconfig_applicable_rules(
         manifest, controls
     )
+
+
+def test_misconfig_severity_is_part_of_identity():
+    # a manifest pinned to severity "medium" must NOT accept the same control at "high"
+    c_med = [{"id": "HDR-001", "enabled": True, "severity": "medium", "config": {}}]
+    c_high = [{"id": "HDR-001", "enabled": True, "severity": "high", "config": {}}]
+    manifest_med = _mc_manifest(c_med)
+    assert enumerate_misconfig_applicable_rules(manifest_med, c_med).contains("HDR-001")
+    with pytest.raises(RuleCatalogError):
+        enumerate_misconfig_applicable_rules(manifest_med, c_high)
+
+
+def test_misconfig_tags_are_part_of_identity():
+    c1 = [{"id": "HDR-001", "enabled": True, "tags": ["headers"], "config": {}}]
+    c2 = [{"id": "HDR-001", "enabled": True, "tags": ["headers", "http"], "config": {}}]
+    manifest = _mc_manifest(c1)
+    with pytest.raises(RuleCatalogError):
+        enumerate_misconfig_applicable_rules(manifest, c2)
+
+
+# --- real YAML parser + single-read snapshot ---------------------------------
+
+
+def test_nuclei_enumeration_with_real_yaml_safe_load():
+    yaml = pytest.importorskip("yaml")
+    tpl = b"id: CVE-REAL\ninfo:\n  severity: high\n  tags: cve,rce\n"
+    files = [("http/cves/real.yaml", tpl)]
+    manifest = _nuclei_manifest(files)
+    rs = enumerate_nuclei_applicable_rules(manifest, files, parse_yaml=yaml.safe_load)
+    assert rs.contains("CVE-REAL")
+    assert rs.rules[0].tags == ("cve", "rce")
+
+
+def test_enumerate_from_snapshot_single_read(tmp_path):
+    (tmp_path / "http/cves").mkdir(parents=True)
+    (tmp_path / "http/cves/a.yaml").write_bytes(_tpl("CVE-A", "high", "cve"))
+    (tmp_path / "http/cves/b.yaml").write_bytes(_tpl("CVE-B", "critical", "cve"))
+    snap = resolve_nuclei_rule_snapshot(str(tmp_path), ["http/cves"])
+    manifest = build_nuclei_policy_manifest(
+        nuclei_version="3.3.1",
+        template_revision=snap.revision.digest,  # manifest identity == the snapshot's revision
+        pass_name="http_stock",
+        tier=1,
+        severity=["critical", "high"],
+        template_roots=["http/cves"],
+    )
+    rs = enumerate_nuclei_from_snapshot(manifest, snap, parse_yaml=json.loads)
+    assert rs.contains("CVE-A") and rs.contains("CVE-B")

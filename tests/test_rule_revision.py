@@ -15,6 +15,7 @@ import pytest
 
 from app.services.rule_revision import (
     CompletedCommand,
+    ResolvedRuleSnapshot,
     RuleResolutionError,
     RuleRevision,
     canonical_json_value,
@@ -23,6 +24,7 @@ from app.services.rule_revision import (
     content_digest,
     parse_nuclei_version,
     resolve_nuclei_rule_revision,
+    resolve_nuclei_rule_snapshot,
     resolve_nuclei_version,
 )
 
@@ -183,6 +185,24 @@ def test_misconfig_revision_rejects_empty_id():
 def test_misconfig_revision_empty_controls_is_fail_closed():
     with pytest.raises(RuleResolutionError):
         compute_misconfig_rule_revision([])
+
+
+def test_misconfig_revision_changes_with_severity():
+    a = compute_misconfig_rule_revision([{"id": "c1", "severity": "medium", "config": {}}])
+    b = compute_misconfig_rule_revision([{"id": "c1", "severity": "high", "config": {}}])
+    assert a != b  # severity is part of the identity now
+
+
+def test_misconfig_revision_changes_with_tags():
+    a = compute_misconfig_rule_revision([{"id": "c1", "tags": ["headers"], "config": {}}])
+    b = compute_misconfig_rule_revision([{"id": "c1", "tags": ["headers", "http"], "config": {}}])
+    assert a != b
+
+
+def test_misconfig_revision_tags_order_independent():
+    a = compute_misconfig_rule_revision([{"id": "c1", "tags": ["http", "headers"], "config": {}}])
+    b = compute_misconfig_rule_revision([{"id": "c1", "tags": ["headers", "http"], "config": {}}])
+    assert a == b
 
 
 # --- misconfig config: strict canonical types (no default=str) ---------------
@@ -403,6 +423,29 @@ def test_resolver_overlapping_roots_same_logical_path_deduped(tmp_path):
     # path — counted once, not treated as ambiguous.
     rr = resolve_nuclei_rule_revision(str(tmp_path), ["", "http/cves"])
     assert rr.relative_paths.count("http/cves/CVE-1.yaml") == 1
+
+
+# --- single-read snapshot ----------------------------------------------------
+
+
+def test_snapshot_carries_bytes_and_matches_revision(tmp_path):
+    _tree(tmp_path)
+    snap = resolve_nuclei_rule_snapshot(str(tmp_path), ["http/cves", "http/exposures"])
+    rev = resolve_nuclei_rule_revision(str(tmp_path), ["http/cves", "http/exposures"])
+    assert isinstance(snap, ResolvedRuleSnapshot)
+    assert snap.revision.digest == rev.digest  # same digest as the digest-only resolver
+    assert tuple(f.relative_path for f in snap.files) == rev.relative_paths  # sorted
+    # bytes retained, and each file's digest is consistent with its content
+    for f in snap.files:
+        assert content_digest(f.content) == f.content_digest
+    # the retained bytes reproduce the revision (what 2C will rely on)
+    assert compute_rule_revision((f.relative_path, f.content_digest) for f in snap.files) == snap.revision.digest
+
+
+def test_snapshot_fail_closed_on_empty(tmp_path):
+    (tmp_path / "http/cves").mkdir(parents=True)
+    with pytest.raises(RuleResolutionError):
+        resolve_nuclei_rule_snapshot(str(tmp_path), ["http/cves"])
 
 
 # --- engine version resolver (injected runner) -------------------------------

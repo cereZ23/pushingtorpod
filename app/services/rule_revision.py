@@ -79,11 +79,6 @@ def _validate_rel_path(raw) -> str:
     return "/".join(parts)
 
 
-# Back-compat alias for the resolver's internal normalisation of clean rel paths.
-def _posix_rel(path: str) -> str:
-    return _validate_rel_path(path)
-
-
 def compute_rule_revision(entries: Iterable[tuple[str, str]]) -> str:
     """Deterministic revision from (rel_path, content_digest) pairs (pure).
 
@@ -157,35 +152,87 @@ def canonical_json_value(value, path: str = "$"):
     raise RuleResolutionError(f"{path}: unsupported value type {type(value).__name__}")
 
 
+def normalize_severity(value) -> Optional[str]:
+    """A severity is an optional lower-cased string; a non-string is uninterpretable."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise RuleResolutionError(f"uninterpretable severity: {value!r}")
+    s = value.strip().lower()
+    return s or None
+
+
+def normalize_tags(value) -> tuple[str, ...]:
+    """Tags may be a comma-separated string or a list of strings; anything else is
+    uninterpretable. Normalised: lower-cased, trimmed, de-duplicated, sorted."""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        raw = value.split(",")
+    elif isinstance(value, (list, tuple)):
+        raw = value
+    else:
+        raise RuleResolutionError(f"uninterpretable tags: {value!r}")
+    out: set[str] = set()
+    for t in raw:
+        if not isinstance(t, str):
+            raise RuleResolutionError(f"uninterpretable tag element: {t!r}")
+        s = t.strip().lower()
+        if s:
+            out.add(s)
+    return tuple(sorted(out))
+
+
+def canonical_active_control(control, path: str = "$") -> dict:
+    """Canonical structure of ONE active control, shared by 2B (revision) and 2C
+    (catalog) so they never disagree. Includes everything that defines the control's
+    behaviour — id, severity, tags, config — so changing any of them moves the
+    identity. ``enabled`` is intentionally absent: the digest is taken over the active
+    set only. Fail-closed on empty id / uninterpretable severity or tags / bad config.
+    """
+    if isinstance(control, Mapping):
+        cid = str(control.get("id", "")).strip()
+        severity = normalize_severity(control.get("severity"))
+        tags = list(normalize_tags(control.get("tags")))
+        cfg = control.get("config")
+    else:  # (id, config) pair — no severity/tags
+        cid = str(control[0]).strip()
+        severity = None
+        tags = []
+        cfg = control[1] if len(control) > 1 else None
+    if not cid:
+        raise RuleResolutionError(f"{path}: empty control id")
+    return {
+        "id": cid,
+        "severity": severity,
+        "tags": tags,
+        "config": canonical_json_value({} if cfg is None else cfg, f"{path}.config"),
+    }
+
+
 def compute_misconfig_rule_revision(controls: Iterable) -> str:
     """Deterministic revision for the built-in misconfig engine.
 
-    ``controls`` is an iterable of either mappings ``{"id": str, "config": dict}`` or
-    ``(id, config)`` pairs. The canonical structure hashed is::
+    ``controls`` is an iterable of mappings ``{"id","severity","tags","config"}`` (or
+    ``(id, config)`` pairs). The canonical structure hashed is::
 
-        {"schema_version": 1, "controls": [{"id": ..., "config": {...}}, ...]}
+        {"schema_version": 1,
+         "controls": [{"id","severity","tags","config"}, ...]}   # sorted by id
 
-    with controls sorted by id and all keys sorted. Requirements (all fail-closed):
-    non-empty id; NO duplicate ids; at least one control; every config value of a
-    supported type (see ``_canon_config``). Secrets, if they truly change execution,
-    belong in ``config`` (hashed) — but never surface them in diagnostics. Pure.
+    Requirements (all fail-closed): non-empty id; NO duplicate ids; at least one
+    control; interpretable severity/tags; supported config values. Because severity
+    and tags are part of the structure, editing them moves the revision — so the
+    2C catalog can never diverge from the policy identity. Pure.
     """
     norm: list[dict] = []
     seen: set[str] = set()
     for i, c in enumerate(controls or []):
-        if isinstance(c, Mapping):
-            cid = str(c.get("id", "")).strip()
-            cfg = c.get("config")
-        else:  # (id, config) pair
-            cid = str(c[0]).strip()
-            cfg = c[1] if len(c) > 1 else None
-        if not cid:
-            raise RuleResolutionError("compute_misconfig_rule_revision: empty control id")
+        canon = canonical_active_control(c, f"$.controls[{i}]")
+        cid = canon["id"]
         if cid in seen:
             raise RuleResolutionError(f"compute_misconfig_rule_revision: duplicate control id {cid!r}")
         seen.add(cid)
-        canon_cfg = canonical_json_value({} if cfg is None else cfg, f"$.controls[{i}].config")
-        norm.append({"id": cid, "config": canon_cfg})
+        norm.append(canon)
     if not norm:
         raise RuleResolutionError("compute_misconfig_rule_revision: no active controls")
     norm.sort(key=lambda x: x["id"])
@@ -212,6 +259,28 @@ class RuleRevision:
     relative_paths: tuple[str, ...]  # sorted, relative to the templates home (POSIX)
 
 
+@dataclass(frozen=True)
+class ResolvedRuleFile:
+    """One resolved rule file, with its bytes retained for a single-read snapshot."""
+
+    relative_path: str
+    content: bytes
+    content_digest: str
+
+
+@dataclass(frozen=True)
+class ResolvedRuleSnapshot:
+    """A single filesystem read: the revision AND the exact bytes it was taken over.
+
+    Wiring 2B → 2C should pass THIS to the catalog so both observe the same snapshot
+    (no second, possibly-divergent discovery). ``resolve_nuclei_rule_revision`` remains
+    for callers that only need the digest and don't want to retain bytes.
+    """
+
+    revision: RuleRevision
+    files: tuple[ResolvedRuleFile, ...]  # sorted by relative_path
+
+
 def _default_read_bytes(path: str) -> bytes:
     with open(path, "rb") as fh:
         return fh.read()
@@ -224,27 +293,15 @@ def _within(base_real: str, target_real: str) -> bool:
         return False
 
 
-def resolve_nuclei_rule_revision(
-    base_dir: str,
-    rule_roots: Sequence[str],
-    *,
-    read_bytes: Callable[[str], bytes] = _default_read_bytes,
-) -> RuleRevision:
-    """Resolve the Nuclei rule content selected by ``rule_roots`` under ``base_dir``.
+def _resolve_nuclei_files(base_dir, rule_roots, read_bytes) -> dict[str, ResolvedRuleFile]:
+    """Read the selected rule files ONCE (fail-closed). Shared by the revision and
+    snapshot resolvers so there is a single walk. Returns {rel_path: ResolvedRuleFile}.
 
-    The CALLER passes the policy's roots (e.g. ["http/cves", "http/exposures"], or
-    [""] for the whole base) — the resolver never implicitly globs "all templates",
-    so the digest can't include rules the pass wouldn't run.
-
-    Fail-closed on: missing/non-dir base; a root that is missing, escapes the base, or
-    is non-dir; an unreadable file; a symlink whose target escapes the base; two
-    logical paths resolving to the same real file; a zero-rule selection.
-
-    The LOGICAL relative path (as reached, symlinks not dereferenced in the path) is
-    what goes into the digest; symlink targets are only checked for containment. Note:
-    if both an internal alias and its real file fall within the selected roots, they
-    are two logical paths for one file and resolution FAILS — consistent with the
-    "one file, one logical identity" rule (a same-path overlap across roots is fine).
+    Fail-closed on: missing/non-dir base; a root that is absolute, has a traversal
+    segment, is missing, or escapes the base; an unreadable file; a symlink whose
+    target escapes the base; two logical paths resolving to the same real file; a
+    zero-rule selection. The LOGICAL relative path (symlinks not dereferenced in the
+    path) is the identity; symlink targets are only checked for containment.
     """
     base_abs = os.path.abspath(base_dir)
     base_real = os.path.realpath(base_dir)
@@ -252,9 +309,8 @@ def resolve_nuclei_rule_revision(
         raise RuleResolutionError(f"base_dir is not a directory: {base_dir}")
 
     roots = list(rule_roots) if rule_roots else [""]
-    entries: dict[str, str] = {}  # logical rel -> content digest
+    files: dict[str, ResolvedRuleFile] = {}  # logical rel -> file
     real_to_rel: dict[str, str] = {}  # real path -> logical rel (ambiguity guard)
-    total_bytes = 0
 
     for root in roots:
         r = str(root).replace("\\", "/")
@@ -271,7 +327,7 @@ def resolve_nuclei_rule_revision(
             raise RuleResolutionError(f"rule root missing or escapes base_dir: {root!r}")
 
         visited_dirs: set[str] = set()
-        for dirpath, dirs, files in os.walk(root_dir, followlinks=True):
+        for dirpath, dirs, names in os.walk(root_dir, followlinks=True):
             dp_real = os.path.realpath(dirpath)
             if not _within(base_real, dp_real):
                 raise RuleResolutionError(f"directory escapes base_dir: {dirpath}")
@@ -280,33 +336,64 @@ def resolve_nuclei_rule_revision(
                 continue
             visited_dirs.add(dp_real)
 
-            for name in files:
+            for name in names:
                 if not name.lower().endswith(_RULE_SUFFIXES):
                     continue
                 abs_path = os.path.join(dirpath, name)
                 real_path = os.path.realpath(abs_path)
                 if not _within(base_real, real_path):
                     raise RuleResolutionError(f"symlink target escapes base_dir: {abs_path}")
-                rel = _posix_rel(os.path.relpath(abs_path, base_abs))
+                rel = _validate_rel_path(os.path.relpath(abs_path, base_abs))
 
                 prev_rel = real_to_rel.get(real_path)
                 if prev_rel is not None and prev_rel != rel:
                     raise RuleResolutionError(
                         f"ambiguous rule: {rel!r} and {prev_rel!r} resolve to the same file"
                     )
-                if rel in entries:  # same logical path via overlapping roots — count once
+                if rel in files:  # same logical path via overlapping roots — count once
                     continue
                 try:
                     data = read_bytes(abs_path)
                 except OSError as exc:
                     raise RuleResolutionError(f"cannot read rule file {abs_path}: {exc}") from exc
-                entries[rel] = content_digest(data)
+                files[rel] = ResolvedRuleFile(rel, data, content_digest(data))
                 real_to_rel[real_path] = rel
-                total_bytes += len(data)
 
-    digest = compute_rule_revision(entries.items())  # raises on empty selection
-    paths = tuple(sorted(entries))
-    return RuleRevision(digest=digest, rule_count=len(paths), total_bytes=total_bytes, relative_paths=paths)
+    if not files:
+        raise RuleResolutionError("resolve: zero rules selected")
+    return files
+
+
+def _rule_revision_from_files(files: dict[str, ResolvedRuleFile]) -> RuleRevision:
+    digest = compute_rule_revision((f.relative_path, f.content_digest) for f in files.values())
+    paths = tuple(sorted(files))
+    total = sum(len(f.content) for f in files.values())
+    return RuleRevision(digest=digest, rule_count=len(paths), total_bytes=total, relative_paths=paths)
+
+
+def resolve_nuclei_rule_revision(
+    base_dir: str,
+    rule_roots: Sequence[str],
+    *,
+    read_bytes: Callable[[str], bytes] = _default_read_bytes,
+) -> RuleRevision:
+    """Resolve the digest of the Nuclei rules selected by ``rule_roots`` (bytes not
+    retained). See ``_resolve_nuclei_files`` for the fail-closed contract."""
+    return _rule_revision_from_files(_resolve_nuclei_files(base_dir, rule_roots, read_bytes))
+
+
+def resolve_nuclei_rule_snapshot(
+    base_dir: str,
+    rule_roots: Sequence[str],
+    *,
+    read_bytes: Callable[[str], bytes] = _default_read_bytes,
+) -> ResolvedRuleSnapshot:
+    """Single-read snapshot: the revision AND the exact bytes, for handing to 2C so it
+    never re-walks the filesystem. Same fail-closed contract as the revision resolver."""
+    files = _resolve_nuclei_files(base_dir, rule_roots, read_bytes)
+    revision = _rule_revision_from_files(files)
+    ordered = tuple(files[p] for p in sorted(files))
+    return ResolvedRuleSnapshot(revision=revision, files=ordered)
 
 
 # --- engine version resolver (injected runner) -------------------------------

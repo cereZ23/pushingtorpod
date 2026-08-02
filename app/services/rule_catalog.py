@@ -8,11 +8,12 @@ control id) *applicable* to that policy — i.e. selected AND not filtered out?
 That is exactly what a per-detector auto-close needs: a finding may be closed only if
 its detector was provably in the pass's applicable set for a healthy scan.
 
-Pure and DB-free. I/O (reading bytes, parsing YAML) is injected. Fail-closed: an
-invalid template, a missing/duplicate id, an uninterpretable severity/tags field, a
-content digest that disagrees with 2B, or an empty applicable set all raise
-``RuleCatalogError`` — an unsupported case makes the policy NON-authorising rather
-than silently guessing Nuclei's behaviour.
+Pure and DB-free. YAML parsing is injected. Severity/tags normalisation and the
+misconfig canonical structure are SHARED with 2B (imported), so the catalog can never
+disagree with the revision/identity. Fail-closed: an invalid template, a
+missing/duplicate id, an uninterpretable severity/tags field, a content digest that
+disagrees with 2B, or an empty applicable set all raise ``RuleCatalogError`` — an
+unsupported case makes the policy NON-authorising rather than guessing Nuclei.
 """
 
 from __future__ import annotations
@@ -24,11 +25,14 @@ from dataclasses import dataclass
 from typing import Callable, Optional, Sequence
 
 from app.services.rule_revision import (
+    ResolvedRuleSnapshot,
     RuleResolutionError,
-    canonical_json_value,
+    canonical_active_control,
     compute_misconfig_rule_revision,
     compute_rule_revision,
     content_digest,
+    normalize_severity,
+    normalize_tags,
 )
 from app.services.scan_policy import ENGINE_BUILTIN_MISCONFIG, ENGINE_NUCLEI, ScanPolicyManifest
 
@@ -57,40 +61,6 @@ class ApplicableRuleSet:
         return any(r.detector_id == needle for r in self.rules)
 
 
-# --- shared field normalisation ----------------------------------------------
-
-
-def _norm_severity(value) -> Optional[str]:
-    """A severity is an optional string. A non-string severity is uninterpretable."""
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise RuleCatalogError(f"uninterpretable severity: {value!r}")
-    s = value.strip().lower()
-    return s or None
-
-
-def _norm_tags(value) -> tuple[str, ...]:
-    """Tags may be a comma-separated string or a list of strings; anything else is
-    uninterpretable. Normalised: lower-cased, trimmed, de-duplicated, sorted."""
-    if value is None:
-        return ()
-    if isinstance(value, str):
-        raw = value.split(",")
-    elif isinstance(value, (list, tuple)):
-        raw = value
-    else:
-        raise RuleCatalogError(f"uninterpretable tags: {value!r}")
-    out: set[str] = set()
-    for t in raw:
-        if not isinstance(t, str):
-            raise RuleCatalogError(f"uninterpretable tag element: {t!r}")
-        s = t.strip().lower()
-        if s:
-            out.add(s)
-    return tuple(sorted(out))
-
-
 def _make_ruleset(policy_hash: str, rules: list[ApplicableRule]) -> ApplicableRuleSet:
     if not rules:
         raise RuleCatalogError("no applicable detectors for policy (fail-closed)")
@@ -109,19 +79,18 @@ def enumerate_nuclei_applicable_rules(
 ) -> ApplicableRuleSet:
     """Enumerate the Nuclei templates applicable to ``manifest``.
 
-    ``files`` are the (relative_path, content_bytes) pairs ALREADY resolved by 2B —
-    the catalog does not re-walk the filesystem, so it can't observe a different set
-    than the one the revision was taken over. The revision is recomputed from those
-    exact bytes and must equal ``manifest.rule_revision`` (2B's digest, which the
-    manifest carries as its identity); a mismatch means the files are inconsistent
-    with the policy → fail-closed. Then each template is parsed and filtered by the
-    policy's severity whitelist and exclude tags.
+    ``files`` are the (relative_path, content_bytes) pairs ALREADY resolved by 2B (see
+    ``enumerate_nuclei_from_snapshot`` for the single-read path). The revision is
+    recomputed from those exact bytes and must equal ``manifest.rule_revision``; a
+    mismatch means the files are inconsistent with the policy → fail-closed. Then each
+    template is parsed and filtered by the policy severity whitelist + exclude tags.
+    A nuclei template MUST carry a string ``id`` and an ``info.severity``.
     """
     if manifest.engine_name != ENGINE_NUCLEI:
         raise RuleCatalogError(f"nuclei enumeration requires a nuclei policy, got {manifest.engine_name!r}")
 
     entries: list[tuple[str, str]] = []
-    docs: dict[str, tuple[str, object]] = {}  # rel_path -> (digest, parsed doc)
+    docs: dict[str, tuple[str, Mapping]] = {}  # rel_path -> (digest, parsed doc)
     for rel, data in files:
         if not isinstance(data, (bytes, bytearray)):
             raise RuleCatalogError(f"template {rel!r}: content must be bytes, got {type(data).__name__}")
@@ -138,7 +107,7 @@ def enumerate_nuclei_applicable_rules(
             raise RuleCatalogError(f"template {rel!r} is not a mapping")
         docs[rel] = (digest, doc)
 
-    # Consistency with 2B: same files+content must reproduce the same revision.
+    # Consistency with 2B: the exact bytes must reproduce the policy's rule_revision.
     try:
         recomputed = compute_rule_revision(entries)
     except RuleResolutionError as exc:
@@ -152,9 +121,10 @@ def enumerate_nuclei_applicable_rules(
     id_to_path: dict[str, str] = {}
     for rel in sorted(docs):
         digest, doc = docs[rel]
-        detector_id = str(doc.get("id", "")).strip() if isinstance(doc.get("id"), (str, int)) else ""
-        if not detector_id:
-            raise RuleCatalogError(f"template {rel!r} has no id")
+        raw_id = doc.get("id")
+        if not isinstance(raw_id, str) or not raw_id.strip():  # must be a real string id
+            raise RuleCatalogError(f"template {rel!r} has no valid string id")
+        detector_id = raw_id.strip()
         prev = id_to_path.get(detector_id)
         if prev is not None and prev != rel:
             raise RuleCatalogError(f"duplicate detector id {detector_id!r} in {prev!r} and {rel!r}")
@@ -163,8 +133,13 @@ def enumerate_nuclei_applicable_rules(
         info = doc.get("info") or {}
         if not isinstance(info, Mapping):
             raise RuleCatalogError(f"template {rel!r} has an uninterpretable info block")
-        severity = _norm_severity(info.get("severity"))
-        tags = _norm_tags(info.get("tags"))
+        if info.get("severity") is None:  # nuclei requires info.severity — a fail-closed catalog rejects
+            raise RuleCatalogError(f"template {rel!r} has no severity")
+        try:
+            severity = normalize_severity(info.get("severity"))
+            tags = normalize_tags(info.get("tags"))
+        except RuleResolutionError as exc:
+            raise RuleCatalogError(f"template {rel!r}: {exc}") from exc
 
         if sev_whitelist and severity not in sev_whitelist:
             continue  # not selected by the policy severity gate
@@ -184,17 +159,25 @@ def enumerate_nuclei_applicable_rules(
     return _make_ruleset(manifest.policy_hash, rules)
 
 
+def enumerate_nuclei_from_snapshot(
+    manifest: ScanPolicyManifest,
+    snapshot: ResolvedRuleSnapshot,
+    *,
+    parse_yaml: Callable[[bytes], object],
+) -> ApplicableRuleSet:
+    """Single-read path: enumerate directly from the 2B snapshot's retained bytes, so
+    the catalog and the revision observe the exact same files."""
+    return enumerate_nuclei_applicable_rules(
+        manifest, [(f.relative_path, f.content) for f in snapshot.files], parse_yaml=parse_yaml
+    )
+
+
 # --- misconfig enumeration ---------------------------------------------------
 
 
-def _control_digest(control_id: str, config) -> str:
-    payload = json.dumps(
-        {"id": control_id, "config": canonical_json_value(config or {}, "$.config")},
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    )
+def _control_digest(canon_control: Mapping) -> str:
+    """Per-control content digest over the SAME canonical structure 2B hashes."""
+    payload = json.dumps(canon_control, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -205,8 +188,10 @@ def enumerate_misconfig_applicable_rules(
     """Enumerate the applicable built-in misconfig controls for ``manifest``.
 
     Only enabled controls count; ids must be non-empty and unique; the detector id IS
-    the canonical control id. The revision recomputed over the active controls must
-    match ``manifest.rule_revision`` (2B), else fail-closed. Zero active → error.
+    the canonical control id. severity/tags are part of each control's canonical
+    identity (shared with 2B), so editing them moves the revision. The revision
+    recomputed over the active controls must equal ``manifest.rule_revision``, else
+    fail-closed. Zero active controls → error.
     """
     if manifest.engine_name != ENGINE_BUILTIN_MISCONFIG:
         raise RuleCatalogError(f"misconfig enumeration requires a misconfig policy, got {manifest.engine_name!r}")
@@ -218,9 +203,11 @@ def enumerate_misconfig_applicable_rules(
             raise RuleCatalogError(f"misconfig control is not a mapping: {c!r}")
         if not bool(c.get("enabled", True)):
             continue  # disabled → not applicable
-        cid = str(c.get("id", "")).strip()
-        if not cid:
-            raise RuleCatalogError("misconfig control has an empty id")
+        try:
+            canon = canonical_active_control(c)
+        except RuleResolutionError as exc:
+            raise RuleCatalogError(f"misconfig control: {exc}") from exc
+        cid = canon["id"]
         if cid in seen:
             raise RuleCatalogError(f"duplicate misconfig control id {cid!r}")
         seen.add(cid)
@@ -229,11 +216,9 @@ def enumerate_misconfig_applicable_rules(
     if not active:
         raise RuleCatalogError("no active misconfig controls (fail-closed)")
 
-    # Consistency with 2B: the active id+config set must reproduce the same revision.
+    # Consistency with 2B: the active id+severity+tags+config set must reproduce the revision.
     try:
-        revision = compute_misconfig_rule_revision(
-            [{"id": str(c["id"]).strip(), "config": c.get("config")} for c in active]
-        )
+        revision = compute_misconfig_rule_revision(active)
     except RuleResolutionError as exc:
         raise RuleCatalogError(f"misconfig revision recompute failed: {exc}") from exc
     if revision != manifest.rule_revision:
@@ -241,15 +226,15 @@ def enumerate_misconfig_applicable_rules(
 
     rules: list[ApplicableRule] = []
     for c in active:
-        cid = str(c["id"]).strip()
+        canon = canonical_active_control(c)
         rules.append(
             ApplicableRule(
                 engine_name=ENGINE_BUILTIN_MISCONFIG,
-                detector_id=cid,
-                relative_path=f"{ENGINE_BUILTIN_MISCONFIG}/{cid}",
-                content_digest=_control_digest(cid, c.get("config")),
-                severity=_norm_severity(c.get("severity")),
-                tags=_norm_tags(c.get("tags")),
+                detector_id=canon["id"],
+                relative_path=f"{ENGINE_BUILTIN_MISCONFIG}/{canon['id']}",
+                content_digest=_control_digest(canon),
+                severity=canon["severity"],
+                tags=tuple(canon["tags"]),
             )
         )
     return _make_ruleset(manifest.policy_hash, rules)

@@ -244,6 +244,34 @@ def test_misconfig_factory_sets_engine_fields():
     assert m.rule_revision == "ctrl-hash"
     assert m.pass_name == "misconfig"
     assert m.phase == "8"
+    assert m.severity == () and m.rule_roots == () and m.exclude_tags == ()
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"severity": ["high"]},
+        {"exclude_tags": ["fuzz"]},
+        {"rule_roots": ["http/cves"]},
+    ],
+)
+def test_misconfig_policy_rejects_ignored_filters(kw):
+    # a misconfig policy must not DECLARE a filter the catalog would silently ignore
+    with pytest.raises(ValueError):
+        build_misconfig_policy_manifest(app_version="app-1", rule_revision="r", tier=1, **kw)
+
+
+def test_misconfig_direct_ctor_also_rejects_filters():
+    with pytest.raises(ValueError):
+        ScanPolicyManifest(
+            engine_name=ENGINE_BUILTIN_MISCONFIG,
+            engine_version="app-1",
+            rule_revision="r",
+            phase="8",
+            pass_name="misconfig",
+            tier=1,
+            severity=("high",),
+        )
 
 
 def test_misconfig_and_nuclei_identities_are_distinct():

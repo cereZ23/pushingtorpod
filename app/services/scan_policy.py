@@ -196,6 +196,17 @@ class ScanPolicyManifest:
         object.__setattr__(self, "exclude_tags", _canon_list(self.exclude_tags, casefold=True))
         object.__setattr__(self, "relevant_flags", _canon_flags(self.relevant_flags))
 
+        # --- no declared-but-ignored filters on the built-in engine ----------
+        # The misconfig engine has no template roots and no policy-level severity/tag
+        # gate (its selection is per-control). Carrying such fields would let a policy
+        # DECLARE a filter the catalog silently ignores — reject it by construction.
+        if engine_name == ENGINE_BUILTIN_MISCONFIG:
+            for fld in ("severity", "rule_roots", "exclude_tags"):
+                if getattr(self, fld):
+                    raise ValueError(
+                        f"scan policy: {engine_name} carries no {fld} filter (got {getattr(self, fld)})"
+                    )
+
     def canonical(self) -> dict:
         """The exact, normalised structure the hash is taken over (already canonical)."""
         return {
