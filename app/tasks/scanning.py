@@ -49,6 +49,25 @@ def endpoint_shape_key(url: str) -> tuple:
     return (host, "/".join(segs), tuple(sorted(parse_qs(p.query).keys())))
 
 
+def host_in_scope(host: str, in_scope_hosts: set, tenant_roots: set) -> bool:
+    """Is a crawled endpoint host in scope for the tenant?
+
+    True only if the host is exactly a tenant asset, or under one of the tenant's own
+    registrable domains. Katana follows OFF-SITE links (CDNs, social widgets, doc/font
+    links), so the crawled set contains third-party hosts (youtube, github, cloudflare…);
+    scanning those with nuclei is OUT OF SCOPE and unauthorised, so they are refused.
+    """
+    from app.utils.domains import registrable_domain
+
+    if not host:
+        return False
+    h = host.lower()
+    if h in in_scope_hosts:
+        return True
+    rd = registrable_domain(h)
+    return bool(rd) and rd in tenant_roots
+
+
 @celery.task(name="app.tasks.scanning.run_nuclei_scan")
 def run_nuclei_scan(
     tenant_id: int,
@@ -271,13 +290,27 @@ def run_nuclei_scan(
                     return 1
                 return 2
 
+            # In-scope guard (SECURITY / authorization): Katana follows OFF-SITE links (CDNs,
+            # social widgets, doc/font links), so the crawled endpoint set contains third-party
+            # hosts (youtube, github, cloudflare, gnu.org, ...). Scanning those with nuclei is
+            # OUT OF SCOPE and unauthorised — a real legal risk. Keep ONLY endpoints whose host
+            # is exactly a tenant asset, or is under one of the tenant's own registrable domains.
+            from app.utils.domains import registrable_domain
+
+            in_scope_hosts = {a.identifier.lower() for a in assets}
+            tenant_roots = {rd for a in assets if (rd := registrable_domain(a.identifier))}
+
             candidates = []
+            out_of_scope_dropped = 0
             for ep_url, ep_type in endpoints:
                 if not ep_url or ep_url in url_to_asset:
                     continue
                 try:
                     parsed = urlparse(ep_url)
                 except Exception:
+                    continue
+                if not host_in_scope(parsed.hostname or "", in_scope_hosts, tenant_roots):
+                    out_of_scope_dropped += 1
                     continue
                 # Check the extension on the PATH, not the whole URL: a handler
                 # URL like /download.php/backup.zip?id=1 ends (as a full string)
@@ -329,7 +362,13 @@ def run_nuclei_scan(
                 tenant_logger.info(
                     f"Added {len(endpoint_urls)} Katana endpoints to Nuclei targets "
                     f"(from {len(endpoints)} crawled; shape-deduped, static-filtered, "
-                    f"capped at {max_per_host}/host)"
+                    f"capped at {max_per_host}/host; {out_of_scope_dropped} out-of-scope dropped)"
+                )
+            if out_of_scope_dropped:
+                tenant_logger.warning(
+                    f"In-scope guard: dropped {out_of_scope_dropped} off-site Katana endpoint(s) "
+                    f"from the Nuclei target set (not under the tenant's registrable domains) — "
+                    f"refusing to scan third-party hosts"
                 )
         except Exception as exc:
             tenant_logger.warning(f"Failed to load Katana endpoints for Nuclei: {exc}")
