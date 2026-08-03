@@ -49,6 +49,38 @@ def endpoint_shape_key(url: str) -> tuple:
     return (host, "/".join(segs), tuple(sorted(parse_qs(p.query).keys())))
 
 
+def normalize_host(host: str | None) -> str:
+    """Lowercase, strip a trailing dot, and IDNA-encode a hostname for scope comparison."""
+    if not host:
+        return ""
+    h = host.strip().rstrip(".").lower()
+    try:
+        h = h.encode("idna").decode("ascii")
+    except Exception:
+        pass
+    return h
+
+
+def host_in_scope(host: str, authorised_hosts: set, scope_entries: list) -> bool:
+    """Is a crawled endpoint host authorised to scan?
+
+    In scope ONLY if the host is exactly one of the PASS's authorised assets, or matches an
+    ACTIVE ScanAuthorization scope entry (a ``domain`` entry covers the domain + its
+    subdomains via literal suffix; ``ip``/``cidr`` cover IP targets). The boundary is
+    EXPLICIT authorization — never inferred from a discovered asset's registrable domain
+    (which on shared hosting like azurewebsites.net / github.io / CDNs would authorise OTHER
+    tenants). No scope entries → exact-match only, i.e. fail-closed.
+    """
+    from app.services.scope_authorization import target_in_scope
+
+    h = normalize_host(host)
+    if not h:
+        return False
+    if h in authorised_hosts:
+        return True
+    return target_in_scope(h, scope_entries or [])
+
+
 @celery.task(name="app.tasks.scanning.run_nuclei_scan")
 def run_nuclei_scan(
     tenant_id: int,
@@ -271,13 +303,37 @@ def run_nuclei_scan(
                     return 1
                 return 2
 
+            # In-scope guard (SECURITY / authorization): Katana follows OFF-SITE links (CDNs,
+            # social widgets, doc/font links), so the crawled endpoint set contains third-party
+            # hosts (youtube, github, cloudflare, gnu.org, ...). Scanning those with nuclei is
+            # OUT OF SCOPE and unauthorised — a real legal risk.
+            #
+            # authorised_hosts = ONLY the assets THIS pass received (exact match) — not every
+            # tenant asset, which would cross projects/passes. Beyond exact hosts, scope is the
+            # ACTIVE ScanAuthorizations (the platform's canonical authorization; a domain entry
+            # covers subdomains by literal suffix), NOT seeds or asset-derived registrable
+            # domains. No active authorization → exact-match only (fail-closed).
+            from app.services.scope_authorization import _active_authorizations
+
+            authorised_hosts = {normalize_host(a.identifier) for a in assets}
+            authorised_hosts.discard("")
+            active_scope_entries = [
+                e
+                for auth in _active_authorizations(db, tenant_id, datetime.now(timezone.utc))
+                for e in (auth.scope_entries or [])
+            ]
+
             candidates = []
+            out_of_scope_dropped = 0
             for ep_url, ep_type in endpoints:
                 if not ep_url or ep_url in url_to_asset:
                     continue
                 try:
                     parsed = urlparse(ep_url)
                 except Exception:
+                    continue
+                if not host_in_scope(parsed.hostname or "", authorised_hosts, active_scope_entries):
+                    out_of_scope_dropped += 1
                     continue
                 # Check the extension on the PATH, not the whole URL: a handler
                 # URL like /download.php/backup.zip?id=1 ends (as a full string)
@@ -329,7 +385,13 @@ def run_nuclei_scan(
                 tenant_logger.info(
                     f"Added {len(endpoint_urls)} Katana endpoints to Nuclei targets "
                     f"(from {len(endpoints)} crawled; shape-deduped, static-filtered, "
-                    f"capped at {max_per_host}/host)"
+                    f"capped at {max_per_host}/host; {out_of_scope_dropped} out-of-scope dropped)"
+                )
+            if out_of_scope_dropped:
+                tenant_logger.warning(
+                    f"In-scope guard: dropped {out_of_scope_dropped} off-site Katana endpoint(s) "
+                    f"from the Nuclei target set (not under the tenant's registrable domains) — "
+                    f"refusing to scan third-party hosts"
                 )
         except Exception as exc:
             tenant_logger.warning(f"Failed to load Katana endpoints for Nuclei: {exc}")
