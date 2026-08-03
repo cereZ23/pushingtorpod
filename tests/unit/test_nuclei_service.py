@@ -149,7 +149,19 @@ class TestNucleiService:
             concurrency=50,
         )
         assert "-mhe" in args
-        assert args[args.index("-mhe") + 1] == "50"
+        assert args[args.index("-mhe") + 1] == "50"  # base default
+
+    def test_build_nuclei_args_mhe_override(self, nuclei_service):
+        # T1 lowers max-host-errors so a hanging host is abandoned before the batch timeout.
+        args = nuclei_service._build_nuclei_args(
+            urls_file="/tmp/urls.txt",
+            templates=None,
+            severity=["high"],
+            rate_limit=1,
+            concurrency=1,
+            max_host_errors=20,
+        )
+        assert args[args.index("-mhe") + 1] == "20"
 
     def test_build_nuclei_args_severity_filter(self, nuclei_service):
         args = nuclei_service._build_nuclei_args(

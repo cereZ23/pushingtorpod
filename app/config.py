@@ -197,6 +197,11 @@ class Settings(BaseSettings):
     # Tier-1 nuclei request timeout (seconds). Lower than T2/T3's 10s so the ~1/3 of
     # requests that i/o-timeout stop pinning a concurrency slot for the full 10s.
     nuclei_request_timeout_t1: int = 6
+    # Tier-1 max-host-errors. Lower than the base 50 so a hanging host is abandoned before
+    # -mhe × -timeout (20 × 6 = 120s) reaches the 300s per-batch timeout — which otherwise
+    # triggers split-and-retry that re-runs the bad host repeatedly. 20 still leaves room for
+    # "mixed" hosts (some paths error, others match).
+    nuclei_max_host_errors_t1: int = 20
 
     # New tool timeouts
     alterx_timeout: int = 300  # 5 min

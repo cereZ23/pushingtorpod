@@ -84,6 +84,7 @@ class NucleiService:
         interactsh_server: Optional[str] = None,
         exclude_tags: Optional[str] = None,
         request_timeout: int = 10,
+        max_host_errors: int = 50,
     ) -> Dict:
         """
         Execute Nuclei scan on list of URLs
@@ -144,6 +145,7 @@ class NucleiService:
                 interactsh_server=interactsh_server,
                 exclude_tags=exclude_tags,
                 request_timeout=request_timeout,
+                max_host_errors=max_host_errors,
             )
 
             # Execute Nuclei
@@ -238,6 +240,7 @@ class NucleiService:
         min_chunk: int = 5,
         max_total_seconds: Optional[int] = None,
         request_timeout: int = 10,
+        max_host_errors: int = 50,
     ) -> Dict:
         """Scan URLs in bounded batches so every template runs on every target.
 
@@ -260,6 +263,7 @@ class NucleiService:
             interactsh_server=interactsh_server,
             exclude_tags=exclude_tags,
             request_timeout=request_timeout,
+            max_host_errors=max_host_errors,
         )
         # Small enough to run in one shot — no batching overhead.
         if len(urls) <= chunk_size:
@@ -394,6 +398,7 @@ class NucleiService:
         interactsh_server: Optional[str] = None,
         exclude_tags: Optional[str] = None,
         request_timeout: int = 10,
+        max_host_errors: int = 50,
     ) -> List[str]:
         """
         Build Nuclei command arguments
@@ -433,11 +438,11 @@ class NucleiService:
             "-bs",
             "50",  # Bulk size per template (was 25)
             "-mhe",
-            "50",  # Max host errors before skipping. Was 5, but that caused
-            # nuclei to abandon hosts after a few timeouts and never reach
-            # the templates that actually match (wp-user-enum, composer-config,
-            # etc.). 50 gives enough room for mixed hosts where some paths
-            # error but others have real findings.
+            str(max_host_errors),  # Max host errors before skipping. Base 50 gives mixed
+            # hosts room; T1 uses a lower value so a hanging host is abandoned before
+            # -mhe × -timeout reaches the 300s per-batch timeout (which triggers a costly
+            # split-and-retry that re-runs the bad host). Was 5 originally — too low, it
+            # abandoned mixed hosts before reaching matching templates (wp-user-enum, etc.).
             "-no-httpx",  # Skip Nuclei's built-in httpx probe (Phase 4 already did it)
             "-response-size-read",
             "2097152",  # 2MB max response read (saves RAM)
