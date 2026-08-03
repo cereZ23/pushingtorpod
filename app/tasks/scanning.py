@@ -82,6 +82,28 @@ def host_in_scope(host: str, authorised_hosts: set, scope_entries: list) -> bool
 
 
 @celery.task(name="app.tasks.scanning.run_nuclei_scan")
+def _query_katana_endpoints(db, tenant_id: int, asset_ids: list):
+    """Load Katana-crawled endpoints (Phase 6b) for these assets.
+
+    Isolated as a named seam so a pass can explicitly opt out (``include_katana_endpoints=False``,
+    e.g. the DNS/network pass where HTTP paths are meaningless for dns/network templates) and tests
+    can assert the loader is NOT called — rather than inferring intent from template names.
+    """
+    from app.models.database import Asset
+    from app.models.enrichment import Endpoint
+
+    return (
+        db.query(Endpoint.url, Endpoint.endpoint_type)
+        .join(Asset, Asset.id == Endpoint.asset_id)
+        .filter(
+            Asset.tenant_id == tenant_id,
+            Asset.is_active == True,  # noqa: E712
+            Asset.id.in_(list(asset_ids)),
+        )
+        .all()
+    )
+
+
 def run_nuclei_scan(
     tenant_id: int,
     asset_ids: Optional[List[int]] = None,
@@ -97,6 +119,7 @@ def run_nuclei_scan(
     max_endpoints_per_host: Optional[int] = None,
     request_timeout: Optional[int] = None,
     max_host_errors: Optional[int] = None,
+    include_katana_endpoints: bool = True,
 ):
     """
     Execute Nuclei vulnerability scan on assets
@@ -245,8 +268,6 @@ def run_nuclei_scan(
         # admin panels, login pages, APIs, forms, and URLs with parameters.
         # Exclude static assets (css/js/images/fonts) that waste scan time.
         try:
-            from app.models.enrichment import Endpoint
-
             STATIC_EXTENSIONS = {
                 ".css",
                 ".js",
@@ -287,16 +308,17 @@ def run_nuclei_scan(
                 "/xmlrpc",
             }
 
-            endpoints = (
-                db.query(Endpoint.url, Endpoint.endpoint_type)
-                .join(Asset, Asset.id == Endpoint.asset_id)
-                .filter(
-                    Asset.tenant_id == tenant_id,
-                    Asset.is_active == True,
-                    Asset.id.in_(list(urls_by_asset.keys())),
+            # Load Katana endpoints via the named seam so a pass can opt out explicitly. The
+            # DNS/network pass sets include_katana_endpoints=False (HTTP paths are meaningless for
+            # dns/network templates); loading them there is pure waste.
+            if include_katana_endpoints:
+                endpoints = _query_katana_endpoints(db, tenant_id, list(urls_by_asset.keys()))
+            else:
+                endpoints = []
+                tenant_logger.info(
+                    "Katana endpoint enrichment disabled for this pass "
+                    "(include_katana_endpoints=False) — scanning base asset URLs only"
                 )
-                .all()
-            )
 
             # Rank endpoints so the per-host cap keeps the highest-value ones:
             # api/form and interesting paths first, then parameterised URLs, then
