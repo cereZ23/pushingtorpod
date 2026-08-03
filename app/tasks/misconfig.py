@@ -2374,7 +2374,7 @@ def run_misconfig_detection(
             f"{stats['findings_updated']} updated, "
             f"{stats['findings_skipped_low_confidence']} skipped, "
             f"{stats['findings_needs_review']} flagged for review, "
-            f"{auto_closed} auto-closed, "
+            f"{stats['findings_auto_closed']} auto-closed, "
             f"{stats['errors']} errors"
         )
 
