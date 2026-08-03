@@ -174,19 +174,26 @@ def shadow_auto_close(
     stale_skipped = 0
     would_close_ids: list[int] = []
 
+    this_key = (run.started_at, scan_run_id)
+
     for f in findings:
-        # Out-of-order guard: if a strictly-newer run already touched this finding, an older
-        # run reaching it later must not advance anything.
-        newest_ref = max(
-            (rid for rid in (f.last_eligible_run_id, f.last_detected_scan_run_id) if rid),
-            default=None,
-        )
+        # Out-of-order guard: order runs by (started_at, run_id) — NOT run_id alone, since a
+        # larger id is not guaranteed to be the later-started run. If a strictly-newer run
+        # already touched this finding, an older run reaching it later must not advance it.
+        newest_ref = None
+        newest_key = None
+        for rid in (f.last_eligible_run_id, f.last_detected_scan_run_id):
+            if not rid:
+                continue
+            key = (ref_started.get(rid), rid)
+            if key[0] is not None and (newest_key is None or key > newest_key):
+                newest_key = key
+                newest_ref = rid
         if (
             newest_ref is not None
             and newest_ref != scan_run_id
             and run.started_at is not None
-            and ref_started.get(newest_ref) is not None
-            and run.started_at < ref_started[newest_ref]
+            and this_key < newest_key
         ):
             stale_skipped += 1
             continue

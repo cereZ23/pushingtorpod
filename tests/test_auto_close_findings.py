@@ -98,7 +98,9 @@ class TestAutoCloseStaleFindings:
         db_session.refresh(recent)
         assert recent.status == FindingStatus.OPEN
 
-    def test_misconfig_finding_not_touched_by_nuclei_close(self, db_session, test_tenant):
+    def test_misconfig_stale_closed_in_phase10(self, db_session, test_tenant):
+        # The misconfig stale-close was relocated from phase 8 to phase 10 (after the
+        # coverage shadow), so phase 10 now closes stale misconfig findings too.
         asset = _asset(db_session, test_tenant, "misconfig.test.com")
         mc = _finding(db_session, asset.id, source="misconfig", age_days=5)
         run = _run(db_session, test_tenant)
@@ -107,7 +109,18 @@ class TestAutoCloseStaleFindings:
         _run_phase10(db_session, test_tenant, run)
 
         db_session.refresh(mc)
-        assert mc.status == FindingStatus.OPEN  # phase 10 only closes source=nuclei
+        assert mc.status == FindingStatus.FIXED
+
+    def test_misconfig_recent_not_closed_in_phase10(self, db_session, test_tenant):
+        asset = _asset(db_session, test_tenant, "mc-recent.test.com")
+        mc = _finding(db_session, asset.id, source="misconfig", age_days=0)  # seen this run
+        run = _run(db_session, test_tenant)
+        _healthy_discovery(db_session, test_tenant, run)
+
+        _run_phase10(db_session, test_tenant, run)
+
+        db_session.refresh(mc)
+        assert mc.status == FindingStatus.OPEN
 
 
 class TestDiscoveryHealthGuardBlocksClose:

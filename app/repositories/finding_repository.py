@@ -144,6 +144,15 @@ class FindingRepository:
         if not findings:
             return {"created": 0, "updated": 0, "total_processed": 0, "errors": []}
 
+        # Never attribute detection to a run that isn't this tenant's: validate ownership and
+        # drop a foreign/unknown scan_run_id to None (so it degrades to "no attribution").
+        if scan_run_id is not None:
+            from app.models.scanning import ScanRun
+
+            owned = self.db.query(ScanRun.id).filter(ScanRun.id == scan_run_id, ScanRun.tenant_id == tenant_id).first()
+            if owned is None:
+                scan_run_id = None
+
         # Prepare records
         records = []
         errors = []

@@ -295,3 +295,27 @@ def test_shadow_out_of_order_older_run_is_noop(db_session, test_tenant, monkeypa
     assert r["would_close_ids"] == []
     db_session.refresh(finding)
     assert finding.eligible_miss_streak == 1  # untouched by the older run
+
+
+def test_attribution_rejects_foreign_tenant_run(db_session, test_tenant):
+    # bulk_upsert_findings must never write another tenant's run id onto a finding.
+    from app.models.database import Finding, Tenant
+    from app.models.scanning import ScanRun
+    from app.repositories.finding_repository import FindingRepository
+
+    other = Tenant(name="Other-PC", slug="other-pc", contact_policy="x@y.com")
+    db_session.add(other)
+    db_session.commit()
+    foreign_run = ScanRun(tenant_id=other.id, project_id=None, status="running", started_at=datetime.now(timezone.utc))
+    db_session.add(foreign_run)
+    db_session.commit()
+
+    asset = _asset(db_session, test_tenant, "attr.test.com")
+    FindingRepository(db_session).bulk_upsert_findings(
+        [{"asset_id": asset.id, "template_id": "CVE-Z", "name": "z", "severity": "high"}],
+        tenant_id=test_tenant.id,
+        scan_run_id=foreign_run.id,  # belongs to `other`, not test_tenant
+    )
+    f = db_session.query(Finding).filter(Finding.asset_id == asset.id).first()
+    assert f is not None
+    assert f.last_detected_scan_run_id is None  # foreign run dropped → no attribution
