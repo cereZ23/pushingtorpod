@@ -51,6 +51,42 @@ class AutoCloseVerdict:
         return self.decision is AutoCloseDecision.WOULD_CLOSE
 
 
+TARGET_BASE = "base"
+TARGET_ENDPOINT = "endpoint"
+TARGET_UNKNOWN = "unknown"
+
+
+def classify_matched_at(matched_at: Optional[str]) -> str:
+    """Conservatively classify a finding's recorded location for the TEMPORARY endpoint-safety gate.
+
+    Returns one of:
+      ``"base"``     — an http(s) URL whose path is empty or ``/`` and has no query. The base-URL
+                       scan re-visits it, so it MAY accrue an eligible miss.
+      ``"endpoint"`` — an http(s) URL with a path beyond ``/`` or a query string: a deep endpoint
+                       the base pass does not visit.
+      ``"unknown"``  — absent, non-http(s), or unparseable (e.g. the ``host:port`` an SSL/network
+                       template emits). Treated as ineligible, fail-closed.
+
+    Only ``"base"`` may advance the auto-close streak; endpoint and unknown are both INELIGIBLE.
+    This is a stopgap while the HTTP-stock pass scans base URLs only (endpoint CVE coverage deferred
+    to the dedicated reduced endpoint pass — Traccia B). It deliberately OVER-classifies (a template
+    that self-generates ``/wp-login.php`` reads as endpoint) — safe, because it only ever KEEPS a
+    finding open. The durable fix persists per-target coverage identity rather than inferring it."""
+    if not matched_at or not isinstance(matched_at, str):
+        return TARGET_UNKNOWN
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(matched_at)
+    except (ValueError, TypeError):
+        return TARGET_UNKNOWN
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return TARGET_UNKNOWN
+    if parsed.query:
+        return TARGET_ENDPOINT
+    return TARGET_BASE if (parsed.path or "") in ("", "/") else TARGET_ENDPOINT
+
+
 def decide_finding_auto_close(
     *,
     this_run_id: int,
@@ -61,10 +97,15 @@ def decide_finding_auto_close(
     detector_applicable: bool,
     current_streak: int,
     last_eligible_run_id: Optional[int],
+    base_target: bool = True,
     close_threshold: int = DEFAULT_CLOSE_THRESHOLD,
 ) -> AutoCloseVerdict:
     """Pure per-finding decision. ``this_run_id`` is always a real run (the runner only
-    operates inside a scan). See the module docstring for the eligibility contract."""
+    operates inside a scan). See the module docstring for the eligibility contract.
+
+    ``base_target`` is False for endpoint/unknown locations (see ``classify_matched_at``): while
+    the stock pass scans base URLs only, only a base-target finding may accrue a miss — otherwise a
+    pass that never visits the path/endpoint would false-close it."""
     # 1. Detected this run → the finding is live: reset the streak and attribute detection.
     if detected_this_run:
         return AutoCloseVerdict(
@@ -73,8 +114,11 @@ def decide_finding_auto_close(
             set_last_detected_run_id=this_run_id,
         )
 
-    # 2. Fail-closed eligibility gate: every condition must hold to count a miss.
-    eligible = discovery_auto_close_allowed and coverage_covered and catalog_intact and detector_applicable
+    # 2. Fail-closed eligibility gate: every condition must hold to count a miss. A non-base target
+    #    (endpoint/unknown) is never eligible while the stock pass scans base URLs only.
+    eligible = (
+        base_target and discovery_auto_close_allowed and coverage_covered and catalog_intact and detector_applicable
+    )
     if not eligible:
         return AutoCloseVerdict(AutoCloseDecision.INELIGIBLE, new_streak=0)
 
@@ -113,10 +157,21 @@ def shadow_auto_close(
     from app.models.scanning import ScanRun
     from app.repositories.coverage_repository import CoverageRepository
     from app.services.discovery_health import evaluate_and_persist_discovery_health
-    from app.services.scan_policy import ENGINE_BUILTIN_MISCONFIG, ENGINE_NUCLEI
+    from app.services.scan_policy import (
+        ENGINE_BUILTIN_MISCONFIG,
+        ENGINE_NUCLEI,
+        PASS_CUSTOM_HTTP,
+        PASS_HTTP_STOCK,
+    )
 
     # A finding's source must match the engine of the pass that authorises it.
     source_engine = {"nuclei": ENGINE_NUCLEI, "misconfig": ENGINE_BUILTIN_MISCONFIG}
+    # The temporary endpoint-safety gate applies ONLY to the HTTP nuclei passes (http_stock scans
+    # base URLs only now; custom_http still scans endpoints but has NO per-endpoint coverage yet).
+    # For both, an endpoint-derived finding must stay ineligible until per-endpoint coverage exists
+    # (Traccia B). Host-level passes (dns/network, misconfig, cdn/ssl) must NOT be gated by the HTTP
+    # path/query classification, or their legitimate streaks would be wrongly reset.
+    http_endpoint_gated_passes = {PASS_HTTP_STOCK, PASS_CUSTOM_HTTP}
 
     run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
     if run is None or run.tenant_id != tenant_id:
@@ -143,12 +198,14 @@ def shadow_auto_close(
     for c in db.query(ScanCoverage).filter(ScanCoverage.scan_run_id == scan_run_id).all():
         coverage_by_asset.setdefault(c.asset_id, []).append(c)
     policy_engine: dict[str, str] = {}
+    policy_pass: dict[str, str] = {}
     hashes = {c.policy_hash for rows in coverage_by_asset.values() for c in rows}
     if hashes:
-        for ph, eng in db.query(ScanPolicy.policy_hash, ScanPolicy.engine_name).filter(
+        for ph, eng, pass_name in db.query(ScanPolicy.policy_hash, ScanPolicy.engine_name, ScanPolicy.pass_name).filter(
             ScanPolicy.policy_hash.in_(hashes)
         ):
             policy_engine[ph] = eng
+            policy_pass[ph] = pass_name
 
     # Row-lock the open findings so two concurrent shadow runners can't both advance a streak.
     findings = (
@@ -208,6 +265,7 @@ def shadow_auto_close(
         want_engine = source_engine.get(f.source)
         covered = False
         applicable = False
+        covering_pass = None
         if want_engine is not None and f.template_id:
             for c in coverage_by_asset.get(f.asset_id, ()):
                 if policy_engine.get(c.policy_hash) != want_engine:
@@ -216,7 +274,19 @@ def shadow_auto_close(
                     applicable = True  # detector in an INTACT catalog (empty set on tamper)
                     if c.status == CoverageStatus.COVERED:
                         covered = True
+                        covering_pass = policy_pass.get(c.policy_hash)
                         break
+
+        # TEMPORARY endpoint-safety gate — ONLY for the HTTP nuclei passes (http_stock, custom_http),
+        # neither of which has per-endpoint coverage yet. A finding authorised by one of those whose
+        # location is a deep endpoint (or unclassifiable) must not accrue a miss → never closes until
+        # per-endpoint coverage exists (Traccia B). dns/network, misconfig and cdn/ssl detectors are
+        # host-level: applying the HTTP path/query classification there would wrongly reset their
+        # legitimate streaks, so they are left as base_target=True (unaffected by this gate).
+        if covering_pass in http_endpoint_gated_passes:
+            base_target = classify_matched_at(f.matched_at) == TARGET_BASE
+        else:
+            base_target = True
 
         verdict = decide_finding_auto_close(
             this_run_id=scan_run_id,
@@ -227,6 +297,7 @@ def shadow_auto_close(
             detector_applicable=applicable,
             current_streak=f.eligible_miss_streak or 0,
             last_eligible_run_id=f.last_eligible_run_id,
+            base_target=base_target,
             close_threshold=close_threshold,
         )
 

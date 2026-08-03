@@ -76,16 +76,20 @@ def _run_phase10(db, tenant, scan_run):
 
 
 class TestAutoCloseStaleFindings:
-    def test_stale_closed_when_discovery_healthy(self, db_session, test_tenant):
+    def test_stale_nuclei_not_closed_legacy_disabled(self, db_session, test_tenant):
+        # Legacy tenant-wide nuclei closer is DISABLED (endpoint findings would false-FIX now that
+        # HTTP-stock scans base URLs only). A stale nuclei finding stays OPEN even when discovery
+        # authorizes closing; the coverage-aware close is shadow-only.
         asset = _asset(db_session, test_tenant, "stale.test.com")
         old = _finding(db_session, asset.id, source="nuclei", age_days=5)
         run = _run(db_session, test_tenant)
-        _healthy_discovery(db_session, test_tenant, run)  # authorize
+        _healthy_discovery(db_session, test_tenant, run)  # would authorize, but closers are off
 
-        _run_phase10(db_session, test_tenant, run)
+        result = _run_phase10(db_session, test_tenant, run)
 
         db_session.refresh(old)
-        assert old.status == FindingStatus.FIXED
+        assert old.status == FindingStatus.OPEN  # NOT closed — better false-open than false-fixed
+        assert result["nuclei_auto_closed"] == 0
 
     def test_recent_finding_not_closed(self, db_session, test_tenant):
         asset = _asset(db_session, test_tenant, "recent.test.com")
@@ -98,18 +102,19 @@ class TestAutoCloseStaleFindings:
         db_session.refresh(recent)
         assert recent.status == FindingStatus.OPEN
 
-    def test_misconfig_stale_closed_in_phase10(self, db_session, test_tenant):
-        # The misconfig stale-close was relocated from phase 8 to phase 10 (after the
-        # coverage shadow), so phase 10 now closes stale misconfig findings too.
+    def test_stale_misconfig_not_closed_legacy_disabled(self, db_session, test_tenant):
+        # The legacy misconfig closer is also disabled while the coverage-aware consumer is in
+        # shadow: a stale misconfig finding stays OPEN.
         asset = _asset(db_session, test_tenant, "misconfig.test.com")
         mc = _finding(db_session, asset.id, source="misconfig", age_days=5)
         run = _run(db_session, test_tenant)
         _healthy_discovery(db_session, test_tenant, run)
 
-        _run_phase10(db_session, test_tenant, run)
+        result = _run_phase10(db_session, test_tenant, run)
 
         db_session.refresh(mc)
-        assert mc.status == FindingStatus.FIXED
+        assert mc.status == FindingStatus.OPEN
+        assert result["misconfig_auto_closed"] == 0
 
     def test_misconfig_recent_not_closed_in_phase10(self, db_session, test_tenant):
         asset = _asset(db_session, test_tenant, "mc-recent.test.com")
@@ -121,6 +126,34 @@ class TestAutoCloseStaleFindings:
 
         db_session.refresh(mc)
         assert mc.status == FindingStatus.OPEN
+
+    def test_shadow_runs_before_correlation(self, db_session, test_tenant):
+        # The coverage-aware consumer must still run — in SHADOW — and strictly BEFORE correlation
+        # (it has to observe the full open set before anything could ever be closed).
+        from app.tasks.pipeline_phases.detection import _phase_10_correlation
+
+        asset = _asset(db_session, test_tenant, "shadow.test.com")
+        _finding(db_session, asset.id, source="nuclei", age_days=5)
+        run = _run(db_session, test_tenant)
+        _healthy_discovery(db_session, test_tenant, run)
+
+        order = []
+
+        def _shadow(*a, **k):
+            order.append("shadow")
+            return {"decisions": {}, "would_close_ids": []}
+
+        def _corr(*a, **k):
+            order.append("correlation")
+            return {"issues_created": 0}
+
+        with (
+            patch("app.services.coverage_autoclose.shadow_auto_close", _shadow),
+            patch("app.tasks.correlation.run_correlation", _corr),
+        ):
+            _phase_10_correlation(test_tenant.id, None, run.id, db_session, _LOG)
+
+        assert order == ["shadow", "correlation"]
 
 
 class TestDiscoveryHealthGuardBlocksClose:
