@@ -509,6 +509,9 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             max_endpoints_per_host=endpoint_cap,
             request_timeout=req_timeout,
             max_host_errors=mhe_cap,
+            # DNS/network templates never target HTTP paths — feeding Katana endpoints here is pure
+            # waste (and was inflating this pass toward the per-batch timeout). Base assets only.
+            include_katana_endpoints=False,
         )
 
     # Pass 0: custom templates FIRST (sequential, fast ~10s).
