@@ -59,14 +59,19 @@ def _persist_pass_catalog(
     """P-B: persist the applicable-detector catalog for this policy, derived from the SAME
     snapshot the revision came from (single read → no race if templates change mid-emit).
 
-    Observational and idempotent per ``policy_hash``: skip if already catalogued, so a pass
-    with thousands of templates re-parses them only the first time a policy is seen. Fail-open
-    — a catalog gap can only ever PREVENT a future auto-close, never cause a wrong one, so a
-    failure here must never break or slow the scan.
+    Observational and idempotent per ``policy_hash``: re-enumeration (parsing thousands of
+    templates) is skipped ONLY when the catalog is stamped built AND its live rows still match
+    that stamp's ``(count, digest)`` — mere row presence is not accepted as completeness, so a
+    partial or tampered catalog is rebuilt/flagged rather than trusted. Fail-open — a catalog
+    gap can only ever PREVENT a future auto-close, never cause a wrong one, so a failure here
+    must never break or slow the scan. (The consumer must ALSO verify catalog_fingerprint ==
+    catalog_build before trusting a detector as applicable — a tampered catalog stays
+    non-authorising.)
     """
     try:
-        if repo.catalog_exists(manifest.policy_hash):
-            return
+        build = repo.catalog_build(manifest.policy_hash)
+        if build is not None and repo.catalog_fingerprint(manifest.policy_hash) == build:
+            return  # fully built AND the live rows still match the stamped (count, digest)
         ruleset = enumerate_nuclei_from_snapshot(manifest, snapshot, parse_yaml=parse_yaml)
         repo.persist_catalog(ruleset)
         logger.info(

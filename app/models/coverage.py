@@ -121,6 +121,27 @@ class ScanPolicyTemplate(Base):
         return f"<ScanPolicyTemplate(policy={self.policy_hash[:12]}…, detector={self.detector_id!r})>"
 
 
+class ScanPolicyCatalog(Base):
+    """Proof that a policy's applicable-detector catalog was FULLY built, + its fingerprint.
+
+    Written atomically with ``scan_policy_templates`` (same transaction) so its presence
+    means the catalog was persisted and verified in full. The emit checks the live rows'
+    ``(detector_count, catalog_digest)`` against this row before skipping re-enumeration —
+    so a partial or tampered catalog (e.g. an extra, non-applicable detector) is never
+    mistaken for complete. Global 1:1 companion to ``scan_policy``.
+    """
+
+    __tablename__ = "scan_policy_catalog"
+
+    policy_hash = Column(String(64), ForeignKey("scan_policy.policy_hash", ondelete="CASCADE"), primary_key=True)
+    detector_count = Column(Integer, nullable=False)
+    catalog_digest = Column(String(64), nullable=False)
+    built_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<ScanPolicyCatalog(policy={self.policy_hash[:12]}…, n={self.detector_count})>"
+
+
 class ScanCoverage(Base):
     """Per (run, pass, asset) coverage status — tenant-scoped, under RLS.
 

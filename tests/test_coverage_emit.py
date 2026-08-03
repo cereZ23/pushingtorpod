@@ -255,32 +255,49 @@ def _fake_snapshot_and_manifest():
 
 
 class _FakeRepo:
-    def __init__(self, exists):
-        self._exists = exists
+    # build = stamped (count, digest) or None; fingerprint = live (count, digest) or None.
+    def __init__(self, build=None, fingerprint=None):
+        self._build = build
+        self._fingerprint = fingerprint
         self.persisted = None
 
-    def catalog_exists(self, policy_hash):
-        return self._exists
+    def catalog_build(self, policy_hash):
+        return self._build
+
+    def catalog_fingerprint(self, policy_hash):
+        return self._fingerprint
 
     def persist_catalog(self, ruleset):
         self.persisted = ruleset
         return len(ruleset.rules)
 
 
-def test_persist_pass_catalog_skips_when_present():
+def test_persist_pass_catalog_skips_when_built_and_intact():
+    # Stamped build present AND live rows match it -> skip, no re-parse, no write.
     snapshot, manifest = _fake_snapshot_and_manifest()
-    repo = _FakeRepo(exists=True)
+    repo = _FakeRepo(build=(1, "abc"), fingerprint=(1, "abc"))
     calls = []
     coverage_emit._persist_pass_catalog(repo, manifest, snapshot, parse_yaml=lambda d: calls.append(d))
-    assert repo.persisted is None  # already catalogued -> nothing written
-    assert calls == []  # and the expensive YAML parse was skipped entirely
+    assert repo.persisted is None
+    assert calls == []  # the expensive YAML parse was skipped entirely
 
 
-def test_persist_pass_catalog_enumerates_when_absent():
+def test_persist_pass_catalog_rebuilds_when_fingerprint_diverges():
+    # Stamped as 1 detector, but live rows differ (partial/extra/swap) -> must NOT skip.
     import yaml
 
     snapshot, manifest = _fake_snapshot_and_manifest()
-    repo = _FakeRepo(exists=False)
+    repo = _FakeRepo(build=(1, "abc"), fingerprint=(2, "xyz"))
+    coverage_emit._persist_pass_catalog(repo, manifest, snapshot, parse_yaml=yaml.safe_load)
+    assert repo.persisted is not None  # re-enumerated + re-persisted
+    assert repo.persisted.contains("test-cve")
+
+
+def test_persist_pass_catalog_enumerates_when_never_built():
+    import yaml
+
+    snapshot, manifest = _fake_snapshot_and_manifest()
+    repo = _FakeRepo(build=None)
     coverage_emit._persist_pass_catalog(repo, manifest, snapshot, parse_yaml=yaml.safe_load)
     assert repo.persisted is not None
     assert repo.persisted.contains("test-cve")
@@ -288,7 +305,7 @@ def test_persist_pass_catalog_enumerates_when_absent():
 
 def test_persist_pass_catalog_fail_open_on_error():
     snapshot, manifest = _fake_snapshot_and_manifest()
-    repo = _FakeRepo(exists=False)
+    repo = _FakeRepo(build=None)
 
     def _boom(_data):
         raise ValueError("bad yaml")
