@@ -325,18 +325,24 @@ class FindingRepository:
 
         finding.status = FindingStatus[status_upper]
 
-        # Append notes to evidence if provided
+        # Append notes to evidence if provided. evidence is a JSON column: work on a dict and
+        # assign a dict back (never json.dumps — that would re-introduce a double-encoded
+        # string). Tolerate legacy string rows.
         if notes:
-            try:
-                evidence = json.loads(finding.evidence) if finding.evidence else {}
-                if "status_notes" not in evidence:
-                    evidence["status_notes"] = []
-                evidence["status_notes"].append(
-                    {"timestamp": datetime.now(timezone.utc).isoformat(), "status": status, "notes": notes}
-                )
-                finding.evidence = json.dumps(evidence)
-            except (json.JSONDecodeError, TypeError, KeyError):
-                logger.debug("Failed to update evidence notes for finding %s", finding.id)
+            if isinstance(finding.evidence, dict):
+                evidence = dict(finding.evidence)
+            elif isinstance(finding.evidence, str):
+                try:
+                    parsed = json.loads(finding.evidence)
+                    evidence = parsed if isinstance(parsed, dict) else {}
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    evidence = {}
+            else:
+                evidence = {}
+            evidence.setdefault("status_notes", []).append(
+                {"timestamp": datetime.now(timezone.utc).isoformat(), "status": status, "notes": notes}
+            )
+            finding.evidence = evidence
 
         self.db.commit()
         self.db.refresh(finding)
