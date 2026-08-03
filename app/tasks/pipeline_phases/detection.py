@@ -449,6 +449,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             interactsh_server=interactsh_server if use_interactsh else None,
             exclude_tags=exclude_tags,
             batch_deadline_seconds=nuclei_group_budget,
+            scan_run_id=scan_run_id,
         )
 
     def _run_pass_2():
@@ -466,6 +467,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             timeout=300,
             exclude_tags=tier_exclude_tags[1],  # CDN pass always uses T1 (conservative)
             batch_deadline_seconds=nuclei_group_budget,
+            scan_run_id=scan_run_id,
         )
 
     def _run_pass_3():
@@ -485,6 +487,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             timeout=300,
             exclude_tags=exclude_tags,
             batch_deadline_seconds=nuclei_group_budget,
+            scan_run_id=scan_run_id,
         )
 
     # Pass 0: custom templates FIRST (sequential, fast ~10s).
@@ -518,6 +521,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
                 concurrency=concurrency,
                 timeout=600,  # 10 min — 12 custom templates × ~130 targets + katana endpoints
                 exclude_tags="",  # empty string = no exclusions for our own templates
+                scan_run_id=scan_run_id,
             )
             if isinstance(custom_result, dict):
                 total_created += custom_result.get("findings_created", 0)
@@ -704,6 +708,21 @@ def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
             health.reason,
         )
 
+    # Coverage-aware auto-close SHADOW (P-C): runs BEFORE the old closers so it observes the
+    # FULL open set. Persists each finding's miss-streak + run attribution; it NEVER changes
+    # finding status (no real close). Fail-open WITH rollback so a shadow error can't leave a
+    # partially-written transaction to corrupt the rest of the phase.
+    try:
+        from app.services.coverage_autoclose import shadow_auto_close
+
+        shadow = shadow_auto_close(db, tenant_id=tenant_id, project_id=project_id, scan_run_id=scan_run_id)
+        tenant_logger.info(
+            f"Coverage auto-close shadow: {shadow.get('decisions')} would_close={len(shadow.get('would_close_ids', []))}"
+        )
+    except Exception:
+        db.rollback()
+        tenant_logger.warning("Coverage auto-close shadow failed (non-fatal)", exc_info=True)
+
     # Auto-close stale nuclei findings: open findings whose last_seen is
     # older than the current scan's started_at are no longer detected.
     # Grace period: 2 scan cycles (findings must be absent for 2 consecutive scans).
@@ -729,6 +748,30 @@ def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
         if auto_closed:
             db.commit()
             tenant_logger.info(f"Auto-closed {auto_closed} stale nuclei findings (not seen since {cutoff})")
+
+    # Auto-close stale MISCONFIG findings — relocated here from phase 8 so it runs AFTER the
+    # shadow (which must observe the full open set before anything is closed). Same
+    # discovery-health gate; cutoff keyed on this run's start (misconfig re-runs every scan).
+    misconfig_closed = 0
+    if health.auto_close_allowed and current_run and current_run.started_at:
+        mc_cutoff = current_run.started_at - timedelta(minutes=5)
+        stale_misconfig = (
+            db.query(Finding)
+            .join(Asset)
+            .filter(
+                Asset.tenant_id == tenant_id,
+                Finding.source == "misconfig",
+                Finding.status == FindingStatus.OPEN,
+                Finding.last_seen < mc_cutoff,
+            )
+            .all()
+        )
+        for f in stale_misconfig:
+            f.status = FindingStatus.FIXED
+            misconfig_closed += 1
+        if misconfig_closed:
+            db.commit()
+            tenant_logger.info(f"Auto-closed {misconfig_closed} stale misconfig findings (not seen since {mc_cutoff})")
 
     # Collapse network/service findings (FTP/SSH/...) detected on multiple
     # hostnames that resolve to the same IP into one — they're one real service.

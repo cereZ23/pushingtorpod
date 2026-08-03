@@ -386,6 +386,7 @@ def _persist_finding(
     evidence: dict,
     stats: dict,
     category: str,
+    scan_run_id: int | None = None,
 ) -> None:
     """Upsert a misconfig finding by its dedup fingerprint.
 
@@ -409,6 +410,10 @@ def _persist_finding(
         existing.occurrence_count = (existing.occurrence_count or 1) + 1
         if existing.status == FindingStatus.FIXED:
             existing.status = FindingStatus.OPEN
+        # Detection attribution (P-C): seen this run → reset streak + record run (real run only).
+        if scan_run_id is not None:
+            existing.last_detected_scan_run_id = scan_run_id
+            existing.eligible_miss_streak = 0
         stats["findings_updated"] += 1
     else:
         db.add(
@@ -425,6 +430,7 @@ def _persist_finding(
                 host=host,
                 fingerprint=fp,
                 occurrence_count=1,
+                last_detected_scan_run_id=scan_run_id,
             )
         )
         stats["findings_created"] += 1
@@ -439,6 +445,7 @@ def _consolidate_root_scoped(
     by_root: dict,
     assets_by_identifier: dict,
     stats: dict,
+    scan_run_id: int | None = None,
 ) -> None:
     """Emit one consolidated finding per registrable domain for a root-scoped
     control, collapsing all affected subdomains into a single finding.
@@ -478,9 +485,9 @@ def _consolidate_root_scoped(
         }
         if any(m["evidence"].get("needs_review") for m in members):
             evidence["needs_review"] = True
-        scan_run_id = members[0]["evidence"].get("scan_run_id")
-        if scan_run_id:
-            evidence["scan_run_id"] = scan_run_id
+        ev_run_id = members[0]["evidence"].get("scan_run_id")
+        if ev_run_id:
+            evidence["scan_run_id"] = ev_run_id
 
         # Attach to the registrable-domain asset if it exists, else to a
         # representative affected subdomain (the root asset is not guaranteed).
@@ -498,6 +505,7 @@ def _consolidate_root_scoped(
             evidence=evidence,
             stats=stats,
             category=control["category"],
+            scan_run_id=scan_run_id,
         )
 
 
@@ -2150,6 +2158,17 @@ def run_misconfig_detection(
         "status": "success",
     }
 
+    # Never attribute detection to a run that isn't this tenant's — drop a foreign/unknown
+    # scan_run_id so _persist_finding degrades to "no attribution" rather than writing it.
+    if scan_run_id is not None:
+        from app.models.scanning import ScanRun as _SRun
+
+        if db.query(_SRun.id).filter(_SRun.id == scan_run_id, _SRun.tenant_id == tenant_id).first() is None:
+            tenant_logger.warning(
+                "Misconfig: scan_run_id %s not owned by tenant %s — no attribution", scan_run_id, tenant_id
+            )
+            scan_run_id = None
+
     try:
         assets = (
             db.query(Asset)
@@ -2288,6 +2307,7 @@ def run_misconfig_detection(
                             evidence=evidence,
                             stats=stats,
                             category=category,
+                            scan_run_id=scan_run_id,
                         )
 
                 except Exception as exc:
@@ -2310,6 +2330,7 @@ def run_misconfig_detection(
                     by_root=by_root,
                     assets_by_identifier=assets_by_identifier,
                     stats=stats,
+                    scan_run_id=scan_run_id,
                 )
             except Exception as exc:
                 stats["errors"] += 1
@@ -2320,53 +2341,10 @@ def run_misconfig_detection(
 
         db.commit()
 
-        # Auto-close stale misconfig findings: any open misconfig finding
-        # for this tenant whose last_seen was NOT updated in this scan run
-        # is no longer detected -- mark it as fixed.
-        # Discovery-health guard (FAIL-CLOSED): default to NOT closing. Only an
-        # explicit healthy + baseline-comparable verdict authorizes closing. A
-        # missing scan_run_id / run / project (e.g. a manual misconfig run) → no
-        # close, because we can't prove discovery covered the surface this run.
-        allow_close = False
-        if scan_run_id:
-            from app.services.discovery_health import evaluate_and_persist_discovery_health
-            from app.models.scanning import ScanRun as _SR
-
-            _run = db.query(_SR.project_id).filter(_SR.id == scan_run_id).first()
-            if _run and _run.project_id is not None:
-                _health = evaluate_and_persist_discovery_health(db, tenant_id, _run.project_id, scan_run_id)
-                allow_close = _health.auto_close_allowed
-                if not allow_close:
-                    tenant_logger.warning(
-                        "Misconfig auto-close SKIPPED: discovery not authorized to close (%s)",
-                        _health.reason_code,
-                    )
-            else:
-                tenant_logger.warning("Misconfig auto-close SKIPPED: no run/project context for scan %s", scan_run_id)
-        else:
-            tenant_logger.warning("Misconfig auto-close SKIPPED: no scan_run_id (manual run) — refusing to close")
-
-        auto_closed = 0
-        if allow_close:
-            scan_cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
-            stale_findings = (
-                db.query(Finding)
-                .join(Asset)
-                .filter(
-                    Asset.tenant_id == tenant_id,
-                    Finding.source == "misconfig",
-                    Finding.status == FindingStatus.OPEN,
-                    Finding.last_seen < scan_cutoff,
-                )
-                .all()
-            )
-            for sf in stale_findings:
-                sf.status = FindingStatus.FIXED
-                auto_closed += 1
-            if auto_closed:
-                db.commit()
-                tenant_logger.info(f"Auto-closed {auto_closed} stale misconfig findings not seen in current scan")
-        stats["findings_auto_closed"] = auto_closed
+        # Stale-misconfig auto-close was MOVED to phase 10 (_phase_10_correlation) so it runs
+        # AFTER the coverage-aware shadow, which must observe the full open set before anything
+        # is closed. Same discovery-health gate applies there. Kept as a stable stat here.
+        stats["findings_auto_closed"] = 0
 
         # Coverage ledger (observational, fail-open): record what the misconfig pass
         # actually covered so a future per-detector auto-close can prove a control ran on

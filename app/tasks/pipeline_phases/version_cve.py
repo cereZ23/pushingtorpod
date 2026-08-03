@@ -124,7 +124,9 @@ def _phase_9e_version_cve(tenant_id, project_id, scan_run_id, db, tenant_logger,
 
     created = 0
     if findings:
-        created = FindingRepository(db).bulk_upsert_findings(findings, tenant_id).get("created", 0)
+        created = (
+            FindingRepository(db).bulk_upsert_findings(findings, tenant_id, scan_run_id=scan_run_id).get("created", 0)
+        )
     tenant_logger.info(
         "version-CVE: %d services, %d pairs queried, %d presumptive findings",
         len(rows),

@@ -61,6 +61,7 @@ def run_nuclei_scan(
     interactsh_server: Optional[str] = None,
     exclude_tags: Optional[str] = None,
     batch_deadline_seconds: Optional[int] = None,
+    scan_run_id: Optional[int] = None,
 ):
     """
     Execute Nuclei vulnerability scan on assets
@@ -521,7 +522,7 @@ def run_nuclei_scan(
 
         # Store findings in database
         finding_repo = FindingRepository(db)
-        upsert_result = finding_repo.bulk_upsert_findings(unsuppressed, tenant_id)
+        upsert_result = finding_repo.bulk_upsert_findings(unsuppressed, tenant_id, scan_run_id=scan_run_id)
 
         tenant_logger.info(f"Stored findings: {upsert_result['created']} created, {upsert_result['updated']} updated")
 

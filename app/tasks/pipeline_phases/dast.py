@@ -188,7 +188,7 @@ def _phase_9d_dast(tenant_id, project_id, scan_run_id, db, tenant_logger, scan_t
 
     created = 0
     if findings:
-        res = FindingRepository(db).bulk_upsert_findings(findings, tenant_id)
+        res = FindingRepository(db).bulk_upsert_findings(findings, tenant_id, scan_run_id=scan_run_id)
         created = res.get("created", 0)
     tenant_logger.info("DAST: %d findings from %d targets", len(findings), len(targets))
     return {
