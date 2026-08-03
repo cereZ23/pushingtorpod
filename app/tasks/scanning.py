@@ -81,7 +81,6 @@ def host_in_scope(host: str, authorised_hosts: set, scope_entries: list) -> bool
     return target_in_scope(h, scope_entries or [])
 
 
-@celery.task(name="app.tasks.scanning.run_nuclei_scan")
 def _query_katana_endpoints(db, tenant_id: int, asset_ids: list):
     """Load Katana-crawled endpoints (Phase 6b) for these assets.
 
@@ -104,6 +103,7 @@ def _query_katana_endpoints(db, tenant_id: int, asset_ids: list):
     )
 
 
+@celery.task(name="app.tasks.scanning.run_nuclei_scan")
 def run_nuclei_scan(
     tenant_id: int,
     asset_ids: Optional[List[int]] = None,
@@ -342,13 +342,21 @@ def run_nuclei_scan(
             # domains. No active authorization → exact-match only (fail-closed).
             from app.services.scope_authorization import _active_authorizations
 
+            # Only resolve the authorization context when there are endpoints to scope-check.
+            # When the pass opts out (include_katana_endpoints=False → endpoints == []) this skips
+            # the ScanAuthorization query entirely, so a failure there can NEVER mark the
+            # DNS/network pass truncated for a Katana reason.
             authorised_hosts = {normalize_host(a.identifier) for a in assets}
             authorised_hosts.discard("")
-            active_scope_entries = [
-                e
-                for auth in _active_authorizations(db, tenant_id, datetime.now(timezone.utc))
-                for e in (auth.scope_entries or [])
-            ]
+            active_scope_entries = (
+                [
+                    e
+                    for auth in _active_authorizations(db, tenant_id, datetime.now(timezone.utc))
+                    for e in (auth.scope_entries or [])
+                ]
+                if endpoints
+                else []
+            )
 
             candidates = []
             out_of_scope_dropped = 0
@@ -421,11 +429,16 @@ def run_nuclei_scan(
                     f"refusing to scan third-party hosts"
                 )
         except Exception as exc:
-            katana_load_failed = True
-            tenant_logger.warning(
-                f"Failed to load Katana endpoints for Nuclei: {exc} — marking this pass truncated "
-                f"(coverage incomplete) so it cannot authorise an auto-close"
-            )
+            # A pass that deliberately opted out of Katana enrichment must NOT be marked truncated
+            # by a failure in this block — it scanned exactly what it intended (base URLs only).
+            if include_katana_endpoints:
+                katana_load_failed = True
+                tenant_logger.warning(
+                    f"Failed to load Katana endpoints for Nuclei: {exc} — marking this pass truncated "
+                    f"(coverage incomplete) so it cannot authorise an auto-close"
+                )
+            else:
+                tenant_logger.debug(f"Katana enrichment skipped for this pass; ignoring error: {exc}")
 
         # Execute Nuclei scan
         nuclei_service = NucleiService(tenant_id)

@@ -60,3 +60,41 @@ def test_http_pass_still_calls_endpoint_loader(db_session, test_tenant, monkeypa
     n, result = _run_with_spy(db_session, test_tenant, monkeypatch, include=True)
     assert n == 1  # default/HTTP passes still enrich targets with Katana endpoints
     assert result.get("status") == "success"
+
+
+def test_run_nuclei_scan_is_registered_celery_task():
+    # Regression: the @celery.task decorator must stay on run_nuclei_scan, not slip onto the
+    # _query_katana_endpoints helper inserted just above it (which would silently break task
+    # registration and invocation).
+    assert scanning.run_nuclei_scan.name == "app.tasks.scanning.run_nuclei_scan"
+    assert hasattr(scanning.run_nuclei_scan, "delay")
+    # the loader seam is a plain function, NOT a task
+    assert not hasattr(scanning._query_katana_endpoints, "delay")
+
+
+def test_disabled_pass_not_truncated_even_if_authorizations_explode(db_session, test_tenant, monkeypatch):
+    # With enrichment disabled, NOTHING in the Katana path (query, authorization resolution,
+    # filtering) may run — so a failure there must not mark the DNS/network pass truncated. Arm a
+    # landmine in _active_authorizations and assert the disabled pass still reports coverage clean.
+    import app.services.scope_authorization as scope_auth
+
+    monkeypatch.setattr("app.database.SessionLocal", lambda: db_session)
+    monkeypatch.setattr(db_session, "close", lambda: None)
+    monkeypatch.setattr(scanning, "NucleiService", _FakeNuclei)
+    monkeypatch.setattr(scanning, "update_asset_risk_scores", lambda *a, **k: 0)
+
+    def _boom(*a, **k):
+        raise RuntimeError("authorization backend down")
+
+    monkeypatch.setattr(scope_auth, "_active_authorizations", _boom)
+
+    asset = Asset(tenant_id=test_tenant.id, identifier="dnsnet2.test.com", type=AssetType.SUBDOMAIN, is_active=True)
+    db_session.add(asset)
+    db_session.commit()
+
+    result = scanning.run_nuclei_scan(
+        test_tenant.id, [asset.id], templates=["dns/", "network/"], include_katana_endpoints=False
+    )
+    assert result.get("status") == "success"
+    assert result.get("truncated") is False  # a disabled pass is never truncated by a Katana failure
+    assert result.get("katana_load_failed") is False
