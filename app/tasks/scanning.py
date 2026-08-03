@@ -62,6 +62,8 @@ def run_nuclei_scan(
     exclude_tags: Optional[str] = None,
     batch_deadline_seconds: Optional[int] = None,
     scan_run_id: Optional[int] = None,
+    max_endpoints_per_host: Optional[int] = None,
+    request_timeout: Optional[int] = None,
 ):
     """
     Execute Nuclei vulnerability scan on assets
@@ -286,7 +288,11 @@ def run_nuclei_scan(
 
             candidates.sort(key=lambda c: c[0])
 
-            max_per_host = getattr(settings, "nuclei_max_endpoints_per_host", 200)
+            max_per_host = (
+                max_endpoints_per_host
+                if max_endpoints_per_host is not None
+                else getattr(settings, "nuclei_max_endpoints_per_host", 200)
+            )
             endpoint_urls: list[str] = []
             seen_shapes: set = set()
             per_host_count: dict = {}
@@ -346,6 +352,7 @@ def run_nuclei_scan(
                 interactsh_server=interactsh_server,
                 exclude_tags=exclude_tags,
                 max_total_seconds=batch_deadline_seconds,
+                request_timeout=request_timeout if request_timeout is not None else 10,
             )
         )
 

@@ -189,6 +189,14 @@ class Settings(BaseSettings):
     # values collapsed) so /user/1..N and ?id=1..N fold into one representative;
     # this caps the per-host target set without dropping distinct surface.
     nuclei_max_endpoints_per_host: int = 200
+    # Tier-1 uses a tighter endpoint cap: endpoints are already ranked (admin/login/api/
+    # param URLs first, static excluded), so a lower cap drops only the low-value tail and
+    # keeps the real vuln surface — while stopping the URL count from exploding (e.g. a
+    # 3-site tenant crawled to ~2000 endpoints, blowing the T1 wall-clock budget).
+    nuclei_max_endpoints_per_host_t1: int = 40
+    # Tier-1 nuclei request timeout (seconds). Lower than T2/T3's 10s so the ~1/3 of
+    # requests that i/o-timeout stop pinning a concurrency slot for the full 10s.
+    nuclei_request_timeout_t1: int = 6
 
     # New tool timeouts
     alterx_timeout: int = 300  # 5 min

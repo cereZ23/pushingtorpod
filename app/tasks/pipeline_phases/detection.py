@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import datetime, timezone
 
 from app.models.risk import Relationship
@@ -263,7 +264,17 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     # Overall budget for a pass's target-batching, matched to the phase-9 group
     # wall-clock ({1:1800, 2:3600, 3:10800}s) with margin, so a batched pass
     # self-terminates before the phase timeout would mark it failed.
-    nuclei_group_budget = int({1: 1800, 2: 3600, 3: 10800}.get(scan_tier, 3600) * 0.9)
+    _group_timeout = {1: 1800, 2: 3600, 3: 10800}.get(scan_tier, 3600)
+    nuclei_group_budget = int(_group_timeout * 0.9)
+    _phase9_start = time.monotonic()  # #3: recompute the budget from REMAINING wall-clock below
+
+    # Tier-aware knobs that keep the T1 pass inside its budget WITHOUT dropping host/template
+    # coverage: a tighter Katana endpoint cap (endpoints are ranked → only the low-value tail
+    # is cut) and a shorter per-request timeout (i/o-timeout requests stop pinning a slot).
+    endpoint_cap = (
+        app_settings.nuclei_max_endpoints_per_host_t1 if scan_tier == 1 else app_settings.nuclei_max_endpoints_per_host
+    )
+    req_timeout = app_settings.nuclei_request_timeout_t1 if scan_tier == 1 else 10
 
     # Tier-aware exclude-tags (config-driven, per-env overridable).
     # KEY INSIGHT: what gets a host blacklisted by nuclei as "permanently
@@ -450,6 +461,8 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             exclude_tags=exclude_tags,
             batch_deadline_seconds=nuclei_group_budget,
             scan_run_id=scan_run_id,
+            max_endpoints_per_host=endpoint_cap,
+            request_timeout=req_timeout,
         )
 
     def _run_pass_2():
@@ -468,6 +481,8 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             exclude_tags=tier_exclude_tags[1],  # CDN pass always uses T1 (conservative)
             batch_deadline_seconds=nuclei_group_budget,
             scan_run_id=scan_run_id,
+            max_endpoints_per_host=endpoint_cap,
+            request_timeout=req_timeout,
         )
 
     def _run_pass_3():
@@ -488,6 +503,8 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             exclude_tags=exclude_tags,
             batch_deadline_seconds=nuclei_group_budget,
             scan_run_id=scan_run_id,
+            max_endpoints_per_host=endpoint_cap,
+            request_timeout=req_timeout,
         )
 
     # Pass 0: custom templates FIRST (sequential, fast ~10s).
@@ -522,6 +539,8 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
                 timeout=600,  # 10 min — 12 custom templates × ~130 targets + katana endpoints
                 exclude_tags="",  # empty string = no exclusions for our own templates
                 scan_run_id=scan_run_id,
+                max_endpoints_per_host=endpoint_cap,
+                request_timeout=req_timeout,
             )
             if isinstance(custom_result, dict):
                 total_created += custom_result.get("findings_created", 0)
@@ -551,6 +570,17 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             errored=custom_failed,
             truncated=custom_truncated,
         )
+
+    # #3: the parallel passes' batching budget must come from the wall-clock REMAINING after
+    # the (sequential) custom pass — not the full group_timeout — or custom_time + budget +
+    # a batch overshoot exceeds the phase wall-clock and the phase HARD-FAILS instead of
+    # truncating. Recompute here, after the custom pass, before the parallel passes read it.
+    _elapsed = time.monotonic() - _phase9_start
+    nuclei_group_budget = max(120, int((_group_timeout - _elapsed) * 0.9))
+    tenant_logger.info(
+        f"Nuclei parallel-pass budget: {nuclei_group_budget}s "
+        f"({int(_elapsed)}s of {_group_timeout}s phase budget already spent by the custom pass)"
+    )
 
     # Run stock passes in PARALLEL — pass 1 (HTTP) and pass 3 (DNS/network) target
     # different protocols so they don't compete for bandwidth. The HTTP-live
