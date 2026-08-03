@@ -192,11 +192,12 @@ class FindingRepository:
 
                 severity_enum = FindingSeverity[severity_str.upper()]
 
-                # Process evidence
+                # Process evidence. Finding.evidence is a JSON column: pass a dict/list
+                # straight to SQLAlchemy — do NOT json.dumps a dict (that stored a
+                # double-encoded JSON *string*, which then broke every reader that calls
+                # .get() on evidence, e.g. correlation). Non-JSON-native values → str.
                 evidence = finding.get("evidence")
-                if evidence and isinstance(evidence, dict):
-                    evidence = json.dumps(evidence)
-                elif evidence and not isinstance(evidence, str):
+                if evidence is not None and not isinstance(evidence, (dict, list, str)):
                     evidence = str(evidence)
 
                 # Compute fingerprint for deduplication
