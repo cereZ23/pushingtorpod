@@ -64,9 +64,10 @@ def _persist_pass_catalog(
     that stamp's ``(count, digest)`` — mere row presence is not accepted as completeness, so a
     partial or tampered catalog is rebuilt/flagged rather than trusted. Fail-open — a catalog
     gap can only ever PREVENT a future auto-close, never cause a wrong one, so a failure here
-    must never break or slow the scan. (The consumer must ALSO verify catalog_fingerprint ==
-    catalog_build before trusting a detector as applicable — a tampered catalog stays
-    non-authorising.)
+    must never break or slow the scan. (A partial/tampered catalog is already fail-closed at
+    read time: ``applicable_detector_ids`` returns the empty set unless the live fingerprint
+    still equals the stamped build, so a corrupt catalog stays non-authorising for every
+    consumer.)
     """
     try:
         build = repo.catalog_build(manifest.policy_hash)

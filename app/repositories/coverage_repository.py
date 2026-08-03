@@ -344,7 +344,16 @@ class CoverageRepository:
         }
 
     def applicable_detector_ids(self, policy_hash: str) -> set[str]:
-        """Detector ids applicable to a policy (from the persisted catalog)."""
+        """Detector ids applicable to a policy — the fail-closed gate a consumer relies on.
+
+        Returns the persisted catalog ONLY if it is stamped built AND its live rows still
+        match that stamp (``catalog_fingerprint == catalog_build``). A never-built, partial,
+        or tampered catalog (e.g. an extra, non-applicable detector) yields the empty set, so
+        a corrupt catalog can never authorise a close — the barrier lives here, not in the
+        caller, so every consumer inherits it."""
+        build = self.catalog_build(policy_hash)
+        if build is None or self.catalog_fingerprint(policy_hash) != build:
+            return set()
         return {
             row[0]
             for row in self.db.query(ScanPolicyTemplate.detector_id)

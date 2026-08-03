@@ -147,6 +147,8 @@ def test_catalog_fingerprint_diverges_when_extra_row_present(db_session):
     db_session.commit()
 
     assert repo.catalog_fingerprint(m.policy_hash) != build  # count + digest both move
+    # The barrier: a tampered catalog authorises NOTHING, even though the rogue row exists.
+    assert repo.applicable_detector_ids(m.policy_hash) == set()
 
 
 def test_persist_policy_divergent_row_is_rejected(db_session):
