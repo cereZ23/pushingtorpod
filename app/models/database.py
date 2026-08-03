@@ -1,4 +1,17 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum, Float, Boolean, Index, JSON
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    DateTime,
+    ForeignKey,
+    Text,
+    Enum,
+    Float,
+    Boolean,
+    Index,
+    JSON,
+    CheckConstraint,
+)
 from sqlalchemy.orm import relationship, validates, declarative_base
 from datetime import datetime, timezone
 import enum
@@ -178,6 +191,15 @@ class Finding(Base):
     fingerprint = Column(String(64), index=True)  # SHA-256 hex digest
     occurrence_count = Column(Integer, default=1, server_default="1")
 
+    # P-C: coverage-aware auto-close bookkeeping (dry-run — no closes happen off these yet).
+    # eligible_miss_streak: consecutive scan runs where this finding was eligible to close
+    # (healthy discovery + COVERED + intact catalog + applicable detector) yet NOT detected.
+    # last_eligible_run_id guards against double-counting a retried run; last_detected_scan_run_id
+    # attributes the most recent detection to a specific run (not just a timestamp).
+    eligible_miss_streak = Column(Integer, nullable=False, default=0, server_default="0")
+    last_eligible_run_id = Column(Integer, ForeignKey("scan_runs.id", ondelete="SET NULL"), nullable=True)
+    last_detected_scan_run_id = Column(Integer, ForeignKey("scan_runs.id", ondelete="SET NULL"), nullable=True)
+
     asset = relationship("Asset", back_populates="findings")
 
     @validates("evidence")
@@ -222,6 +244,10 @@ class Finding(Base):
         Index("idx_finding_dedup", "asset_id", "template_id", "matcher_name"),
         # Fingerprint unique constraint for universal dedup
         Index("idx_finding_fingerprint", "fingerprint", unique=True),
+        # P-C: coverage-aware auto-close bookkeeping
+        CheckConstraint("eligible_miss_streak >= 0", name="ck_finding_miss_streak_nonneg"),
+        Index("idx_finding_last_eligible_run", "last_eligible_run_id"),
+        Index("idx_finding_last_detected_run", "last_detected_scan_run_id"),
     )
 
     def __repr__(self):
