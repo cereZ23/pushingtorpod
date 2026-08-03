@@ -83,6 +83,7 @@ class NucleiService:
         timeout: int = 1800,
         interactsh_server: Optional[str] = None,
         exclude_tags: Optional[str] = None,
+        request_timeout: int = 10,
     ) -> Dict:
         """
         Execute Nuclei scan on list of URLs
@@ -142,6 +143,7 @@ class NucleiService:
                 concurrency=concurrency,
                 interactsh_server=interactsh_server,
                 exclude_tags=exclude_tags,
+                request_timeout=request_timeout,
             )
 
             # Execute Nuclei
@@ -235,6 +237,7 @@ class NucleiService:
         chunk_size: int = 50,
         min_chunk: int = 5,
         max_total_seconds: Optional[int] = None,
+        request_timeout: int = 10,
     ) -> Dict:
         """Scan URLs in bounded batches so every template runs on every target.
 
@@ -256,6 +259,7 @@ class NucleiService:
             timeout=timeout,
             interactsh_server=interactsh_server,
             exclude_tags=exclude_tags,
+            request_timeout=request_timeout,
         )
         # Small enough to run in one shot — no batching overhead.
         if len(urls) <= chunk_size:
@@ -280,7 +284,22 @@ class NucleiService:
                 break
 
             batch = queue.popleft()
-            result = await self.scan_urls(batch, **kwargs)
+            batch_kwargs = kwargs
+            if deadline is not None:
+                # Clamp this batch's subprocess timeout to the remaining budget: a batch
+                # started near the deadline must not overshoot the phase wall-clock by a
+                # full `timeout` — that overshoot is what makes the phase hard-FAIL at the
+                # budget instead of truncating cleanly with salvaged findings.
+                remaining = int(deadline - time.monotonic())
+                if remaining < 20:  # too little time left to run a useful batch
+                    truncated = True
+                    logger.warning(
+                        f"Nuclei batching: only {remaining}s left for tenant {self.tenant_id} "
+                        f"with {len(queue) + 1} batch(es) unscanned — coverage TRUNCATED"
+                    )
+                    break
+                batch_kwargs = {**kwargs, "timeout": min(timeout, remaining)}
+            result = await self.scan_urls(batch, **batch_kwargs)
             batches_run += 1
 
             if result.get("truncated") and len(batch) > min_chunk:
@@ -374,6 +393,7 @@ class NucleiService:
         concurrency: int,
         interactsh_server: Optional[str] = None,
         exclude_tags: Optional[str] = None,
+        request_timeout: int = 10,
     ) -> List[str]:
         """
         Build Nuclei command arguments
@@ -407,7 +427,7 @@ class NucleiService:
             "-c",
             str(concurrency),  # Concurrency
             "-timeout",
-            "10",  # Request timeout (seconds)
+            str(request_timeout),  # Request timeout (seconds); tier-aware (T1 tighter)
             "-retries",
             "0",  # No retries (saves ~15% time on fast pass)
             "-bs",

@@ -122,6 +122,24 @@ class TestNucleiService:
         assert "-c" in args and "25" in args
         assert "-bs" in args
 
+    def test_build_nuclei_args_request_timeout_default_and_override(self, nuclei_service):
+        # default stays 10 (T2/T3), and a tier-aware override lands in -timeout
+        default = nuclei_service._build_nuclei_args(
+            urls_file="/tmp/urls.txt", templates=None, severity=["high"], rate_limit=1, concurrency=1
+        )
+        i = default.index("-timeout")
+        assert default[i + 1] == "10"
+        t1 = nuclei_service._build_nuclei_args(
+            urls_file="/tmp/urls.txt",
+            templates=None,
+            severity=["high"],
+            rate_limit=1,
+            concurrency=1,
+            request_timeout=6,
+        )
+        j = t1.index("-timeout")
+        assert t1[j + 1] == "6"
+
     def test_build_nuclei_args_mhe_is_50(self, nuclei_service):
         args = nuclei_service._build_nuclei_args(
             urls_file="/tmp/urls.txt",

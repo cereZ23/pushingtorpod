@@ -77,3 +77,24 @@ def test_overall_deadline_stops_early_and_flags_truncated():
     res = _run(svc, urls, chunk_size=10, max_total_seconds=0)
     assert res["truncated"] is True
     assert len(svc.batches) == 0
+
+
+class _TimeoutRecSvc(_BatchSvc):
+    """Records the subprocess timeout each batch was invoked with."""
+
+    def __init__(self, fit):
+        super().__init__(fit)
+        self.timeouts: list = []
+
+    async def scan_urls(self, urls, **kwargs):
+        self.timeouts.append(kwargs.get("timeout"))
+        return await super().scan_urls(urls, **kwargs)
+
+
+def test_batch_timeout_clamped_to_remaining_budget():
+    # A batch must never be launched with the full per-batch timeout when less budget
+    # remains — otherwise it overshoots the phase wall-clock and the phase hard-FAILS.
+    svc = _TimeoutRecSvc(fit=1000)
+    _run(svc, [f"u{i}" for i in range(30)], chunk_size=10, timeout=300, max_total_seconds=45)
+    assert svc.timeouts  # ran at least one batch
+    assert all(t <= 45 for t in svc.timeouts)  # clamped to remaining, never the full 300
