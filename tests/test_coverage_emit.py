@@ -313,3 +313,127 @@ def test_persist_pass_catalog_fail_open_on_error():
     # Enumeration blows up -> swallowed, no persist, NO exception propagated.
     coverage_emit._persist_pass_catalog(repo, manifest, snapshot, parse_yaml=_boom)
     assert repo.persisted is None
+
+
+# --- misconfig emit (phase 8, built-in engine) -------------------------------
+
+
+_MC_CONTROLS = [
+    {"id": "HDR-001", "severity": "medium", "tags": ["headers"], "config": {"x": 1}, "enabled": True},
+    {"id": "TLS-009", "severity": "high", "tags": ["tls"], "config": {}, "enabled": True},
+]
+
+
+def test_emit_misconfig_noop_without_run_id():
+    # Manual run (no scan_run_id) → nothing attempted, no error.
+    coverage_emit.emit_misconfig_pass_coverage(
+        db=None,
+        tenant_id=1,
+        scan_run_id=None,
+        tier=1,
+        asset_ids=[1, 2],
+        controls=_MC_CONTROLS,
+        ran=True,
+        errored=False,
+        partial=False,
+    )
+
+
+def _mc_run_and_asset(db_session, test_tenant, ident):
+    from app.models.database import Asset, AssetType
+    from app.models.scanning import ScanRun
+
+    run = ScanRun(tenant_id=test_tenant.id, project_id=None, status="running", started_at=datetime.now(timezone.utc))
+    db_session.add(run)
+    asset = Asset(tenant_id=test_tenant.id, identifier=ident, type=AssetType.SUBDOMAIN, is_active=True)
+    db_session.add(asset)
+    db_session.commit()
+    return run, asset
+
+
+def test_emit_misconfig_records_covered_and_catalog(db_session, test_tenant):
+    from app.repositories.coverage_repository import CoverageRepository
+    from app.services.coverage_emit import emit_misconfig_pass_coverage
+
+    run, asset = _mc_run_and_asset(db_session, test_tenant, "m1.test.com")
+    emit_misconfig_pass_coverage(
+        db_session,
+        tenant_id=test_tenant.id,
+        scan_run_id=run.id,
+        tier=1,
+        asset_ids=[asset.id],
+        controls=_MC_CONTROLS,
+        ran=True,
+        errored=False,
+        partial=False,
+    )
+    repo = CoverageRepository(db_session)
+    assert repo.covered_asset_ids(run.id, "misconfig") == {asset.id}
+    # catalog persisted + integrity barrier lets the control ids through (detector_id = control_id)
+    from app.models.coverage import ScanCoverage
+
+    ph = db_session.query(ScanCoverage.policy_hash).filter(ScanCoverage.scan_run_id == run.id).first()[0]
+    assert repo.applicable_detector_ids(ph) == {"HDR-001", "TLS-009"}
+
+
+def test_emit_misconfig_partial_is_not_covered(db_session, test_tenant):
+    from app.repositories.coverage_repository import CoverageRepository
+    from app.services.coverage_emit import emit_misconfig_pass_coverage
+
+    run, asset = _mc_run_and_asset(db_session, test_tenant, "m2.test.com")
+    emit_misconfig_pass_coverage(
+        db_session,
+        tenant_id=test_tenant.id,
+        scan_run_id=run.id,
+        tier=1,
+        asset_ids=[asset.id],
+        controls=_MC_CONTROLS,
+        ran=True,
+        errored=False,
+        partial=True,  # a control errored on some asset → PARTIAL, never COVERED
+    )
+    assert CoverageRepository(db_session).covered_asset_ids(run.id, "misconfig") == set()
+
+
+def test_emit_misconfig_failed_is_not_covered(db_session, test_tenant):
+    from app.repositories.coverage_repository import CoverageRepository
+    from app.services.coverage_emit import emit_misconfig_pass_coverage
+
+    run, asset = _mc_run_and_asset(db_session, test_tenant, "m3.test.com")
+    emit_misconfig_pass_coverage(
+        db_session,
+        tenant_id=test_tenant.id,
+        scan_run_id=run.id,
+        tier=1,
+        asset_ids=[asset.id],
+        controls=_MC_CONTROLS,
+        ran=True,
+        errored=True,
+        partial=False,
+    )
+    assert CoverageRepository(db_session).covered_asset_ids(run.id, "misconfig") == set()
+
+
+def test_emit_misconfig_retry_is_idempotent(db_session, test_tenant):
+    from app.models.coverage import ScanCoverage
+    from app.services.coverage_emit import emit_misconfig_pass_coverage
+
+    run, asset = _mc_run_and_asset(db_session, test_tenant, "m4.test.com")
+    for _ in range(2):  # a retried task must not create duplicate rows
+        emit_misconfig_pass_coverage(
+            db_session,
+            tenant_id=test_tenant.id,
+            scan_run_id=run.id,
+            tier=1,
+            asset_ids=[asset.id],
+            controls=_MC_CONTROLS,
+            ran=True,
+            errored=False,
+            partial=False,
+        )
+    rows = (
+        db_session.query(ScanCoverage)
+        .filter(ScanCoverage.scan_run_id == run.id, ScanCoverage.pass_name == "misconfig")
+        .all()
+    )
+    assert len(rows) == 1

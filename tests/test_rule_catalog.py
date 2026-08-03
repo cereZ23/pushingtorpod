@@ -15,6 +15,7 @@ from app.services.rule_catalog import (
     ApplicableRuleSet,
     RuleCatalogError,
     enumerate_misconfig_applicable_rules,
+    enumerate_misconfig_from_snapshot,
     enumerate_nuclei_applicable_rules,
     enumerate_nuclei_from_snapshot,
 )
@@ -22,6 +23,7 @@ from app.services.rule_revision import (
     compute_misconfig_rule_revision,
     compute_rule_revision,
     content_digest,
+    resolve_misconfig_rule_snapshot,
     resolve_nuclei_rule_snapshot,
 )
 from app.services.scan_policy import build_misconfig_policy_manifest, build_nuclei_policy_manifest
@@ -333,3 +335,33 @@ def test_enumerate_from_snapshot_single_read(tmp_path):
     )
     rs = enumerate_nuclei_from_snapshot(manifest, snap, parse_yaml=json.loads)
     assert rs.contains("CVE-A") and rs.contains("CVE-B")
+
+
+# --- misconfig: single-snapshot enumeration ----------------------------------
+
+
+def test_enumerate_misconfig_from_snapshot_matches_direct():
+    controls = [
+        {"id": "HDR-001", "severity": "medium", "tags": ["headers"], "config": {"x": 1}, "enabled": True},
+        {"id": "TLS-009", "severity": "high", "tags": ["tls"], "config": {}, "enabled": True},
+    ]
+    snap = resolve_misconfig_rule_snapshot(controls)
+    manifest = build_misconfig_policy_manifest(app_version="app-1", rule_revision=snap.revision, tier=1)
+    rs = enumerate_misconfig_from_snapshot(manifest, snap)
+    assert {r.detector_id for r in rs.rules} == {"HDR-001", "TLS-009"}
+    # detector_id = control_id, relative_path = builtin_misconfig/<id>
+    hdr = next(r for r in rs.rules if r.detector_id == "HDR-001")
+    assert hdr.relative_path == "builtin_misconfig/HDR-001"
+    assert hdr.severity == "medium"
+
+
+def test_enumerate_misconfig_from_snapshot_excludes_disabled():
+    controls = [
+        {"id": "HDR-001", "severity": "medium", "config": {}, "enabled": True},
+        {"id": "HDR-002", "severity": "low", "config": {}, "enabled": False},
+    ]
+    snap = resolve_misconfig_rule_snapshot(controls)  # snapshot already drops disabled
+    manifest = build_misconfig_policy_manifest(app_version="app-1", rule_revision=snap.revision, tier=1)
+    rs = enumerate_misconfig_from_snapshot(manifest, snap)
+    assert rs.contains("HDR-001")
+    assert not rs.contains("HDR-002")

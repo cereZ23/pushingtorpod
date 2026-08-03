@@ -104,6 +104,27 @@ def get_registered_controls() -> dict[str, dict[str, Any]]:
     return dict(_CONTROLS)
 
 
+def _controls_for_coverage() -> list[dict]:
+    """Active controls in the canonical shape the coverage ledger hashes: id + severity +
+    tags + config. ``tags = [category]``; ``config`` holds the behavioural metadata that
+    defines what the control does (the asset types it applies to, its dedup scope), so
+    editing any of these moves the policy identity. ``confidence`` is a tuning knob — it does
+    not change *what runs* — and is deliberately excluded from the identity."""
+    return [
+        {
+            "id": cid,
+            "severity": c["severity"],
+            "tags": [c["category"]],
+            "config": {
+                "asset_types": sorted(c["asset_types"]),
+                "dedup_scope": c.get("dedup_scope", "asset"),
+            },
+            "enabled": True,
+        }
+        for cid, c in _CONTROLS.items()
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Helper utilities
 # ---------------------------------------------------------------------------
@@ -2169,6 +2190,10 @@ def run_misconfig_detection(
         # per-asset loop instead of being persisted inline.
         root_scoped: dict[str, dict[str, list]] = {}
 
+        # Assets a control actually executed on — the real coverage set for the ledger
+        # (NOT every tenant asset; an asset with no applicable control is never "covered").
+        checked_asset_ids: set[int] = set()
+
         # Pre-warm the sensitive-port probes (EXP-011) concurrently across all
         # probe-eligible hosts. Without this the serial per-asset loop probes one
         # host at a time — ~one timeout each — which on large IP sets (e.g. 681
@@ -2197,6 +2222,7 @@ def run_misconfig_detection(
                 try:
                     results = control["check_fn"](asset, services, certificates, db)
                     stats["controls_executed"] += 1
+                    checked_asset_ids.add(asset.id)
 
                     category = control["category"]
                     if category not in stats["controls_by_category"]:
@@ -2341,6 +2367,26 @@ def run_misconfig_detection(
                 db.commit()
                 tenant_logger.info(f"Auto-closed {auto_closed} stale misconfig findings not seen in current scan")
         stats["findings_auto_closed"] = auto_closed
+
+        # Coverage ledger (observational, fail-open): record what the misconfig pass
+        # actually covered so a future per-detector auto-close can prove a control ran on
+        # an asset. Only the assets a control executed on; a per-control error makes the
+        # pass PARTIAL (never COVERED). tier is pinned: misconfig controls are the same at
+        # every scan tier, so the policy identity is tier-independent.
+        if scan_run_id and checked_asset_ids:
+            from app.services.coverage_emit import emit_misconfig_pass_coverage
+
+            emit_misconfig_pass_coverage(
+                db,
+                tenant_id=tenant_id,
+                scan_run_id=scan_run_id,
+                tier=1,
+                asset_ids=checked_asset_ids,
+                controls=_controls_for_coverage(),
+                ran=True,
+                errored=False,
+                partial=stats["errors"] > 0,
+            )
 
         tenant_logger.info(
             f"Misconfiguration detection complete: "

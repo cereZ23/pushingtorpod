@@ -29,15 +29,26 @@ from app.repositories.coverage_repository import (
     CoverageWriteError,
     conservative_pass_status,
 )
-from app.services.rule_catalog import RuleCatalogError, enumerate_nuclei_from_snapshot
+from app.services.rule_catalog import (
+    RuleCatalogError,
+    enumerate_misconfig_from_snapshot,
+    enumerate_nuclei_from_snapshot,
+)
 from app.services.rule_revision import (
     CompletedCommand,
+    MisconfigRuleSnapshot,
     ResolvedRuleSnapshot,
     RuleResolutionError,
+    resolve_misconfig_rule_snapshot,
     resolve_nuclei_rule_snapshot,
     resolve_nuclei_version,
 )
-from app.services.scan_policy import ScanPolicyManifest, build_nuclei_policy_manifest
+from app.services.scan_policy import (
+    PASS_MISCONFIG,
+    ScanPolicyManifest,
+    build_misconfig_policy_manifest,
+    build_nuclei_policy_manifest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -203,4 +214,100 @@ def emit_nuclei_pass_coverage(
         logger.exception("coverage emit failed for pass %s (run %s) — scan unaffected", pass_name, scan_run_id)
 
 
-__all__ = ["emit_nuclei_pass_coverage", "nuclei_result_outcome", "NUCLEI_TEMPLATES_DIR"]
+# --- misconfig (phase 8, built-in engine) ------------------------------------
+
+
+def _app_version() -> str:
+    """The application release identity used as the misconfig engine_version."""
+    from app.config import settings
+
+    return settings.app_version
+
+
+def _persist_misconfig_catalog(
+    repo: CoverageRepository,
+    manifest: ScanPolicyManifest,
+    snapshot: MisconfigRuleSnapshot,
+) -> None:
+    """Persist the applicable misconfig control catalog (detector_id = control_id) from the
+    same snapshot the revision came from. Observational + fail-open; the control set is tiny
+    (~dozens), so it just re-enumerates + persists each time (idempotent, stamps the build
+    fingerprint like the nuclei path). A failure only ever prevents a future close."""
+    try:
+        ruleset = enumerate_misconfig_from_snapshot(manifest, snapshot)
+        repo.persist_catalog(ruleset)
+        logger.info(
+            "coverage: misconfig catalog policy %s -> %d applicable controls",
+            manifest.policy_hash[:12],
+            len(ruleset.rules),
+        )
+    except (RuleCatalogError, RuleResolutionError, CoverageWriteError) as exc:
+        logger.warning("coverage: misconfig catalog skipped for policy %s: %s", manifest.policy_hash[:12], exc)
+    except Exception:  # noqa: BLE001 — observational: never break the scan
+        logger.exception("coverage: misconfig catalog crashed for policy %s — emit continues", manifest.policy_hash)
+
+
+def emit_misconfig_pass_coverage(
+    db: Session,
+    *,
+    tenant_id: int,
+    scan_run_id: int | None,
+    tier: int,
+    asset_ids: Iterable[int],
+    controls: Sequence[dict],
+    ran: bool,
+    errored: bool,
+    partial: bool,
+) -> None:
+    """Record one conservative coverage verdict per checked asset for the misconfig pass.
+
+    Mirrors ``emit_nuclei_pass_coverage`` for the built-in engine (phase 8): identity +
+    catalog + coverage all derive from a single active-control snapshot. ``asset_ids`` are
+    the assets the pass ACTUALLY checked (not the whole tenant). Never raises — a ledger
+    failure must not affect the scan; ``scan_run_id`` None or no assets → no-op.
+
+    Status is conservative (``completed → COVERED, partial → PARTIAL, errored → FAILED``),
+    so an error or partial run is never recorded as COVERED.
+    """
+    asset_ids = sorted({int(a) for a in asset_ids})
+    if scan_run_id is None or not asset_ids:
+        return
+    try:
+        snapshot = resolve_misconfig_rule_snapshot(controls)
+        manifest = build_misconfig_policy_manifest(
+            app_version=_app_version(),
+            rule_revision=snapshot.revision,
+            tier=tier,
+        )
+        repo = CoverageRepository(db)
+        repo.persist_policy(manifest)
+        _persist_misconfig_catalog(repo, manifest, snapshot)
+        status = conservative_pass_status(ran=ran, errored=errored, truncated=partial)
+        written = repo.record_pass_coverage(
+            tenant_id=tenant_id,
+            scan_run_id=scan_run_id,
+            phase=manifest.phase,
+            pass_name=PASS_MISCONFIG,
+            policy_hash=manifest.policy_hash,
+            asset_ids=asset_ids,
+            status=status,
+        )
+        logger.info(
+            "coverage: misconfig pass -> %s on %d assets (run %s, policy %s)",
+            status.value,
+            written,
+            scan_run_id,
+            manifest.policy_hash[:12],
+        )
+    except (RuleResolutionError, RuleCatalogError, CoverageWriteError) as exc:
+        logger.warning("coverage: misconfig emit skipped (run %s): %s", scan_run_id, exc)
+    except Exception:  # noqa: BLE001 — fail-open: the ledger must never break a scan
+        logger.exception("coverage: misconfig emit failed (run %s) — scan unaffected", scan_run_id)
+
+
+__all__ = [
+    "emit_nuclei_pass_coverage",
+    "emit_misconfig_pass_coverage",
+    "nuclei_result_outcome",
+    "NUCLEI_TEMPLATES_DIR",
+]

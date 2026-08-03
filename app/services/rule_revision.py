@@ -394,6 +394,41 @@ def resolve_nuclei_rule_snapshot(
     return ResolvedRuleSnapshot(revision=revision, files=ordered)
 
 
+# --- misconfig snapshot (in-memory controls, single capture) -----------------
+
+
+@dataclass(frozen=True)
+class MisconfigRuleSnapshot:
+    """A single capture of the ACTIVE built-in misconfig controls + their revision.
+
+    The misconfig "rules" are in-memory control registrations, not files — so the
+    snapshot is just the active control set read ONCE plus the digest taken over it,
+    handed to both the policy identity and the catalog so neither re-reads the registry
+    (which could drift between calls). ``controls`` are the exact mappings the revision
+    was taken over (id/severity/tags/config define the identity; ``enabled=False`` ones
+    are already dropped)."""
+
+    revision: str
+    controls: tuple
+
+
+def _misconfig_control_enabled(control) -> bool:
+    return bool(control.get("enabled", True)) if isinstance(control, Mapping) else True
+
+
+def resolve_misconfig_rule_snapshot(controls) -> MisconfigRuleSnapshot:
+    """Capture the active misconfig controls once and compute their revision (fail-closed).
+
+    Drops ``enabled=False`` controls, then hashes id + severity + tags + config of what
+    remains, so changing any of those fields — or enabling/disabling a control — moves the
+    revision. Raises ``RuleResolutionError`` on an empty active set, a duplicate id, or an
+    uninterpretable severity/tags/config, so the caller produces a non-authorising policy
+    rather than a plausible-but-wrong one."""
+    active = tuple(c for c in (controls or []) if _misconfig_control_enabled(c))
+    revision = compute_misconfig_rule_revision(active)  # raises on empty / dup id / bad field
+    return MisconfigRuleSnapshot(revision=revision, controls=active)
+
+
 # --- engine version resolver (injected runner) -------------------------------
 
 
