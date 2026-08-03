@@ -220,12 +220,26 @@ export const useScanStore = defineStore("scans", () => {
     error.value = "";
 
     try {
-      const response = await apiClient.get(
-        `/api/v1/tenants/${tenantId.value}/projects/${projectId}/scans`,
-        { signal: fetchScanRunsAbort.signal },
-      );
-      const data = response.data;
-      scanRuns.value = Array.isArray(data) ? data : (data.items ?? []);
+      const url = `/api/v1/tenants/${tenantId.value}/projects/${projectId}/scans`;
+      // Page through the FULL history: the backend caps a single page, so fetching once
+      // only ever returns the most recent page (default 50) — a project with hundreds of
+      // scans would silently lose its older history. Loop until every page is loaded.
+      const pageSize = 1000;
+      let page = 1;
+      const all: ScanRun[] = [];
+      for (;;) {
+        const response = await apiClient.get(url, {
+          params: { page, page_size: pageSize },
+          signal: fetchScanRunsAbort.signal,
+        });
+        const data = response.data;
+        const items: ScanRun[] = Array.isArray(data) ? data : (data.items ?? []);
+        all.push(...items);
+        const totalPages = Array.isArray(data) ? 1 : (data.total_pages ?? 1);
+        if (page >= totalPages || items.length === 0) break;
+        page += 1;
+      }
+      scanRuns.value = all;
     } catch (err: unknown) {
       if (
         err instanceof Error &&
