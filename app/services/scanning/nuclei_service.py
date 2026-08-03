@@ -639,7 +639,9 @@ class NucleiService:
                 "severity": severity,
                 "cvss_score": cvss_score,
                 "cve_id": cve_id,
-                "evidence": json.dumps(evidence),
+                # Pass the dict straight through — bulk_upsert / the JSON column serialize it once.
+                # json.dumps here caused the double-encoding that crashed correlation.
+                "evidence": evidence,
                 "matched_at": matched_url,
                 "host": host,
                 "source": "nuclei",

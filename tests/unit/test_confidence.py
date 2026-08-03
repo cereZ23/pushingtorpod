@@ -58,7 +58,9 @@ class TestNucleiParseSetsConfidence:
     def _parse(self, result):
         finding = NucleiService(tenant_id=1).parse_nuclei_result(result)
         assert finding is not None
-        return json.loads(finding["evidence"])
+        # The parser now returns evidence as a dict (no upstream json.dumps → no double-encoding).
+        assert isinstance(finding["evidence"], dict)
+        return finding["evidence"]
 
     def test_version_check_match_is_presumptive(self):
         result = {
