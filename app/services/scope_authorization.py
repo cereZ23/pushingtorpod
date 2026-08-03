@@ -34,6 +34,21 @@ def _as_ip(value: str):
         return None
 
 
+def _as_aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Coerce a datetime to tz-aware UTC so naive DB values compare against an aware now().
+
+    ScanAuthorization.valid_from/valid_until are `Column(DateTime)` (no timezone=True), so
+    postgres returns them NAIVE. Comparing them to an aware now() raises
+    'can't compare offset-naive and offset-aware datetimes' — which silently killed the Katana
+    endpoint loader for nuclei (fell back to base assets only). A naive value is assumed UTC.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def _domain_in_scope(target: str, scope_value: str) -> bool:
     t = (target or "").strip().strip(".").lower()
     s = (scope_value or "").strip().strip(".").lower()
@@ -78,11 +93,14 @@ def _active_authorizations(db: Any, tenant_id: int, now: datetime) -> List[ScanA
         .filter(ScanAuthorization.tenant_id == tenant_id, ScanAuthorization.is_active.is_(True))
         .all()
     )
+    now = _as_aware_utc(now)
     live = []
     for a in auths:
-        if a.valid_from and a.valid_from > now:
+        vf = _as_aware_utc(a.valid_from)
+        vu = _as_aware_utc(a.valid_until)
+        if vf and vf > now:
             continue
-        if a.valid_until and a.valid_until < now:
+        if vu and vu < now:
             continue
         live.append(a)
     return live

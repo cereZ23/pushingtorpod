@@ -235,6 +235,11 @@ def run_nuclei_scan(
         # stalled the entire pipeline.  We scan the base URLs directly.
         scan_targets = list(all_urls)
 
+        # Fail-closed coverage flag: if the Katana endpoint enrichment below raises, this pass
+        # scanned FEWER targets than intended, so it must NOT be reported as complete coverage
+        # (the coverage ledger would otherwise authorise an auto-close on an under-scanned run).
+        katana_load_failed = False
+
         # Enrich scan targets with high-value endpoints discovered by Katana
         # (Phase 6b). Only include endpoints that are likely to have vulns:
         # admin panels, login pages, APIs, forms, and URLs with parameters.
@@ -394,7 +399,11 @@ def run_nuclei_scan(
                     f"refusing to scan third-party hosts"
                 )
         except Exception as exc:
-            tenant_logger.warning(f"Failed to load Katana endpoints for Nuclei: {exc}")
+            katana_load_failed = True
+            tenant_logger.warning(
+                f"Failed to load Katana endpoints for Nuclei: {exc} — marking this pass truncated "
+                f"(coverage incomplete) so it cannot authorise an auto-close"
+            )
 
         # Execute Nuclei scan
         nuclei_service = NucleiService(tenant_id)
@@ -621,10 +630,12 @@ def run_nuclei_scan(
             "findings_updated": upsert_result["updated"],
             "assets_risk_updated": assets_updated,
             "stats": stats,
-            # Surface an incomplete (timed-out) nuclei pass upstream so the phase
-            # result — and anyone reading it — can tell a truncated scan from a
-            # clean one instead of a silent partial.
-            "truncated": bool(scan_result.get("truncated")),
+            # Surface an incomplete nuclei pass upstream so the phase result — and the coverage
+            # ledger — can tell a truncated scan from a clean one instead of a silent partial. A
+            # pass is truncated if the batched scan timed out OR the Katana endpoint enrichment
+            # failed (fewer targets than intended).
+            "truncated": bool(scan_result.get("truncated")) or katana_load_failed,
+            "katana_load_failed": katana_load_failed,
             "status": "success",
         }
 

@@ -1,5 +1,6 @@
 """Tests for scope-authorization matching + enforcement."""
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,6 +9,8 @@ from app.config import settings
 from app.models.authorization import ScanAuthorization
 from app.services.scope_authorization import (
     ScopeViolationError,
+    _active_authorizations,
+    _as_aware_utc,
     assert_targets_authorized,
     target_in_scope,
 )
@@ -81,3 +84,47 @@ class TestAssertTargetsAuthorized:
         with patch.object(settings, "scope_enforcement_mode", "off"):
             out = assert_targets_authorized(db, 1, ["anything.com"])
         assert out == []
+
+
+def _auth_window(valid_from, valid_until):
+    return ScanAuthorization(
+        tenant_id=1, name="eng", scope_entries=DOMAIN, valid_from=valid_from, valid_until=valid_until, is_active=True
+    )
+
+
+class TestActiveAuthorizationsNaiveAware:
+    """valid_from/valid_until are Column(DateTime) → postgres returns NAIVE datetimes. Comparing
+    them to an aware now() used to raise 'can't compare offset-naive and offset-aware datetimes',
+    which silently killed the Katana endpoint loader. _active_authorizations must tolerate both."""
+
+    def test_as_aware_utc(self):
+        naive = datetime(2026, 1, 1, 12, 0, 0)
+        assert _as_aware_utc(naive) == datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        aware = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        assert _as_aware_utc(aware) == aware
+        assert _as_aware_utc(None) is None
+
+    def test_naive_window_does_not_raise_and_is_live(self):
+        now_aware = datetime.now(timezone.utc)
+        naive_now = now_aware.replace(tzinfo=None)
+        auth = _auth_window(naive_now - timedelta(days=1), naive_now + timedelta(days=1))
+        live = _active_authorizations(_mock_db([auth]), 1, now_aware)  # aware now vs naive window
+        assert live == [auth]
+
+    def test_naive_expired_is_excluded(self):
+        now_aware = datetime.now(timezone.utc)
+        naive_past = now_aware.replace(tzinfo=None) - timedelta(days=2)
+        auth = _auth_window(naive_past - timedelta(days=1), naive_past)  # valid_until in the past
+        assert _active_authorizations(_mock_db([auth]), 1, now_aware) == []
+
+    def test_naive_not_yet_valid_is_excluded(self):
+        now_aware = datetime.now(timezone.utc)
+        naive_future = now_aware.replace(tzinfo=None) + timedelta(days=2)
+        auth = _auth_window(naive_future, None)  # valid_from in the future
+        assert _active_authorizations(_mock_db([auth]), 1, now_aware) == []
+
+    def test_naive_now_argument_also_tolerated(self):
+        # some callers may pass a naive now; it must still work against naive windows
+        naive_now = datetime.now()
+        auth = _auth_window(naive_now - timedelta(days=1), naive_now + timedelta(days=1))
+        assert _active_authorizations(_mock_db([auth]), 1, naive_now) == [auth]
