@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional, Sequence
 
 from app.services.rule_revision import (
+    MisconfigRuleSnapshot,
     ResolvedRuleSnapshot,
     RuleResolutionError,
     canonical_active_control,
@@ -179,6 +180,15 @@ def _control_digest(canon_control: Mapping) -> str:
     """Per-control content digest over the SAME canonical structure 2B hashes."""
     payload = json.dumps(canon_control, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def enumerate_misconfig_from_snapshot(
+    manifest: ScanPolicyManifest,
+    snapshot: MisconfigRuleSnapshot,
+) -> ApplicableRuleSet:
+    """Single-snapshot path: enumerate the applicable misconfig controls from the captured
+    active-control snapshot, so the catalog and the revision observe the exact same set."""
+    return enumerate_misconfig_applicable_rules(manifest, snapshot.controls)
 
 
 def enumerate_misconfig_applicable_rules(

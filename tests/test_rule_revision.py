@@ -23,6 +23,7 @@ from app.services.rule_revision import (
     compute_rule_revision,
     content_digest,
     parse_nuclei_version,
+    resolve_misconfig_rule_snapshot,
     resolve_nuclei_rule_revision,
     resolve_nuclei_rule_snapshot,
     resolve_nuclei_version,
@@ -504,3 +505,40 @@ def test_resolve_version_runner_failure_is_fail_closed():
 def test_resolve_version_empty_output_is_fail_closed():
     with pytest.raises(RuleResolutionError):
         resolve_nuclei_version(lambda argv: CompletedCommand(0, stdout="", stderr=""))
+
+
+# --- misconfig snapshot (single active-controls capture) ---------------------
+
+
+def _mc(cid, severity="medium", tags=("hdr",), config=None, enabled=True):
+    return {"id": cid, "severity": severity, "tags": list(tags), "config": config or {}, "enabled": enabled}
+
+
+def test_misconfig_snapshot_revision_matches_active_controls():
+    controls = [_mc("A"), _mc("B")]
+    snap = resolve_misconfig_rule_snapshot(controls)
+    # revision is taken over the active controls only, same as the pure function
+    assert snap.revision == compute_misconfig_rule_revision(controls)
+    assert {c["id"] for c in snap.controls} == {"A", "B"}
+
+
+def test_misconfig_snapshot_excludes_disabled_from_revision():
+    active_only = resolve_misconfig_rule_snapshot([_mc("A")])
+    with_disabled = resolve_misconfig_rule_snapshot([_mc("A"), _mc("B", enabled=False)])
+    assert with_disabled.revision == active_only.revision  # disabled control is invisible
+    assert {c["id"] for c in with_disabled.controls} == {"A"}
+
+
+def test_misconfig_snapshot_digest_moves_on_severity_tags_config():
+    base = resolve_misconfig_rule_snapshot([_mc("A", severity="medium", tags=("hdr",), config={"x": 1})]).revision
+    sev = resolve_misconfig_rule_snapshot([_mc("A", severity="high", tags=("hdr",), config={"x": 1})]).revision
+    tag = resolve_misconfig_rule_snapshot([_mc("A", severity="medium", tags=("tls",), config={"x": 1})]).revision
+    cfg = resolve_misconfig_rule_snapshot([_mc("A", severity="medium", tags=("hdr",), config={"x": 2})]).revision
+    assert len({base, sev, tag, cfg}) == 4  # every identity field moves the digest
+
+
+def test_misconfig_snapshot_empty_active_is_fail_closed():
+    with pytest.raises(RuleResolutionError):
+        resolve_misconfig_rule_snapshot([_mc("A", enabled=False)])
+    with pytest.raises(RuleResolutionError):
+        resolve_misconfig_rule_snapshot([])
