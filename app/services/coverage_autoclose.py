@@ -89,7 +89,7 @@ def decide_finding_auto_close(
     return AutoCloseVerdict(decision, new_streak=streak, set_last_eligible_run_id=this_run_id)
 
 
-def dry_run_auto_close(
+def shadow_auto_close(
     db,
     *,
     tenant_id: int,
@@ -97,22 +97,26 @@ def dry_run_auto_close(
     scan_run_id: int,
     close_threshold: int = DEFAULT_CLOSE_THRESHOLD,
 ) -> dict:
-    """Walk a run's open findings and compute what a real close WOULD do — writing nothing.
+    """Shadow the coverage-aware auto-close for a run: PERSIST each finding's miss-streak
+    and run attribution, but NEVER change ``Finding.status``. This lets two live runs
+    actually advance a streak to WOULD_CLOSE — so the decisions can be compared against
+    reality — without ever closing a finding.
 
-    For each open nuclei/misconfig finding: is it detected this run? is its detector in a
-    COVERED pass whose applicable catalog is intact? Feed that to
-    ``decide_finding_auto_close`` and tally the decisions. Findings are NOT modified — this
-    only records metrics/logs so two live runs can be compared against reality before the
-    real close (and the disabling of the old auto-close) is enabled.
-
-    Detection signal: the explicit ``last_detected_scan_run_id`` marker when present, else
-    the ``last_seen >= run.started_at`` fallback (until detection attribution is wired).
+    Fail-closed per finding: the detector must be applicable in a COVERED pass whose
+    ``ScanPolicy.engine_name`` matches the finding's source (so a misconfig control id can
+    never be authorised by a same-named nuclei template), the catalog must be intact, and
+    discovery must authorise closing. Concurrency-safe: open findings are row-locked, and an
+    out-of-order (older) run that reaches a finding after a newer one is a no-op.
     """
-    from app.models.coverage import CoverageStatus, ScanCoverage
+    from app.models.coverage import CoverageStatus, ScanCoverage, ScanPolicy
     from app.models.database import Asset, Finding, FindingStatus
     from app.models.scanning import ScanRun
     from app.repositories.coverage_repository import CoverageRepository
     from app.services.discovery_health import evaluate_and_persist_discovery_health
+    from app.services.scan_policy import ENGINE_BUILTIN_MISCONFIG, ENGINE_NUCLEI
+
+    # A finding's source must match the engine of the pass that authorises it.
+    source_engine = {"nuclei": ENGINE_NUCLEI, "misconfig": ENGINE_BUILTIN_MISCONFIG}
 
     run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
     if run is None or run.tenant_id != tenant_id:
@@ -130,14 +134,23 @@ def dry_run_auto_close(
 
     def _applicable(policy_hash: str) -> set:
         if policy_hash not in applicable_cache:
-            # returns {} on a missing/partial/tampered catalog → fail-closed
+            # {} on a missing/partial/tampered catalog → fail-closed
             applicable_cache[policy_hash] = repo.applicable_detector_ids(policy_hash)
         return applicable_cache[policy_hash]
 
+    # This run's coverage rows grouped by asset, plus each policy's engine (no cross-engine).
     coverage_by_asset: dict[int, list] = {}
     for c in db.query(ScanCoverage).filter(ScanCoverage.scan_run_id == scan_run_id).all():
         coverage_by_asset.setdefault(c.asset_id, []).append(c)
+    policy_engine: dict[str, str] = {}
+    hashes = {c.policy_hash for rows in coverage_by_asset.values() for c in rows}
+    if hashes:
+        for ph, eng in db.query(ScanPolicy.policy_hash, ScanPolicy.engine_name).filter(
+            ScanPolicy.policy_hash.in_(hashes)
+        ):
+            policy_engine[ph] = eng
 
+    # Row-lock the open findings so two concurrent shadow runners can't both advance a streak.
     findings = (
         db.query(Finding)
         .join(Asset)
@@ -146,13 +159,38 @@ def dry_run_auto_close(
             Finding.status == FindingStatus.OPEN,
             Finding.source.in_(("nuclei", "misconfig")),
         )
+        .with_for_update(of=Finding)
         .all()
     )
 
+    # started_at of the runs each finding was last touched by — for the out-of-order guard.
+    ref_ids = {rid for f in findings for rid in (f.last_eligible_run_id, f.last_detected_scan_run_id) if rid}
+    ref_started: dict[int, object] = {}
+    if ref_ids:
+        for rid, started in db.query(ScanRun.id, ScanRun.started_at).filter(ScanRun.id.in_(ref_ids)):
+            ref_started[rid] = started
+
     decisions = {d.value: 0 for d in AutoCloseDecision}
+    stale_skipped = 0
     would_close_ids: list[int] = []
 
     for f in findings:
+        # Out-of-order guard: if a strictly-newer run already touched this finding, an older
+        # run reaching it later must not advance anything.
+        newest_ref = max(
+            (rid for rid in (f.last_eligible_run_id, f.last_detected_scan_run_id) if rid),
+            default=None,
+        )
+        if (
+            newest_ref is not None
+            and newest_ref != scan_run_id
+            and run.started_at is not None
+            and ref_started.get(newest_ref) is not None
+            and run.started_at < ref_started[newest_ref]
+        ):
+            stale_skipped += 1
+            continue
+
         detected = f.last_detected_scan_run_id == scan_run_id or (
             f.last_detected_scan_run_id is None
             and run.started_at is not None
@@ -160,14 +198,18 @@ def dry_run_auto_close(
             and f.last_seen >= run.started_at
         )
 
+        want_engine = source_engine.get(f.source)
         covered = False
         applicable = False
-        for c in coverage_by_asset.get(f.asset_id, ()):
-            if f.template_id and f.template_id in _applicable(c.policy_hash):
-                applicable = True  # detector in an INTACT catalog (empty set on tamper)
-                if c.status == CoverageStatus.COVERED:
-                    covered = True
-                    break
+        if want_engine is not None and f.template_id:
+            for c in coverage_by_asset.get(f.asset_id, ()):
+                if policy_engine.get(c.policy_hash) != want_engine:
+                    continue  # only the finding's own engine can authorise it
+                if f.template_id in _applicable(c.policy_hash):
+                    applicable = True  # detector in an INTACT catalog (empty set on tamper)
+                    if c.status == CoverageStatus.COVERED:
+                        covered = True
+                        break
 
         verdict = decide_finding_auto_close(
             this_run_id=scan_run_id,
@@ -180,22 +222,34 @@ def dry_run_auto_close(
             last_eligible_run_id=f.last_eligible_run_id,
             close_threshold=close_threshold,
         )
+
+        # SHADOW: persist the streak + attribution, but NEVER the status (no real close).
+        f.eligible_miss_streak = verdict.new_streak
+        if verdict.set_last_eligible_run_id is not None:
+            f.last_eligible_run_id = verdict.set_last_eligible_run_id
+        if verdict.set_last_detected_run_id is not None:
+            f.last_detected_scan_run_id = verdict.set_last_detected_run_id
+
         decisions[verdict.decision.value] += 1
         if verdict.would_close:
             would_close_ids.append(f.id)
+
+    db.commit()
 
     result = {
         "scan_run_id": scan_run_id,
         "auto_close_allowed": auto_close_allowed,
         "open_findings": len(findings),
         "decisions": decisions,
+        "stale_skipped": stale_skipped,
         "would_close_ids": would_close_ids,
     }
     logger.info(
-        "coverage auto-close DRY-RUN: run %s allowed=%s decisions=%s would_close=%d",
+        "coverage auto-close SHADOW: run %s allowed=%s decisions=%s stale=%d would_close=%d",
         scan_run_id,
         auto_close_allowed,
         decisions,
+        stale_skipped,
         len(would_close_ids),
     )
     return result
@@ -205,6 +259,6 @@ __all__ = [
     "AutoCloseDecision",
     "AutoCloseVerdict",
     "decide_finding_auto_close",
-    "dry_run_auto_close",
+    "shadow_auto_close",
     "DEFAULT_CLOSE_THRESHOLD",
 ]

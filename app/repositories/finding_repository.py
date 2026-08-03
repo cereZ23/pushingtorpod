@@ -103,7 +103,9 @@ class FindingRepository:
 
         return findings
 
-    def bulk_upsert_findings(self, findings: List[Dict], tenant_id: int) -> Dict[str, int]:
+    def bulk_upsert_findings(
+        self, findings: List[Dict], tenant_id: int, scan_run_id: Optional[int] = None
+    ) -> Dict[str, int]:
         """
         Bulk insert or update findings with deduplication
 
@@ -217,6 +219,13 @@ class FindingRepository:
                     "status": FindingStatus.OPEN,
                 }
 
+                # Detection attribution (P-C): a finding seen in THIS run resets its
+                # miss-streak and records the run. Only with a real run — a manual run must
+                # update last_seen but never invent a run id.
+                if scan_run_id is not None:
+                    record["last_detected_scan_run_id"] = scan_run_id
+                    record["eligible_miss_streak"] = 0
+
                 records.append(record)
 
             except Exception as e:
@@ -247,6 +256,12 @@ class FindingRepository:
             "occurrence_count": Finding.occurrence_count + 1,
             # Do NOT update: first_seen, severity, name, template_id, fingerprint
         }
+
+        # Detection attribution on re-detection (P-C): reset the miss-streak and record the
+        # run. Skipped for a manual run (no scan_run_id) so we never fabricate a run id.
+        if scan_run_id is not None:
+            update_dict["last_detected_scan_run_id"] = stmt.excluded.last_detected_scan_run_id
+            update_dict["eligible_miss_streak"] = stmt.excluded.eligible_miss_streak
 
         stmt = stmt.on_conflict_do_update(index_elements=["fingerprint"], set_=update_dict).returning(
             Finding.id, Finding.first_seen

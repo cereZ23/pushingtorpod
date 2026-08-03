@@ -449,6 +449,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             interactsh_server=interactsh_server if use_interactsh else None,
             exclude_tags=exclude_tags,
             batch_deadline_seconds=nuclei_group_budget,
+            scan_run_id=scan_run_id,
         )
 
     def _run_pass_2():
@@ -466,6 +467,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             timeout=300,
             exclude_tags=tier_exclude_tags[1],  # CDN pass always uses T1 (conservative)
             batch_deadline_seconds=nuclei_group_budget,
+            scan_run_id=scan_run_id,
         )
 
     def _run_pass_3():
@@ -485,6 +487,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             timeout=300,
             exclude_tags=exclude_tags,
             batch_deadline_seconds=nuclei_group_budget,
+            scan_run_id=scan_run_id,
         )
 
     # Pass 0: custom templates FIRST (sequential, fast ~10s).
@@ -518,6 +521,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
                 concurrency=concurrency,
                 timeout=600,  # 10 min — 12 custom templates × ~130 targets + katana endpoints
                 exclude_tags="",  # empty string = no exclusions for our own templates
+                scan_run_id=scan_run_id,
             )
             if isinstance(custom_result, dict):
                 total_created += custom_result.get("findings_created", 0)
@@ -736,6 +740,19 @@ def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
     from app.tasks.correlation import dedup_network_findings_by_ip
 
     dedup_network_findings_by_ip(tenant_id, db, tenant_logger)
+
+    # Coverage-aware auto-close SHADOW (P-C): persist each finding's miss-streak + run
+    # attribution so decisions can be compared against reality over two live runs. It NEVER
+    # changes finding status (no real close) and is fail-open — must not affect the scan.
+    try:
+        from app.services.coverage_autoclose import shadow_auto_close
+
+        shadow = shadow_auto_close(db, tenant_id=tenant_id, project_id=project_id, scan_run_id=scan_run_id)
+        tenant_logger.info(
+            f"Coverage auto-close shadow: {shadow.get('decisions')} would_close={len(shadow.get('would_close_ids', []))}"
+        )
+    except Exception:
+        tenant_logger.warning("Coverage auto-close shadow failed (non-fatal)", exc_info=True)
 
     result = run_correlation(tenant_id, scan_run_id=scan_run_id)
 

@@ -386,6 +386,7 @@ def _persist_finding(
     evidence: dict,
     stats: dict,
     category: str,
+    scan_run_id: int | None = None,
 ) -> None:
     """Upsert a misconfig finding by its dedup fingerprint.
 
@@ -409,6 +410,10 @@ def _persist_finding(
         existing.occurrence_count = (existing.occurrence_count or 1) + 1
         if existing.status == FindingStatus.FIXED:
             existing.status = FindingStatus.OPEN
+        # Detection attribution (P-C): seen this run → reset streak + record run (real run only).
+        if scan_run_id is not None:
+            existing.last_detected_scan_run_id = scan_run_id
+            existing.eligible_miss_streak = 0
         stats["findings_updated"] += 1
     else:
         db.add(
@@ -425,6 +430,7 @@ def _persist_finding(
                 host=host,
                 fingerprint=fp,
                 occurrence_count=1,
+                last_detected_scan_run_id=scan_run_id,
             )
         )
         stats["findings_created"] += 1
@@ -439,6 +445,7 @@ def _consolidate_root_scoped(
     by_root: dict,
     assets_by_identifier: dict,
     stats: dict,
+    scan_run_id: int | None = None,
 ) -> None:
     """Emit one consolidated finding per registrable domain for a root-scoped
     control, collapsing all affected subdomains into a single finding.
@@ -478,9 +485,9 @@ def _consolidate_root_scoped(
         }
         if any(m["evidence"].get("needs_review") for m in members):
             evidence["needs_review"] = True
-        scan_run_id = members[0]["evidence"].get("scan_run_id")
-        if scan_run_id:
-            evidence["scan_run_id"] = scan_run_id
+        ev_run_id = members[0]["evidence"].get("scan_run_id")
+        if ev_run_id:
+            evidence["scan_run_id"] = ev_run_id
 
         # Attach to the registrable-domain asset if it exists, else to a
         # representative affected subdomain (the root asset is not guaranteed).
@@ -498,6 +505,7 @@ def _consolidate_root_scoped(
             evidence=evidence,
             stats=stats,
             category=control["category"],
+            scan_run_id=scan_run_id,
         )
 
 
@@ -2288,6 +2296,7 @@ def run_misconfig_detection(
                             evidence=evidence,
                             stats=stats,
                             category=category,
+                            scan_run_id=scan_run_id,
                         )
 
                 except Exception as exc:
@@ -2310,6 +2319,7 @@ def run_misconfig_detection(
                     by_root=by_root,
                     assets_by_identifier=assets_by_identifier,
                     stats=stats,
+                    scan_run_id=scan_run_id,
                 )
             except Exception as exc:
                 stats["errors"] += 1
