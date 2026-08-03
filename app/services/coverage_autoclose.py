@@ -166,10 +166,12 @@ def shadow_auto_close(
 
     # A finding's source must match the engine of the pass that authorises it.
     source_engine = {"nuclei": ENGINE_NUCLEI, "misconfig": ENGINE_BUILTIN_MISCONFIG}
-    # The temporary endpoint-safety gate applies ONLY to the HTTP passes that now scan base URLs
-    # only. Host-level passes (dns/network, misconfig, cdn/ssl) must NOT be gated by the HTTP
+    # The temporary endpoint-safety gate applies ONLY to the HTTP nuclei passes (http_stock scans
+    # base URLs only now; custom_http still scans endpoints but has NO per-endpoint coverage yet).
+    # For both, an endpoint-derived finding must stay ineligible until per-endpoint coverage exists
+    # (Traccia B). Host-level passes (dns/network, misconfig, cdn/ssl) must NOT be gated by the HTTP
     # path/query classification, or their legitimate streaks would be wrongly reset.
-    http_base_only_passes = {PASS_HTTP_STOCK, PASS_CUSTOM_HTTP}
+    http_endpoint_gated_passes = {PASS_HTTP_STOCK, PASS_CUSTOM_HTTP}
 
     run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
     if run is None or run.tenant_id != tenant_id:
@@ -275,13 +277,13 @@ def shadow_auto_close(
                         covering_pass = policy_pass.get(c.policy_hash)
                         break
 
-        # TEMPORARY endpoint-safety gate — ONLY for the HTTP passes that now scan base URLs only
-        # (http_stock, custom_http). A finding authorised by one of those whose location is a deep
-        # endpoint (or unclassifiable) must not accrue a miss → never closes while the path isn't
-        # scanned. dns/network, misconfig and cdn/ssl detectors are host-level: applying the HTTP
-        # path/query classification there would wrongly reset their legitimate streaks, so they are
-        # left as base_target=True (unaffected by this gate).
-        if covering_pass in http_base_only_passes:
+        # TEMPORARY endpoint-safety gate — ONLY for the HTTP nuclei passes (http_stock, custom_http),
+        # neither of which has per-endpoint coverage yet. A finding authorised by one of those whose
+        # location is a deep endpoint (or unclassifiable) must not accrue a miss → never closes until
+        # per-endpoint coverage exists (Traccia B). dns/network, misconfig and cdn/ssl detectors are
+        # host-level: applying the HTTP path/query classification there would wrongly reset their
+        # legitimate streaks, so they are left as base_target=True (unaffected by this gate).
+        if covering_pass in http_endpoint_gated_passes:
             base_target = classify_matched_at(f.matched_at) == TARGET_BASE
         else:
             base_target = True

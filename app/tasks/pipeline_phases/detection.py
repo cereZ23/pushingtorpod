@@ -727,30 +727,16 @@ def _phase_9b_dnstwist(tenant_id, project_id, scan_run_id, db, tenant_logger):
 def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger):
     """Phase 10: Correlation & deduplication.
 
-    Also auto-closes stale nuclei findings not seen in the last 2 scans.
+    Runs the coverage-aware auto-close in SHADOW only — the legacy tenant-wide nuclei/misconfig
+    closers are DISABLED (no real status changes) until the consumer leaves shadow. See below.
     """
     from app.tasks.correlation import run_correlation
-    from app.models.database import Finding, FindingStatus, Asset
-    from datetime import timedelta
 
-    from app.models.scanning import ScanRun
-
-    current_run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
-
-    # Discovery-health guard (fail-closed): auto-closing "not seen this run" findings
-    # is only safe when discovery actually worked AND we had a comparable baseline.
-    # Computed+persisted once earlier in the run (idempotent here) and consumed by
-    # BOTH this close and the misconfig close.
+    # Discovery health is still evaluated + persisted here (idempotent) for dashboards and the
+    # shadow consumer; it no longer gates a real close (the legacy closers are disabled below).
     from app.services.discovery_health import evaluate_and_persist_discovery_health
 
     health = evaluate_and_persist_discovery_health(db, tenant_id, project_id, scan_run_id)
-    if not health.auto_close_allowed:
-        tenant_logger.warning(
-            "Nuclei auto-close SKIPPED: discovery not authorized to close (%s: %s) — refusing to "
-            "close findings on a possibly-incomplete run",
-            health.reason_code,
-            health.reason,
-        )
 
     # Coverage-aware auto-close SHADOW (P-C): runs BEFORE the old closers so it observes the
     # FULL open set. Persists each finding's miss-streak + run attribution; it NEVER changes
@@ -767,55 +753,20 @@ def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
         db.rollback()
         tenant_logger.warning("Coverage auto-close shadow failed (non-fatal)", exc_info=True)
 
-    # Auto-close stale nuclei findings: open findings whose last_seen is
-    # older than the current scan's started_at are no longer detected.
-    # Grace period: 2 scan cycles (findings must be absent for 2 consecutive scans).
-    # Gated on discovery health (fail-closed).
+    # Legacy tenant-wide auto-close DISABLED (2026-08-03). Both old closers FIXED any
+    # nuclei/misconfig finding merely absent for 48h / 5min — tenant-wide, NOT coverage- or
+    # endpoint-aware. Now that HTTP-stock scans base URLs only (endpoint CVE coverage deferred to
+    # the dedicated endpoint pass — Traccia B), an endpoint finding is no longer re-detected and the
+    # old closer would false-FIX it after the grace period. Until the coverage-aware consumer
+    # (shadow, above) leaves shadow we auto-close NOTHING — a false-open is strictly safer than a
+    # false-fixed. Counters kept at 0 for the phase-10 stats/response contract.
     auto_closed = 0
-    if health.auto_close_allowed and current_run and current_run.started_at:
-        grace = timedelta(hours=48)
-        cutoff = current_run.started_at - grace
-        stale_nuclei = (
-            db.query(Finding)
-            .join(Asset)
-            .filter(
-                Asset.tenant_id == tenant_id,
-                Finding.source == "nuclei",
-                Finding.status == FindingStatus.OPEN,
-                Finding.last_seen < cutoff,
-            )
-            .all()
-        )
-        for f in stale_nuclei:
-            f.status = FindingStatus.FIXED
-            auto_closed += 1
-        if auto_closed:
-            db.commit()
-            tenant_logger.info(f"Auto-closed {auto_closed} stale nuclei findings (not seen since {cutoff})")
-
-    # Auto-close stale MISCONFIG findings — relocated here from phase 8 so it runs AFTER the
-    # shadow (which must observe the full open set before anything is closed). Same
-    # discovery-health gate; cutoff keyed on this run's start (misconfig re-runs every scan).
     misconfig_closed = 0
-    if health.auto_close_allowed and current_run and current_run.started_at:
-        mc_cutoff = current_run.started_at - timedelta(minutes=5)
-        stale_misconfig = (
-            db.query(Finding)
-            .join(Asset)
-            .filter(
-                Asset.tenant_id == tenant_id,
-                Finding.source == "misconfig",
-                Finding.status == FindingStatus.OPEN,
-                Finding.last_seen < mc_cutoff,
-            )
-            .all()
-        )
-        for f in stale_misconfig:
-            f.status = FindingStatus.FIXED
-            misconfig_closed += 1
-        if misconfig_closed:
-            db.commit()
-            tenant_logger.info(f"Auto-closed {misconfig_closed} stale misconfig findings (not seen since {mc_cutoff})")
+    tenant_logger.info(
+        "Legacy tenant-wide auto-close disabled; coverage-aware consumer running in shadow "
+        "(discovery auto_close_allowed=%s)",
+        health.auto_close_allowed,
+    )
 
     # Collapse network/service findings (FTP/SSH/...) detected on multiple
     # hostnames that resolve to the same IP into one — they're one real service.
@@ -831,7 +782,9 @@ def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
             "issues_created": result.get("issues_created", 0),
             "issues_updated": result.get("issues_updated", 0),
             "findings_processed": result.get("findings_processed", 0),
-            "nuclei_auto_closed": auto_closed if current_run else 0,
+            # Legacy closers disabled → always 0 (kept for the response contract).
+            "nuclei_auto_closed": auto_closed,
+            "misconfig_auto_closed": misconfig_closed,
         }
     return {"issues_created": 0}
 
