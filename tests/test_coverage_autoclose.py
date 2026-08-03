@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.services.coverage_autoclose import (
     AutoCloseDecision,
+    classify_matched_at,
     decide_finding_auto_close,
 )
 
@@ -97,6 +98,41 @@ def test_threshold_is_configurable():
     assert v.new_streak == 2
 
 
+# --- endpoint-safety classifier (temporary gate while stock scans base URLs only) ----------
+
+
+def test_classify_base_targets():
+    assert classify_matched_at("https://host.example") == "base"
+    assert classify_matched_at("http://host.example/") == "base"
+    assert classify_matched_at("https://host.example:8443") == "base"
+    assert classify_matched_at("https://host.example:8443/") == "base"
+
+
+def test_classify_endpoint_targets():
+    assert classify_matched_at("https://host.example/admin") == "endpoint"
+    assert classify_matched_at("https://host.example/wp-login.php") == "endpoint"
+    assert classify_matched_at("https://host.example/?q=1") == "endpoint"  # query on root
+    assert classify_matched_at("http://host.example/a/b/c?id=1") == "endpoint"
+
+
+def test_classify_unknown_targets():
+    assert classify_matched_at(None) == "unknown"
+    assert classify_matched_at("") == "unknown"
+    assert classify_matched_at("host.example:443") == "unknown"  # SSL/network "host:port", no scheme
+    assert classify_matched_at("not a url") == "unknown"
+    assert classify_matched_at("ftp://host.example/file") == "unknown"  # non-http(s)
+    assert classify_matched_at(12345) == "unknown"  # non-str
+
+
+def test_non_base_target_is_ineligible_and_resets_streak():
+    # An endpoint/unknown finding must NOT accrue a miss, and any prior streak is reset to 0 — so
+    # the base pass (which never visits the path) can never drive it to a false close.
+    for _ in ("endpoint", "unknown"):
+        v = _decide(base_target=False, current_streak=1, last_eligible_run_id=10)
+        assert v.decision is AutoCloseDecision.INELIGIBLE
+        assert v.new_streak == 0
+
+
 # --- DB shadow runner: persists streak + attribution, NEVER status ------------
 
 
@@ -154,7 +190,9 @@ def _cover(db_session, test_tenant, manifest, run, asset):
     )
 
 
-def _open_finding(db_session, asset, *, source="nuclei", template_id="CVE-X", streak=0, last_eligible_run_id=None):
+def _open_finding(
+    db_session, asset, *, source="nuclei", template_id="CVE-X", streak=0, last_eligible_run_id=None, matched_at=None
+):
     from app.models.database import Finding, FindingSeverity, FindingStatus
 
     f = Finding(
@@ -164,6 +202,9 @@ def _open_finding(db_session, asset, *, source="nuclei", template_id="CVE-X", st
         name="X",
         severity=FindingSeverity.HIGH,
         status=FindingStatus.OPEN,
+        # A base-URL location by default so the finding is a `base` target (eligible). Endpoint
+        # tests override this with a path/query location.
+        matched_at=matched_at if matched_at is not None else f"https://{asset.identifier}",
         last_seen=datetime.now(timezone.utc) - timedelta(days=1),  # NOT seen this run
         eligible_miss_streak=streak,
         last_eligible_run_id=last_eligible_run_id,
@@ -200,6 +241,28 @@ def test_shadow_persists_streak_and_would_close_never_status(db_session, test_te
     assert finding.status is FindingStatus.OPEN  # SHADOW: never closes
     assert finding.eligible_miss_streak == 2  # but the streak IS persisted
     assert finding.last_eligible_run_id == run.id
+
+
+def test_shadow_endpoint_finding_never_would_close(db_session, test_tenant, monkeypatch):
+    # Same setup as the would-close test, but the finding's location is a deep endpoint. The stock
+    # pass only scans base URLs, so this must be INELIGIBLE — never in would_close_ids — and its
+    # prior streak must reset to 0 (fail-closed against a false FIXED).
+    from app.models.database import FindingStatus
+    from app.services.coverage_autoclose import shadow_auto_close
+
+    _allow_discovery(monkeypatch, True)
+    m = _nuclei_policy_catalog(db_session)
+    run = _new_run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "s1.test.com")
+    _cover(db_session, test_tenant, m, run, asset)
+    finding = _open_finding(db_session, asset, streak=1, matched_at="https://s1.test.com/wp-login.php?redirect=1")
+
+    result = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id)
+
+    assert finding.id not in result["would_close_ids"]  # endpoint finding is never closed by base pass
+    db_session.refresh(finding)
+    assert finding.status is FindingStatus.OPEN
+    assert finding.eligible_miss_streak == 0  # prior streak reset (INELIGIBLE)
 
 
 def test_shadow_two_distinct_runs_reach_would_close(db_session, test_tenant, monkeypatch):

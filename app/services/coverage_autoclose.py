@@ -51,6 +51,42 @@ class AutoCloseVerdict:
         return self.decision is AutoCloseDecision.WOULD_CLOSE
 
 
+TARGET_BASE = "base"
+TARGET_ENDPOINT = "endpoint"
+TARGET_UNKNOWN = "unknown"
+
+
+def classify_matched_at(matched_at: Optional[str]) -> str:
+    """Conservatively classify a finding's recorded location for the TEMPORARY endpoint-safety gate.
+
+    Returns one of:
+      ``"base"``     — an http(s) URL whose path is empty or ``/`` and has no query. The base-URL
+                       scan re-visits it, so it MAY accrue an eligible miss.
+      ``"endpoint"`` — an http(s) URL with a path beyond ``/`` or a query string: a deep endpoint
+                       the base pass does not visit.
+      ``"unknown"``  — absent, non-http(s), or unparseable (e.g. the ``host:port`` an SSL/network
+                       template emits). Treated as ineligible, fail-closed.
+
+    Only ``"base"`` may advance the auto-close streak; endpoint and unknown are both INELIGIBLE.
+    This is a stopgap while the HTTP-stock pass scans base URLs only (endpoint CVE coverage deferred
+    to the dedicated reduced endpoint pass — Traccia B). It deliberately OVER-classifies (a template
+    that self-generates ``/wp-login.php`` reads as endpoint) — safe, because it only ever KEEPS a
+    finding open. The durable fix persists per-target coverage identity rather than inferring it."""
+    if not matched_at or not isinstance(matched_at, str):
+        return TARGET_UNKNOWN
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(matched_at)
+    except (ValueError, TypeError):
+        return TARGET_UNKNOWN
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return TARGET_UNKNOWN
+    if parsed.query:
+        return TARGET_ENDPOINT
+    return TARGET_BASE if (parsed.path or "") in ("", "/") else TARGET_ENDPOINT
+
+
 def decide_finding_auto_close(
     *,
     this_run_id: int,
@@ -61,10 +97,15 @@ def decide_finding_auto_close(
     detector_applicable: bool,
     current_streak: int,
     last_eligible_run_id: Optional[int],
+    base_target: bool = True,
     close_threshold: int = DEFAULT_CLOSE_THRESHOLD,
 ) -> AutoCloseVerdict:
     """Pure per-finding decision. ``this_run_id`` is always a real run (the runner only
-    operates inside a scan). See the module docstring for the eligibility contract."""
+    operates inside a scan). See the module docstring for the eligibility contract.
+
+    ``base_target`` is False for endpoint/unknown locations (see ``classify_matched_at``): while
+    the stock pass scans base URLs only, only a base-target finding may accrue a miss — otherwise a
+    pass that never visits the path/endpoint would false-close it."""
     # 1. Detected this run → the finding is live: reset the streak and attribute detection.
     if detected_this_run:
         return AutoCloseVerdict(
@@ -73,8 +114,11 @@ def decide_finding_auto_close(
             set_last_detected_run_id=this_run_id,
         )
 
-    # 2. Fail-closed eligibility gate: every condition must hold to count a miss.
-    eligible = discovery_auto_close_allowed and coverage_covered and catalog_intact and detector_applicable
+    # 2. Fail-closed eligibility gate: every condition must hold to count a miss. A non-base target
+    #    (endpoint/unknown) is never eligible while the stock pass scans base URLs only.
+    eligible = (
+        base_target and discovery_auto_close_allowed and coverage_covered and catalog_intact and detector_applicable
+    )
     if not eligible:
         return AutoCloseVerdict(AutoCloseDecision.INELIGIBLE, new_streak=0)
 
@@ -218,6 +262,10 @@ def shadow_auto_close(
                         covered = True
                         break
 
+        # TEMPORARY endpoint-safety gate: the stock pass scans base URLs only, so a finding whose
+        # location is a deep endpoint (or unclassifiable) must not accrue a miss → never closes.
+        base_target = classify_matched_at(f.matched_at) == TARGET_BASE
+
         verdict = decide_finding_auto_close(
             this_run_id=scan_run_id,
             detected_this_run=detected,
@@ -227,6 +275,7 @@ def shadow_auto_close(
             detector_applicable=applicable,
             current_streak=f.eligible_miss_streak or 0,
             last_eligible_run_id=f.last_eligible_run_id,
+            base_target=base_target,
             close_threshold=close_threshold,
         )
 

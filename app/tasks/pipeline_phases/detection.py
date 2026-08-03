@@ -465,6 +465,12 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             max_endpoints_per_host=endpoint_cap,
             request_timeout=req_timeout,
             max_host_errors=mhe_cap,
+            # PERF/quick-win: the full HTTP-stock set (~4347 templates) × Katana endpoints was the
+            # phase-9 blowup (118k requests/batch → 27min truncation). Run stock on BASE assets
+            # only; the cheap custom pass still scans endpoints. Endpoint CVE coverage returns with
+            # the dedicated reduced endpoint pass (Traccia B). SAFETY: endpoint-derived findings are
+            # excluded from the auto-close streak until then (see coverage_autoclose).
+            include_katana_endpoints=False,
         )
 
     def _run_pass_2():
