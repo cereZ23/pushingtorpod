@@ -350,16 +350,18 @@ class CoverageRepository:
         match that stamp (``catalog_fingerprint == catalog_build``). A never-built, partial,
         or tampered catalog (e.g. an extra, non-applicable detector) yields the empty set, so
         a corrupt catalog can never authorise a close — the barrier lives here, not in the
-        caller, so every consumer inherits it."""
+        caller, so every consumer inherits it.
+
+        Reads the rows ONCE (fingerprint AND ids come from the same snapshot) so a concurrent
+        write between two reads can't slip a rogue detector past the integrity check (TOCTOU)."""
+        stored = self._read_catalog(policy_hash)
         build = self.catalog_build(policy_hash)
-        if build is None or self.catalog_fingerprint(policy_hash) != build:
+        if not stored:
             return set()
-        return {
-            row[0]
-            for row in self.db.query(ScanPolicyTemplate.detector_id)
-            .filter(ScanPolicyTemplate.policy_hash == policy_hash)
-            .all()
-        }
+        fingerprint = (len(stored), _catalog_digest_from_map(stored))
+        if build is None or fingerprint != build:
+            return set()
+        return set(stored)
 
 
 __all__ = ["CoverageRepository", "CoverageWriteError", "conservative_pass_status"]
