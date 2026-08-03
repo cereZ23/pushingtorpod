@@ -31,4 +31,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("ALTER TABLE phase_results DROP CONSTRAINT IF EXISTS ck_phase_results_status")
+    # A rollback can't re-add the stricter CHECK while 'partial' rows exist (they'd violate
+    # it and abort the downgrade). Collapse them to 'failed' first — a partial phase did not
+    # complete — so the constraint applies cleanly.
+    op.execute("UPDATE phase_results SET status = 'failed' WHERE status = 'partial'")
     op.execute(f"ALTER TABLE phase_results ADD CONSTRAINT ck_phase_results_status CHECK (status IN {_WITHOUT_PARTIAL})")

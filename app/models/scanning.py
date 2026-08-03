@@ -24,6 +24,7 @@ from sqlalchemy import (
     Boolean,
     Index,
     JSON,
+    CheckConstraint,
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
@@ -323,6 +324,13 @@ class PhaseResult(Base):
     __table_args__ = (
         Index("idx_phase_scanrun", "scan_run_id"),
         Index("idx_phase_scanrun_phase", "scan_run_id", "phase", unique=True),
+        # Mirror the DB CHECK (migration 018/027) in the model so a create_all schema (tests)
+        # enforces it too — the enum uses create_constraint=False, so without this a bad/new
+        # status value slips through in tests (that's how the missing 'partial' reached prod).
+        CheckConstraint(
+            "status IN ('pending', 'running', 'completed', 'partial', 'failed', 'skipped')",
+            name="ck_phase_results_status",
+        ),
     )
 
     def __repr__(self):
