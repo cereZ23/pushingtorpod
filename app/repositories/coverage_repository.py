@@ -13,18 +13,41 @@ per-asset/batch granularity comes with the pass wiring.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timezone
-from typing import Iterable
+from typing import Iterable, Optional
 
 from sqlalchemy import case
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.models.coverage import CoverageStatus, ScanCoverage, ScanPolicy, ScanPolicyTemplate
+from app.models.coverage import (
+    CoverageStatus,
+    ScanCoverage,
+    ScanPolicy,
+    ScanPolicyCatalog,
+    ScanPolicyTemplate,
+)
 from app.models.database import Asset
 from app.models.scanning import ScanRun
 from app.services.rule_catalog import ApplicableRuleSet
 from app.services.scan_policy import ScanPolicyManifest
+
+
+def _catalog_digest_from_map(catalog: dict) -> str:
+    """Deterministic digest over a catalog map ``{detector_id: (rel_path, content_digest,
+    severity, tags_tuple)}`` — the shape both ``_read_catalog`` (stored rows) and the
+    ``expected`` set (from a ruleset) produce, so the two always agree. Sensitive to every
+    field, so an extra, missing, or swapped row moves the digest."""
+    payload = json.dumps(
+        [[d, catalog[d][0], catalog[d][1], catalog[d][2], list(catalog[d][3])] for d in sorted(catalog)],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class CoverageWriteError(Exception):
@@ -121,6 +144,22 @@ class CoverageRepository:
             for t in self.db.query(ScanPolicyTemplate).filter(ScanPolicyTemplate.policy_hash == policy_hash).all()
         }
 
+    def catalog_build(self, policy_hash: str) -> Optional[tuple[int, str]]:
+        """The stamped ``(detector_count, catalog_digest)`` proving the catalog was fully
+        built for this policy, or ``None`` if never built. Written atomically with the rows
+        by ``persist_catalog``, so its presence means "verified complete at build time"."""
+        row = self.db.query(ScanPolicyCatalog).filter(ScanPolicyCatalog.policy_hash == policy_hash).first()
+        return None if row is None else (row.detector_count, row.catalog_digest)
+
+    def catalog_fingerprint(self, policy_hash: str) -> Optional[tuple[int, str]]:
+        """The LIVE ``(count, digest)`` of the catalog rows currently in the DB, or ``None``
+        if empty. Compared against ``catalog_build`` to prove the persisted catalog is still
+        exactly what was built — a partial, extra, or swapped row makes the two disagree."""
+        stored = self._read_catalog(policy_hash)
+        if not stored:
+            return None
+        return (len(stored), _catalog_digest_from_map(stored))
+
     def persist_catalog(self, ruleset: ApplicableRuleSet) -> int:
         """Insert-if-absent the applicable detectors and VERIFY the persisted catalog
         matches the ruleset exactly — the catalog is as immutable as the policy.
@@ -166,6 +205,19 @@ class CoverageRepository:
                 self.db.rollback()
                 raise CoverageWriteError(f"catalog for {ruleset.policy_hash} diverged during write (concurrent?)")
 
+        # Stamp the build fingerprint atomically with the rows: presence == "verified
+        # complete", and (count, digest) let the emit prove the rows are still intact
+        # without re-parsing. Immutable per policy_hash → insert-if-absent (identical anyway).
+        self.db.execute(
+            insert(ScanPolicyCatalog)
+            .values(
+                policy_hash=ruleset.policy_hash,
+                detector_count=len(expected),
+                catalog_digest=_catalog_digest_from_map(expected),
+                built_at=datetime.now(timezone.utc),
+            )
+            .on_conflict_do_nothing(index_elements=["policy_hash"])
+        )
         self.db.commit()
         return len(expected)
 
@@ -292,13 +344,24 @@ class CoverageRepository:
         }
 
     def applicable_detector_ids(self, policy_hash: str) -> set[str]:
-        """Detector ids applicable to a policy (from the persisted catalog)."""
-        return {
-            row[0]
-            for row in self.db.query(ScanPolicyTemplate.detector_id)
-            .filter(ScanPolicyTemplate.policy_hash == policy_hash)
-            .all()
-        }
+        """Detector ids applicable to a policy — the fail-closed gate a consumer relies on.
+
+        Returns the persisted catalog ONLY if it is stamped built AND its live rows still
+        match that stamp (``catalog_fingerprint == catalog_build``). A never-built, partial,
+        or tampered catalog (e.g. an extra, non-applicable detector) yields the empty set, so
+        a corrupt catalog can never authorise a close — the barrier lives here, not in the
+        caller, so every consumer inherits it.
+
+        Reads the rows ONCE (fingerprint AND ids come from the same snapshot) so a concurrent
+        write between two reads can't slip a rogue detector past the integrity check (TOCTOU)."""
+        stored = self._read_catalog(policy_hash)
+        build = self.catalog_build(policy_hash)
+        if not stored:
+            return set()
+        fingerprint = (len(stored), _catalog_digest_from_map(stored))
+        if build is None or fingerprint != build:
+            return set()
+        return set(stored)
 
 
 __all__ = ["CoverageRepository", "CoverageWriteError", "conservative_pass_status"]

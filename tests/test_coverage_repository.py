@@ -111,6 +111,46 @@ def test_persist_catalog_is_idempotent(db_session):
     assert repo.applicable_detector_ids(m.policy_hash) == {"CVE-A", "CVE-B"}
 
 
+def test_persist_catalog_stamps_build_fingerprint(db_session):
+    # persist_catalog stamps (count, digest); the live fingerprint of the rows matches it.
+    repo = CoverageRepository(db_session)
+    m = _manifest()
+    repo.persist_policy(m)
+    assert repo.catalog_build(m.policy_hash) is None  # not built yet
+    assert repo.catalog_fingerprint(m.policy_hash) is None
+    repo.persist_catalog(_catalog(m.policy_hash))
+    build = repo.catalog_build(m.policy_hash)
+    assert build is not None and build[0] == 2  # detector_count
+    assert repo.catalog_fingerprint(m.policy_hash) == build  # rows intact == stamp
+
+
+def test_catalog_fingerprint_diverges_when_extra_row_present(db_session):
+    # An extra, out-of-band detector row makes the live fingerprint disagree with the
+    # stamped build — the exact tamper the emit's completeness check must catch, so an
+    # unmerited detector can never be trusted as applicable.
+    repo = CoverageRepository(db_session)
+    m = _manifest()
+    repo.persist_policy(m)
+    repo.persist_catalog(_catalog(m.policy_hash))
+    build = repo.catalog_build(m.policy_hash)
+
+    db_session.add(
+        ScanPolicyTemplate(
+            policy_hash=m.policy_hash,
+            detector_id="CVE-ROGUE",
+            relative_path="http/cves/rogue.yaml",
+            content_digest="c" * 64,
+            severity="high",
+            tags=["cve"],
+        )
+    )
+    db_session.commit()
+
+    assert repo.catalog_fingerprint(m.policy_hash) != build  # count + digest both move
+    # The barrier: a tampered catalog authorises NOTHING, even though the rogue row exists.
+    assert repo.applicable_detector_ids(m.policy_hash) == set()
+
+
 def test_persist_policy_divergent_row_is_rejected(db_session):
     # a corrupt/manual row with the same hash but different fields must be detected
     repo = CoverageRepository(db_session)

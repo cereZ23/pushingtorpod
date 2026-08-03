@@ -137,6 +137,33 @@ su 38, 92 errori ESLint soppressi in CI.
 
 _Cose che possono causare perdita dati, incidenti, o vendere un artefatto sbagliato._
 
+- [ ] **Auto-close coverage-aware (consumer per-detector)** — _in corso, ~85%._ Il ledger `scan_coverage`
+  oggi **osserva ma non decide** (nessun consumer lo legge → nessun falso FIXED possibile). Fondazione in
+  prod: scan-policy identity + rule resolver + detector catalog + coverage ledger (#95); pass-wiring dei 4
+  pass nuclei (#96); fix contratto producer→wiring — un fallimento restituito come dict
+  (`{"status":"failed"}`/`no_urls`/`None`) non diventa più COVERED (#97).
+  **Il vecchio auto-close tenant-wide resta INTATTO finché il consumer non è completo e validato.**
+  Fail-closed ovunque: "meglio un falso open che un falso fixed". Ordine approvato:
+  1. **Gate #1** — scan piccolo in prod + verifica ledger reale (COVERED/PARTIAL/FAILED con `policy_hash`
+     coerenti). `scan_coverage` era vuota perché nessuno scan era girato dopo il deploy del wiring.
+  2. **P-B catalogo osservazionale** — chiamare `persist_catalog` nei 4 pass. **Vincolo single-snapshot**:
+     revision, manifest, catalogo e coverage devono derivare dallo **stesso** snapshot delle regole
+     (resolve snapshot → revision → manifest → enumera detector dallo stesso snapshot → persist_policy →
+     persist_catalog → record_pass_coverage). Mai rileggere il filesystem separatamente tra policy e
+     catalogo (race se i template cambiano durante l'emissione).
+  3. **P-A misconfig → ledger** — misconfig NON è nuclei-template-based: policy-identity propria basata sul
+     **digest canonico dei controlli attivi**.
+  4. **P-C streak + marker** — migrazione su `Finding`: `eligible_miss_streak`, `last_eligible_run_id`,
+     `last_eligible_miss_at` (diagnostica) e `last_detected_scan_run_id` (marker esplicito di rilevazione,
+     preferito a `last_seen < run.started_at`). Update atomico sotto lock (no doppio incremento su
+     retry/worker concorrenti). Una run **non eleggibile azzera** lo streak (conservativo: ritarda una
+     chiusura, mai la inventa).
+  5. **Consumer fail-closed** — chiude un finding solo se: discovery sana + asset COVERED nel pass corretto
+     + detector applicabile alla policy + finding non rilevato nel run + **2 miss eleggibili consecutivi**.
+  6. **Spegnere il vecchio auto-close tenant-wide** (solo dopo consumer completo e validato).
+  - Prereq scoperti (non costruiti in fase di piano): `persist_catalog` non era mai chiamato (catalogo vuoto
+    → condizione "detector applicabile" non valutabile); `Finding` non aveva campo streak/run-di-rilevazione.
+
 - [x] **Espansione CIDR scansionava il netblock del PROVIDER** — **[FATTO, PR #50]** la fase 1c faceva
   WHOIS su ogni IP risolto ed espandeva il netblock in tutti i /32; ma quel netblock è del **provider
   di hosting**, non del target → un dominio (itsright.it) esplodeva in **792 IP di altri clienti del
