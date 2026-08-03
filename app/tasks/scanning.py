@@ -49,23 +49,36 @@ def endpoint_shape_key(url: str) -> tuple:
     return (host, "/".join(segs), tuple(sorted(parse_qs(p.query).keys())))
 
 
-def host_in_scope(host: str, in_scope_hosts: set, tenant_roots: set) -> bool:
-    """Is a crawled endpoint host in scope for the tenant?
-
-    True only if the host is exactly a tenant asset, or under one of the tenant's own
-    registrable domains. Katana follows OFF-SITE links (CDNs, social widgets, doc/font
-    links), so the crawled set contains third-party hosts (youtube, github, cloudflare…);
-    scanning those with nuclei is OUT OF SCOPE and unauthorised, so they are refused.
-    """
-    from app.utils.domains import registrable_domain
-
+def normalize_host(host: str | None) -> str:
+    """Lowercase, strip a trailing dot, and IDNA-encode a hostname for scope comparison."""
     if not host:
+        return ""
+    h = host.strip().rstrip(".").lower()
+    try:
+        h = h.encode("idna").decode("ascii")
+    except Exception:
+        pass
+    return h
+
+
+def host_in_scope(host: str, authorised_hosts: set, authorised_roots: set) -> bool:
+    """Is a crawled endpoint host authorised to scan?
+
+    Authorisation must come from EXPLICIT authorization, never inferred from a discovered
+    asset: Katana follows off-site links, so the crawled set contains third-party hosts. A
+    host is in scope ONLY if it is exactly an authorised asset, or a subdomain of an
+    explicitly-authorised root (a project/tenant SEED domain), matched by literal suffix.
+
+    We do NOT derive the boundary from ``registrable_domain(asset)`` — on shared hosting
+    (azurewebsites.net, github.io, CDNs, SaaS) that would authorise OTHER tenants' hosts.
+    Empty ``authorised_roots`` → exact-match only, i.e. fail-closed.
+    """
+    h = normalize_host(host)
+    if not h:
         return False
-    h = host.lower()
-    if h in in_scope_hosts:
+    if h in authorised_hosts:
         return True
-    rd = registrable_domain(h)
-    return bool(rd) and rd in tenant_roots
+    return any(h == root or h.endswith("." + root) for root in authorised_roots)
 
 
 @celery.task(name="app.tasks.scanning.run_nuclei_scan")
@@ -293,12 +306,29 @@ def run_nuclei_scan(
             # In-scope guard (SECURITY / authorization): Katana follows OFF-SITE links (CDNs,
             # social widgets, doc/font links), so the crawled endpoint set contains third-party
             # hosts (youtube, github, cloudflare, gnu.org, ...). Scanning those with nuclei is
-            # OUT OF SCOPE and unauthorised — a real legal risk. Keep ONLY endpoints whose host
-            # is exactly a tenant asset, or is under one of the tenant's own registrable domains.
-            from app.utils.domains import registrable_domain
+            # OUT OF SCOPE and unauthorised — a real legal risk.
+            #
+            # The boundary comes from EXPLICIT authorization, never inferred from a discovered
+            # asset: authorised hosts = the tenant's active assets (exact match); authorised
+            # roots = the tenant's SEED domains only. A discovered asset's registrable domain is
+            # NOT used as a root — on shared hosting (azurewebsites.net, github.io, CDNs) that
+            # would authorise other tenants. No seed roots → exact-match only (fail-closed).
+            from app.models.database import Seed
 
-            in_scope_hosts = {a.identifier.lower() for a in assets}
-            tenant_roots = {rd for a in assets if (rd := registrable_domain(a.identifier))}
+            authorised_hosts = {
+                normalize_host(ident)
+                for (ident,) in db.query(Asset.identifier).filter(Asset.tenant_id == tenant_id, Asset.is_active == True)
+            }
+            authorised_hosts.discard("")
+            authorised_roots = {
+                normalize_host(val)
+                for (val,) in db.query(Seed.value).filter(
+                    Seed.tenant_id == tenant_id,
+                    Seed.enabled == True,
+                    Seed.type == "domain",
+                )
+            }
+            authorised_roots.discard("")
 
             candidates = []
             out_of_scope_dropped = 0
@@ -309,7 +339,7 @@ def run_nuclei_scan(
                     parsed = urlparse(ep_url)
                 except Exception:
                     continue
-                if not host_in_scope(parsed.hostname or "", in_scope_hosts, tenant_roots):
+                if not host_in_scope(parsed.hostname or "", authorised_hosts, authorised_roots):
                     out_of_scope_dropped += 1
                     continue
                 # Check the extension on the PATH, not the whole URL: a handler
