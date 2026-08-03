@@ -355,6 +355,26 @@ describe('scans store', () => {
       )
     })
 
+    it('fetches every page of history, not just the first', async () => {
+      // Two-page history: without paging the older page would be lost.
+      vi.mocked(apiClient.get)
+        .mockResolvedValueOnce({
+          data: { items: [makeScanRun({ id: 1 })], total_pages: 2, page: 1 },
+        })
+        .mockResolvedValueOnce({
+          data: { items: [makeScanRun({ id: 2 })], total_pages: 2, page: 2 },
+        })
+
+      const store = useScanStore()
+      await store.fetchScanRuns(1)
+
+      expect(store.scanRuns).toHaveLength(2)
+      expect(apiClient.get).toHaveBeenCalledTimes(2)
+      expect(vi.mocked(apiClient.get).mock.calls[1][1]).toEqual(
+        expect.objectContaining({ params: { page: 2, page_size: 1000 } })
+      )
+    })
+
     it('sets error on failure', async () => {
       vi.mocked(apiClient.get).mockRejectedValueOnce(new Error('Failed'))
 
