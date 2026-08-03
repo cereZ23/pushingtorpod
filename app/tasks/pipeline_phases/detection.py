@@ -275,6 +275,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         app_settings.nuclei_max_endpoints_per_host_t1 if scan_tier == 1 else app_settings.nuclei_max_endpoints_per_host
     )
     req_timeout = app_settings.nuclei_request_timeout_t1 if scan_tier == 1 else 10
+    mhe_cap = app_settings.nuclei_max_host_errors_t1 if scan_tier == 1 else 50
 
     # Tier-aware exclude-tags (config-driven, per-env overridable).
     # KEY INSIGHT: what gets a host blacklisted by nuclei as "permanently
@@ -463,6 +464,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             scan_run_id=scan_run_id,
             max_endpoints_per_host=endpoint_cap,
             request_timeout=req_timeout,
+            max_host_errors=mhe_cap,
         )
 
     def _run_pass_2():
@@ -483,6 +485,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             scan_run_id=scan_run_id,
             max_endpoints_per_host=endpoint_cap,
             request_timeout=req_timeout,
+            max_host_errors=mhe_cap,
         )
 
     def _run_pass_3():
@@ -505,6 +508,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             scan_run_id=scan_run_id,
             max_endpoints_per_host=endpoint_cap,
             request_timeout=req_timeout,
+            max_host_errors=mhe_cap,
         )
 
     # Pass 0: custom templates FIRST (sequential, fast ~10s).
@@ -541,6 +545,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
                 scan_run_id=scan_run_id,
                 max_endpoints_per_host=endpoint_cap,
                 request_timeout=req_timeout,
+                max_host_errors=mhe_cap,
             )
             if isinstance(custom_result, dict):
                 total_created += custom_result.get("findings_created", 0)

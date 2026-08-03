@@ -64,6 +64,7 @@ def run_nuclei_scan(
     scan_run_id: Optional[int] = None,
     max_endpoints_per_host: Optional[int] = None,
     request_timeout: Optional[int] = None,
+    max_host_errors: Optional[int] = None,
 ):
     """
     Execute Nuclei vulnerability scan on assets
@@ -353,6 +354,7 @@ def run_nuclei_scan(
                 exclude_tags=exclude_tags,
                 max_total_seconds=batch_deadline_seconds,
                 request_timeout=request_timeout if request_timeout is not None else 10,
+                max_host_errors=max_host_errors if max_host_errors is not None else 50,
             )
         )
 
