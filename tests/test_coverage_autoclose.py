@@ -157,14 +157,14 @@ def _new_run(db_session, test_tenant, *, started=None):
     return run
 
 
-def _nuclei_policy_catalog(db_session, *, detector="CVE-X"):
+def _nuclei_policy_catalog(db_session, *, detector="CVE-X", pass_name="http_stock"):
     from app.repositories.coverage_repository import CoverageRepository
     from app.services.rule_catalog import ApplicableRule, ApplicableRuleSet
     from app.services.scan_policy import build_nuclei_policy_manifest
 
     repo = CoverageRepository(db_session)
     m = build_nuclei_policy_manifest(
-        nuclei_version="3.3.1", template_revision="rev-ac", pass_name="http_stock", tier=1, severity=["high"]
+        nuclei_version="3.3.1", template_revision="rev-ac", pass_name=pass_name, tier=1, severity=["high"]
     )
     repo.persist_policy(m)
     repo.persist_catalog(
@@ -176,22 +176,42 @@ def _nuclei_policy_catalog(db_session, *, detector="CVE-X"):
     return m
 
 
-def _cover(db_session, test_tenant, manifest, run, asset):
+def _misconfig_policy_catalog(db_session, *, detector="MC-X"):
+    from app.repositories.coverage_repository import CoverageRepository
+    from app.services.rule_catalog import ApplicableRule, ApplicableRuleSet
+    from app.services.scan_policy import build_misconfig_policy_manifest
+
+    repo = CoverageRepository(db_session)
+    m = build_misconfig_policy_manifest(app_version="1.2.3", rule_revision="rev-mc", tier=1)
+    repo.persist_policy(m)
+    repo.persist_catalog(
+        ApplicableRuleSet(
+            policy_hash=m.policy_hash,
+            rules=(ApplicableRule("builtin_misconfig", detector, "controls/x", "b" * 64, "high", ()),),
+        )
+    )
+    return m
+
+
+def _cover(db_session, test_tenant, manifest, run, asset, *, pass_name="http_stock"):
     from app.repositories.coverage_repository import CoverageRepository, CoverageStatus
 
     CoverageRepository(db_session).record_pass_coverage(
         tenant_id=test_tenant.id,
         scan_run_id=run.id,
         phase=manifest.phase,
-        pass_name="http_stock",
+        pass_name=pass_name,
         policy_hash=manifest.policy_hash,
         asset_ids=[asset.id],
         status=CoverageStatus.COVERED,
     )
 
 
+_UNSET = object()
+
+
 def _open_finding(
-    db_session, asset, *, source="nuclei", template_id="CVE-X", streak=0, last_eligible_run_id=None, matched_at=None
+    db_session, asset, *, source="nuclei", template_id="CVE-X", streak=0, last_eligible_run_id=None, matched_at=_UNSET
 ):
     from app.models.database import Finding, FindingSeverity, FindingStatus
 
@@ -202,9 +222,9 @@ def _open_finding(
         name="X",
         severity=FindingSeverity.HIGH,
         status=FindingStatus.OPEN,
-        # A base-URL location by default so the finding is a `base` target (eligible). Endpoint
-        # tests override this with a path/query location.
-        matched_at=matched_at if matched_at is not None else f"https://{asset.identifier}",
+        # A base-URL location by default so the finding is a `base` target (eligible). Tests override
+        # with a path/query location (endpoint) or an explicit None/host:port (unknown).
+        matched_at=(f"https://{asset.identifier}" if matched_at is _UNSET else matched_at),
         last_seen=datetime.now(timezone.utc) - timedelta(days=1),  # NOT seen this run
         eligible_miss_streak=streak,
         last_eligible_run_id=last_eligible_run_id,
@@ -263,6 +283,59 @@ def test_shadow_endpoint_finding_never_would_close(db_session, test_tenant, monk
     db_session.refresh(finding)
     assert finding.status is FindingStatus.OPEN
     assert finding.eligible_miss_streak == 0  # prior streak reset (INELIGIBLE)
+
+
+def test_shadow_http_stock_unknown_location_is_ineligible(db_session, test_tenant, monkeypatch):
+    # HTTP-stock finding with NO location (matched_at=None → "unknown") is INELIGIBLE (fail-closed).
+    from app.services.coverage_autoclose import shadow_auto_close
+
+    _allow_discovery(monkeypatch, True)
+    m = _nuclei_policy_catalog(db_session)  # http_stock
+    run = _new_run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "s-unk.test.com")
+    _cover(db_session, test_tenant, m, run, asset)
+    finding = _open_finding(db_session, asset, streak=1, matched_at=None)
+
+    r = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id)
+    assert finding.id not in r["would_close_ids"]
+    db_session.refresh(finding)
+    assert finding.eligible_miss_streak == 0
+
+
+def test_shadow_dns_network_host_port_stays_eligible(db_session, test_tenant, monkeypatch):
+    # A DNS/network finding located as "host:port" is "unknown" to the HTTP classifier, but the gate
+    # must NOT apply to the dns_network pass — it stays ELIGIBLE and reaches would_close.
+    from app.services.coverage_autoclose import shadow_auto_close
+
+    _allow_discovery(monkeypatch, True)
+    m = _nuclei_policy_catalog(db_session, pass_name="dns_network")
+    run = _new_run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "s-dns.test.com")
+    _cover(db_session, test_tenant, m, run, asset, pass_name="dns_network")
+    finding = _open_finding(db_session, asset, streak=1, matched_at="s-dns.test.com:53")
+
+    r = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id)
+    assert finding.id in r["would_close_ids"]  # host-level pass unaffected by the HTTP endpoint gate
+    db_session.refresh(finding)
+    assert finding.eligible_miss_streak == 2
+
+
+def test_shadow_misconfig_without_location_stays_eligible(db_session, test_tenant, monkeypatch):
+    # A misconfig finding with no HTTP location must keep its coverage-aware auto-close — the HTTP
+    # endpoint gate must never touch the misconfig pass (this was the regression to guard against).
+    from app.services.coverage_autoclose import shadow_auto_close
+
+    _allow_discovery(monkeypatch, True)
+    m = _misconfig_policy_catalog(db_session, detector="MC-1")
+    run = _new_run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "s-mc.test.com")
+    _cover(db_session, test_tenant, m, run, asset, pass_name="misconfig")
+    finding = _open_finding(db_session, asset, source="misconfig", template_id="MC-1", streak=1, matched_at=None)
+
+    r = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id)
+    assert finding.id in r["would_close_ids"]  # misconfig auto-close NOT disabled by the HTTP gate
+    db_session.refresh(finding)
+    assert finding.eligible_miss_streak == 2
 
 
 def test_shadow_two_distinct_runs_reach_would_close(db_session, test_tenant, monkeypatch):

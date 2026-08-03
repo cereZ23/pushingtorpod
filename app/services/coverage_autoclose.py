@@ -157,10 +157,19 @@ def shadow_auto_close(
     from app.models.scanning import ScanRun
     from app.repositories.coverage_repository import CoverageRepository
     from app.services.discovery_health import evaluate_and_persist_discovery_health
-    from app.services.scan_policy import ENGINE_BUILTIN_MISCONFIG, ENGINE_NUCLEI
+    from app.services.scan_policy import (
+        ENGINE_BUILTIN_MISCONFIG,
+        ENGINE_NUCLEI,
+        PASS_CUSTOM_HTTP,
+        PASS_HTTP_STOCK,
+    )
 
     # A finding's source must match the engine of the pass that authorises it.
     source_engine = {"nuclei": ENGINE_NUCLEI, "misconfig": ENGINE_BUILTIN_MISCONFIG}
+    # The temporary endpoint-safety gate applies ONLY to the HTTP passes that now scan base URLs
+    # only. Host-level passes (dns/network, misconfig, cdn/ssl) must NOT be gated by the HTTP
+    # path/query classification, or their legitimate streaks would be wrongly reset.
+    http_base_only_passes = {PASS_HTTP_STOCK, PASS_CUSTOM_HTTP}
 
     run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
     if run is None or run.tenant_id != tenant_id:
@@ -187,12 +196,14 @@ def shadow_auto_close(
     for c in db.query(ScanCoverage).filter(ScanCoverage.scan_run_id == scan_run_id).all():
         coverage_by_asset.setdefault(c.asset_id, []).append(c)
     policy_engine: dict[str, str] = {}
+    policy_pass: dict[str, str] = {}
     hashes = {c.policy_hash for rows in coverage_by_asset.values() for c in rows}
     if hashes:
-        for ph, eng in db.query(ScanPolicy.policy_hash, ScanPolicy.engine_name).filter(
+        for ph, eng, pass_name in db.query(ScanPolicy.policy_hash, ScanPolicy.engine_name, ScanPolicy.pass_name).filter(
             ScanPolicy.policy_hash.in_(hashes)
         ):
             policy_engine[ph] = eng
+            policy_pass[ph] = pass_name
 
     # Row-lock the open findings so two concurrent shadow runners can't both advance a streak.
     findings = (
@@ -252,6 +263,7 @@ def shadow_auto_close(
         want_engine = source_engine.get(f.source)
         covered = False
         applicable = False
+        covering_pass = None
         if want_engine is not None and f.template_id:
             for c in coverage_by_asset.get(f.asset_id, ()):
                 if policy_engine.get(c.policy_hash) != want_engine:
@@ -260,11 +272,19 @@ def shadow_auto_close(
                     applicable = True  # detector in an INTACT catalog (empty set on tamper)
                     if c.status == CoverageStatus.COVERED:
                         covered = True
+                        covering_pass = policy_pass.get(c.policy_hash)
                         break
 
-        # TEMPORARY endpoint-safety gate: the stock pass scans base URLs only, so a finding whose
-        # location is a deep endpoint (or unclassifiable) must not accrue a miss → never closes.
-        base_target = classify_matched_at(f.matched_at) == TARGET_BASE
+        # TEMPORARY endpoint-safety gate — ONLY for the HTTP passes that now scan base URLs only
+        # (http_stock, custom_http). A finding authorised by one of those whose location is a deep
+        # endpoint (or unclassifiable) must not accrue a miss → never closes while the path isn't
+        # scanned. dns/network, misconfig and cdn/ssl detectors are host-level: applying the HTTP
+        # path/query classification there would wrongly reset their legitimate streaks, so they are
+        # left as base_target=True (unaffected by this gate).
+        if covering_pass in http_base_only_passes:
+            base_target = classify_matched_at(f.matched_at) == TARGET_BASE
+        else:
+            base_target = True
 
         verdict = decide_finding_auto_close(
             this_run_id=scan_run_id,
