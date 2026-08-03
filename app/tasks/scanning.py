@@ -61,24 +61,24 @@ def normalize_host(host: str | None) -> str:
     return h
 
 
-def host_in_scope(host: str, authorised_hosts: set, authorised_roots: set) -> bool:
+def host_in_scope(host: str, authorised_hosts: set, scope_entries: list) -> bool:
     """Is a crawled endpoint host authorised to scan?
 
-    Authorisation must come from EXPLICIT authorization, never inferred from a discovered
-    asset: Katana follows off-site links, so the crawled set contains third-party hosts. A
-    host is in scope ONLY if it is exactly an authorised asset, or a subdomain of an
-    explicitly-authorised root (a project/tenant SEED domain), matched by literal suffix.
-
-    We do NOT derive the boundary from ``registrable_domain(asset)`` — on shared hosting
-    (azurewebsites.net, github.io, CDNs, SaaS) that would authorise OTHER tenants' hosts.
-    Empty ``authorised_roots`` → exact-match only, i.e. fail-closed.
+    In scope ONLY if the host is exactly one of the PASS's authorised assets, or matches an
+    ACTIVE ScanAuthorization scope entry (a ``domain`` entry covers the domain + its
+    subdomains via literal suffix; ``ip``/``cidr`` cover IP targets). The boundary is
+    EXPLICIT authorization — never inferred from a discovered asset's registrable domain
+    (which on shared hosting like azurewebsites.net / github.io / CDNs would authorise OTHER
+    tenants). No scope entries → exact-match only, i.e. fail-closed.
     """
+    from app.services.scope_authorization import target_in_scope
+
     h = normalize_host(host)
     if not h:
         return False
     if h in authorised_hosts:
         return True
-    return any(h == root or h.endswith("." + root) for root in authorised_roots)
+    return target_in_scope(h, scope_entries or [])
 
 
 @celery.task(name="app.tasks.scanning.run_nuclei_scan")
@@ -308,27 +308,20 @@ def run_nuclei_scan(
             # hosts (youtube, github, cloudflare, gnu.org, ...). Scanning those with nuclei is
             # OUT OF SCOPE and unauthorised — a real legal risk.
             #
-            # The boundary comes from EXPLICIT authorization, never inferred from a discovered
-            # asset: authorised hosts = the tenant's active assets (exact match); authorised
-            # roots = the tenant's SEED domains only. A discovered asset's registrable domain is
-            # NOT used as a root — on shared hosting (azurewebsites.net, github.io, CDNs) that
-            # would authorise other tenants. No seed roots → exact-match only (fail-closed).
-            from app.models.database import Seed
+            # authorised_hosts = ONLY the assets THIS pass received (exact match) — not every
+            # tenant asset, which would cross projects/passes. Beyond exact hosts, scope is the
+            # ACTIVE ScanAuthorizations (the platform's canonical authorization; a domain entry
+            # covers subdomains by literal suffix), NOT seeds or asset-derived registrable
+            # domains. No active authorization → exact-match only (fail-closed).
+            from app.services.scope_authorization import _active_authorizations
 
-            authorised_hosts = {
-                normalize_host(ident)
-                for (ident,) in db.query(Asset.identifier).filter(Asset.tenant_id == tenant_id, Asset.is_active == True)
-            }
+            authorised_hosts = {normalize_host(a.identifier) for a in assets}
             authorised_hosts.discard("")
-            authorised_roots = {
-                normalize_host(val)
-                for (val,) in db.query(Seed.value).filter(
-                    Seed.tenant_id == tenant_id,
-                    Seed.enabled == True,
-                    Seed.type == "domain",
-                )
-            }
-            authorised_roots.discard("")
+            active_scope_entries = [
+                e
+                for auth in _active_authorizations(db, tenant_id, datetime.now(timezone.utc))
+                for e in (auth.scope_entries or [])
+            ]
 
             candidates = []
             out_of_scope_dropped = 0
@@ -339,7 +332,7 @@ def run_nuclei_scan(
                     parsed = urlparse(ep_url)
                 except Exception:
                     continue
-                if not host_in_scope(parsed.hostname or "", authorised_hosts, authorised_roots):
+                if not host_in_scope(parsed.hostname or "", authorised_hosts, active_scope_entries):
                     out_of_scope_dropped += 1
                     continue
                 # Check the extension on the PATH, not the whole URL: a handler
