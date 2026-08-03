@@ -226,7 +226,10 @@ class TestUpdateFindingStatus:
         db.query.return_value = _ChainQuery(first_val=finding)
         repo = FindingRepository(db)
         repo.update_finding_status(1, "fixed", notes="manual close")
-        data = json.loads(finding.evidence)
+        # The writer now assigns a dict back (no json.dumps → no double-encoding); the JSON column
+        # serializes it once on flush. Here there is no ORM/serializer, so evidence is the dict.
+        data = finding.evidence
+        assert isinstance(data, dict)
         assert "status_notes" in data
         assert data["status_notes"][0]["notes"] == "manual close"
 

@@ -13,11 +13,34 @@ Correlation & Deduplication Engine - Phase 10
 MAX_FINDINGS_PER_GROUP = 50 (split into sub-groups if exceeded)
 """
 
+import json
 import logging
 from datetime import datetime, timezone
 from collections import defaultdict
 
 from app.celery_app import celery
+
+
+def evidence_dict(value) -> dict:
+    """Coerce a Finding.evidence value to a dict.
+
+    Historically some rows stored evidence as a JSON *string* (bulk_upsert used to
+    ``json.dumps`` a dict into the JSON column, bypassing the ORM validator). Reading such a
+    value and calling ``.get()`` on it raised ``'str' object has no attribute 'get'`` and
+    aborted correlation. This tolerates both shapes: a dict passes through; a JSON-object
+    string is decoded; anything else (JSON list/scalar, invalid string, None) → ``{}``.
+    """
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+            return decoded if isinstance(decoded, dict) else {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+    return {}
+
+
 from app.database import SessionLocal
 from app.models.database import Asset, Finding, FindingSeverity, FindingStatus
 from app.models.issues import Issue, IssueStatus, IssueFinding
@@ -339,7 +362,7 @@ _SSL_SERVER_CONFIG_KEYWORDS = (
 def _is_dedupable_by_ip(finding) -> bool:
     """Whether a finding represents an IP:port-level fact (dedup by IP) rather
     than a per-hostname (vhost/cert) one."""
-    ev = finding.evidence or {}
+    ev = evidence_dict(finding.evidence)
     ftype = ev.get("type")
     if ftype in _NETWORK_FINDING_TYPES:
         return True
@@ -423,7 +446,7 @@ def dedup_network_findings_by_ip(tenant_id: int, db, tenant_logger) -> int:
     suppressed = 0
     for keep, dupes in _network_dupe_groups(net, ip_by_asset):
         all_hosts = sorted({f.host for f in [keep, *dupes] if f.host})
-        ev = dict(keep.evidence or {})
+        ev = dict(evidence_dict(keep.evidence))
         ev["affected_hosts"] = all_hosts
         ev["shared_ip"] = sorted(ip_by_asset.get(keep.asset_id, set()))
         ev["deduped_by_ip"] = True
@@ -431,7 +454,7 @@ def dedup_network_findings_by_ip(tenant_id: int, db, tenant_logger) -> int:
         keep.last_seen = datetime.now(timezone.utc)
         for d in dupes:
             d.status = FindingStatus.SUPPRESSED
-            dev = dict(d.evidence or {})
+            dev = dict(evidence_dict(d.evidence))
             dev["suppressed_reason"] = "duplicate_service_on_shared_ip"
             dev["deduped_into"] = keep.id
             d.evidence = dev
