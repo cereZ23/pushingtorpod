@@ -157,6 +157,7 @@ def emit_nuclei_pass_coverage(
     ran: bool,
     errored: bool,
     truncated: bool,
+    interactsh_enabled: bool = False,
 ) -> None:
     """Record one conservative coverage verdict per asset for a finished nuclei pass.
 
@@ -178,6 +179,8 @@ def emit_nuclei_pass_coverage(
         # Single filesystem read: the revision AND the exact bytes, so policy identity and
         # the applicable-detector catalog observe the same snapshot (single-snapshot contract).
         snapshot = resolve_nuclei_rule_snapshot(base_dir, roots)
+        from app.services.scan_tiers import nuclei_relevant_flags
+
         manifest = build_nuclei_policy_manifest(
             nuclei_version=_cached_nuclei_version(),
             template_revision=snapshot.revision.digest,
@@ -186,6 +189,7 @@ def emit_nuclei_pass_coverage(
             severity=list(severity),
             template_roots=roots,
             exclude_tags=exclude,
+            relevant_flags=nuclei_relevant_flags(interactsh_enabled=interactsh_enabled),
         )
         repo = CoverageRepository(db)
         repo.persist_policy(manifest)

@@ -69,6 +69,51 @@ def _make_ruleset(policy_hash: str, rules: list[ApplicableRule]) -> ApplicableRu
     return ApplicableRuleSet(policy_hash=policy_hash, rules=ordered)
 
 
+# --- Nuclei capabilities (runtime-applicable gate) --------------------------
+
+CAP_CODE = "code"
+CAP_HEADLESS = "headless"
+CAP_DAST = "dast"
+CAP_SELF_CONTAINED = "self_contained"
+CAP_INTERACTSH = "interactsh"
+NUCLEI_CAPABILITIES = (CAP_CODE, CAP_HEADLESS, CAP_DAST, CAP_SELF_CONTAINED, CAP_INTERACTSH)
+
+
+def nuclei_required_capabilities(doc: Mapping, raw: bytes | bytearray) -> frozenset:
+    """The nuclei capabilities a template REQUIRES to actually execute/match. A policy that does not
+    enable one of these (via ``relevant_flags``) does not run the template, so it is not
+    runtime-applicable and must be kept out of the coverage catalog.
+
+    - ``code`` / ``headless``: opt-in protocols nuclei disables by default (need -code / -headless);
+    - ``dast``: a ``fuzzing`` block or a dast/fuzz tag (only run with -dast);
+    - ``self_contained``: the template ignores the scanned asset (its coverage per-asset is moot);
+    - ``interactsh``: the template relies on OAST callbacks (disabled by -ni → it can never match).
+    """
+    caps = set()
+    if doc.get("code") is not None:
+        caps.add(CAP_CODE)
+    if doc.get("headless") is not None:
+        caps.add(CAP_HEADLESS)
+    info = doc.get("info") if isinstance(doc.get("info"), Mapping) else {}
+    try:
+        tags = set(normalize_tags(info.get("tags"))) if isinstance(info, Mapping) else set()
+    except RuleResolutionError:
+        tags = set()
+    has_fuzz = any(
+        isinstance(r, Mapping) and r.get("fuzzing") is not None
+        for key in ("http", "requests")
+        if isinstance(doc.get(key), list)
+        for r in doc[key]
+    )
+    if has_fuzz or {"dast", "fuzz"} & tags:
+        caps.add(CAP_DAST)
+    if doc.get("self-contained") is True or (isinstance(info, Mapping) and info.get("self-contained") is True):
+        caps.add(CAP_SELF_CONTAINED)
+    if isinstance(raw, (bytes, bytearray)) and b"interactsh" in bytes(raw).lower():
+        caps.add(CAP_INTERACTSH)
+    return frozenset(caps)
+
+
 # --- Nuclei enumeration ------------------------------------------------------
 
 
@@ -90,8 +135,9 @@ def enumerate_nuclei_applicable_rules(
     if manifest.engine_name != ENGINE_NUCLEI:
         raise RuleCatalogError(f"nuclei enumeration requires a nuclei policy, got {manifest.engine_name!r}")
 
+    enabled_caps = frozenset(k for k, v in manifest.relevant_flags if str(v).lower() == "true")
     entries: list[tuple[str, str]] = []
-    docs: dict[str, tuple[str, Mapping]] = {}  # rel_path -> (digest, parsed doc)
+    docs: dict[str, tuple[str, Mapping, bytes]] = {}  # rel_path -> (digest, parsed doc, raw bytes)
     for rel, data in files:
         if not isinstance(data, (bytes, bytearray)):
             raise RuleCatalogError(f"template {rel!r}: content must be bytes, got {type(data).__name__}")
@@ -106,7 +152,7 @@ def enumerate_nuclei_applicable_rules(
             raise RuleCatalogError(f"invalid YAML in template {rel!r}: {exc}") from exc
         if not isinstance(doc, Mapping):
             raise RuleCatalogError(f"template {rel!r} is not a mapping")
-        docs[rel] = (digest, doc)
+        docs[rel] = (digest, doc, data)
 
     # Consistency with 2B: the exact bytes must reproduce the policy's rule_revision.
     try:
@@ -121,7 +167,7 @@ def enumerate_nuclei_applicable_rules(
     rules: list[ApplicableRule] = []
     id_to_path: dict[str, str] = {}
     for rel in sorted(docs):
-        digest, doc = docs[rel]
+        digest, doc, data = docs[rel]
         raw_id = doc.get("id")
         if not isinstance(raw_id, str) or not raw_id.strip():  # must be a real string id
             raise RuleCatalogError(f"template {rel!r} has no valid string id")
@@ -146,6 +192,14 @@ def enumerate_nuclei_applicable_rules(
             continue  # not selected by the policy severity gate
         if exclude & set(tags):
             continue  # excluded by tag
+        # Capability gate (runtime-applicable): a template that REQUIRES a nuclei capability the
+        # policy does not enable (relevant_flags) is not actually executed / can't match, so it must
+        # NOT sit in the catalog and authorise a future auto-close. code/headless need opt-in flags
+        # nuclei disables by default; dast = fuzzing; self_contained ignores the scanned asset;
+        # interactsh needs OAST (off via -ni → no OOB match). Fail-closed: unknown-enabled → excluded.
+        required_caps = nuclei_required_capabilities(doc, data)
+        if required_caps - enabled_caps:
+            continue
         rules.append(
             ApplicableRule(
                 engine_name=ENGINE_NUCLEI,

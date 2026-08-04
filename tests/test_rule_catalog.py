@@ -365,3 +365,93 @@ def test_enumerate_misconfig_from_snapshot_excludes_disabled():
     rs = enumerate_misconfig_from_snapshot(manifest, snap)
     assert rs.contains("HDR-001")
     assert not rs.contains("HDR-002")
+
+
+# --- Nuclei capability gate (runtime-applicable) -----------------------------
+
+
+def _tpl_raw(detector_id, extra, severity="high"):
+    doc = {"id": detector_id, "info": {"severity": severity}}
+    doc.update(extra)
+    return json.dumps(doc).encode()
+
+
+def _enum_flags(files, relevant_flags):
+    manifest = build_nuclei_policy_manifest(
+        nuclei_version="3.3.1",
+        template_revision=_revision(files),
+        pass_name="http_stock",
+        tier=1,
+        severity=["critical", "high"],
+        template_roots=["http/cves"],
+        exclude_tags=[],
+        relevant_flags=relevant_flags,
+    )
+    return enumerate_nuclei_applicable_rules(manifest, files, parse_yaml=json.loads)
+
+
+def _gate_case(extra, cap_key):
+    # a plain template keeps the applicable set non-empty; the capability template is gated
+    files = [
+        ("http/cves/plain.yaml", _tpl("CVE-PLAIN", "high", "cve")),
+        ("http/cves/cap.yaml", _tpl_raw("CVE-CAP", extra)),
+    ]
+    off = _enum_flags(files, {cap_key: "false"})
+    on = _enum_flags(files, {cap_key: "true"})
+    return off, on
+
+
+def test_code_template_gated_by_code_capability():
+    off, on = _gate_case({"code": [{"engine": ["python"]}]}, "code")
+    assert off.contains("CVE-PLAIN") and not off.contains("CVE-CAP")
+    assert on.contains("CVE-CAP")
+
+
+def test_headless_template_gated_by_headless_capability():
+    off, on = _gate_case({"headless": [{"steps": []}]}, "headless")
+    assert not off.contains("CVE-CAP")
+    assert on.contains("CVE-CAP")
+
+
+def test_fuzzing_template_gated_by_dast_capability():
+    off, on = _gate_case({"http": [{"fuzzing": [{"part": "query"}]}]}, "dast")
+    assert not off.contains("CVE-CAP")
+    assert on.contains("CVE-CAP")
+
+
+def test_self_contained_template_gated():
+    off, on = _gate_case({"self-contained": True, "http": [{"path": ["{{BaseURL}}"]}]}, "self_contained")
+    assert not off.contains("CVE-CAP")
+    assert on.contains("CVE-CAP")
+
+
+def test_interactsh_template_gated_by_interactsh_capability():
+    extra = {"http": [{"path": ["{{BaseURL}}/x"], "matchers": [{"type": "word", "words": ["{{interactsh-url}}"]}]}]}
+    off, on = _gate_case(extra, "interactsh")
+    assert not off.contains("CVE-CAP")  # OAST off (-ni) → not runtime-applicable
+    assert on.contains("CVE-CAP")
+
+
+def test_plain_template_never_gated():
+    files = [("http/cves/a.yaml", _tpl("CVE-A", "high", "cve"))]
+    # no capabilities required → included regardless of (empty) relevant_flags
+    rs = _enum_flags(files, {})
+    assert rs.contains("CVE-A")
+
+
+def test_capability_change_changes_policy_hash():
+    from app.services.scan_policy import build_nuclei_policy_manifest as _b
+
+    files = [("http/cves/a.yaml", _tpl("CVE-A", "high", "cve"))]
+    common = dict(
+        nuclei_version="3.3.1",
+        template_revision=_revision(files),
+        pass_name="http_stock",
+        tier=1,
+        severity=["critical", "high"],
+        template_roots=["http/cves"],
+        exclude_tags=[],
+    )
+    h_off = _b(**common, relevant_flags={"code": "false"}).policy_hash
+    h_on = _b(**common, relevant_flags={"code": "true"}).policy_hash
+    assert h_off != h_on  # enabling a capability must yield a different policy identity

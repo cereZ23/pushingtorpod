@@ -38,7 +38,7 @@ def _reconciled_ruleset(tier: int):
     from app.services.rule_catalog import enumerate_nuclei_from_snapshot
     from app.services.rule_revision import resolve_nuclei_rule_snapshot
     from app.services.scan_policy import build_nuclei_policy_manifest
-    from app.services.scan_tiers import http_stock_roots, tier_severity
+    from app.services.scan_tiers import http_stock_roots, nuclei_relevant_flags, tier_severity
 
     roots = http_stock_roots(tier)
     severity = tier_severity(tier)
@@ -53,6 +53,7 @@ def _reconciled_ruleset(tier: int):
         severity=list(severity),
         template_roots=split_roots,
         exclude_tags=exclude,
+        relevant_flags=nuclei_relevant_flags(interactsh_enabled=False),
     )
     ruleset = enumerate_nuclei_from_snapshot(manifest, snapshot, parse_yaml=yaml.safe_load)
     return base_dir, split_roots, severity, exclude, snapshot, ruleset
@@ -206,7 +207,7 @@ def cmd_dry_run(tier: int, tenant: int, project: int | None, cap: int):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--tier", type=int, default=1)
-    ap.add_argument("--tenant", type=int, required=True, help="tenant id (required; no default)")
+    ap.add_argument("--tenant", type=int, default=None, help="tenant id (required for --dry-run)")
     ap.add_argument("--project", type=int, default=None)
     ap.add_argument("--cap", type=int, default=DEFAULT_CAP)
     g = ap.add_mutually_exclusive_group()
@@ -214,15 +215,16 @@ def main():
     g.add_argument("--reconcile", action="store_true")
     g.add_argument("--run", action="store_true")
     a = ap.parse_args()
-    if a.reconcile:
+    if a.reconcile:  # template list only; no tenant/traffic
         return cmd_reconcile(a.tier)
     if a.run:
         print(
             "ACTIVE benchmark is deferred to Sprint 3: it must reuse the pipeline's exact endpoint\n"
-            "selection (select_endpoint_targets) + prod nuclei flags to be representative. Run\n"
-            "--dry-run / --reconcile now (no traffic)."
+            "selection (select_endpoint_targets) + prod nuclei flags to be representative."
         )
         return 2
+    if a.tenant is None:
+        ap.error("--tenant is required for --dry-run")
     return cmd_dry_run(a.tier, a.tenant, a.project, a.cap)  # default
 
 

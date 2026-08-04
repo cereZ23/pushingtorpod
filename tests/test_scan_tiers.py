@@ -6,8 +6,31 @@ from app.services.scan_tiers import (
     TIER_HTTP_STOCK_ROOTS,
     TIER_SEVERITY,
     http_stock_roots,
+    nuclei_relevant_flags,
     tier_severity,
 )
+
+
+def test_nuclei_relevant_flags_all_off_by_default():
+    # capabilities mirror the REAL CLI flags (not roots): prod passes none of -code/-headless/-dast/
+    # -esc, so those are always false regardless of tier/roots.
+    assert nuclei_relevant_flags(interactsh_enabled=False) == {
+        "code": "false",
+        "headless": "false",
+        "dast": "false",
+        "self_contained": "false",
+        "interactsh": "false",
+    }
+
+
+def test_nuclei_relevant_flags_dast_not_inferred_from_roots():
+    # selecting a dast/ root must NOT declare dast enabled — nuclei needs -dast, which we don't pass
+    assert nuclei_relevant_flags(interactsh_enabled=False)["dast"] == "false"
+
+
+def test_nuclei_relevant_flags_interactsh_toggle():
+    assert nuclei_relevant_flags(interactsh_enabled=True)["interactsh"] == "true"
+    assert nuclei_relevant_flags(interactsh_enabled=False)["interactsh"] == "false"
 
 
 def test_t1_roots_pinned():
