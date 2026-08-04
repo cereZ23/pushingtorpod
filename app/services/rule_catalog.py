@@ -83,9 +83,12 @@ def catalog_digest_from_map(catalog: dict) -> str:
 
     This is the shape both the coverage repo's ``_read_catalog`` (stored rows) and an
     ``ApplicableRuleSet`` produce, so the stamped digest and a manifest-embedded digest always agree.
+    Detectors are sorted AND tags are sorted, so two semantically-equal catalogs whose tags arrived
+    in a different order hash identically (tags are already sorted by ``normalize_tags`` upstream —
+    this makes the digest robust regardless).
     """
     payload = json.dumps(
-        [[d, catalog[d][0], catalog[d][1], catalog[d][2], list(catalog[d][3])] for d in sorted(catalog)],
+        [[d, catalog[d][0], catalog[d][1], catalog[d][2], sorted(catalog[d][3])] for d in sorted(catalog)],
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
@@ -96,8 +99,13 @@ def catalog_digest_from_map(catalog: dict) -> str:
 
 def catalog_digest_for_rules(rules) -> str:
     """The canonical catalog digest for an iterable of ``ApplicableRule`` — the SAME value the
-    coverage repo stamps into ``scan_policy_catalog`` for the same detectors."""
-    catalog = {r.detector_id: (r.relative_path, r.content_digest, r.severity, tuple(r.tags)) for r in rules}
+    coverage repo stamps into ``scan_policy_catalog`` for the same detectors. A duplicate detector id
+    is a REJECTED error (fail-closed), never silently collapsed."""
+    catalog: dict = {}
+    for r in rules:
+        if r.detector_id in catalog:
+            raise RuleCatalogError(f"catalog_digest_for_rules: duplicate detector id {r.detector_id!r}")
+        catalog[r.detector_id] = (r.relative_path, r.content_digest, r.severity, tuple(r.tags))
     return catalog_digest_from_map(catalog)
 
 

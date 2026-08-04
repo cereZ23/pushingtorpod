@@ -18,7 +18,7 @@ from app.services.endpoint_policy import (
     build_http_endpoint_policy_bundle,
 )
 from app.services.endpoint_template_classifier import CLASSIFIER_VERSION
-from app.services.rule_catalog import RuleCatalogError, catalog_digest_for_rules
+from app.services.rule_catalog import ApplicableRule, RuleCatalogError, catalog_digest_for_rules
 from app.services.rule_revision import compute_rule_revision, content_digest
 from app.services.scan_policy import PASS_HTTP_ENDPOINT, build_nuclei_policy_manifest
 
@@ -216,6 +216,85 @@ def test_duplicate_detector_id_is_error():
     ]
     with pytest.raises(RuleCatalogError):
         _build(files)
+
+
+# --- canonical digest: tag-order independence + duplicate rejection -------------------------------
+
+
+def _rule(id_, tags):
+    return ApplicableRule(
+        engine_name="nuclei",
+        detector_id=id_,
+        relative_path=f"http/cves/{id_}.yaml",
+        content_digest="d" * 64,
+        severity="high",
+        tags=tuple(tags),
+    )
+
+
+def test_catalog_digest_independent_of_tag_order():
+    a = catalog_digest_for_rules([_rule("x", ("a", "b", "c")), _rule("y", ("m", "n"))])
+    b = catalog_digest_for_rules([_rule("y", ("n", "m")), _rule("x", ("c", "a", "b"))])
+    assert a == b  # tags (and detectors) sorted → order-independent
+
+
+def test_catalog_digest_for_rules_rejects_duplicate_detectors():
+    with pytest.raises(RuleCatalogError):
+        catalog_digest_for_rules([_rule("x", ("a",)), _rule("x", ("b",))])  # never silently collapsed
+
+
+# --- DB CHECK constraints on the identity refinements ---------------------------------------------
+
+
+def _policy_row(**over):
+    from app.models.coverage import ScanPolicy
+
+    base = dict(
+        policy_hash="a" * 64,
+        schema_version="1",
+        engine_name="nuclei",
+        engine_version="3.3.1",
+        rule_revision="b" * 64,
+        phase="9",
+        pass_name="http_stock",
+        tier=1,
+        severity=["high"],
+        rule_roots=["http/cves"],
+        exclude_tags=[],
+        relevant_flags={},
+    )
+    base.update(over)
+    return ScanPolicy(**base)
+
+
+def test_db_rejects_invalid_catalog_digest(db_session):
+    from sqlalchemy.exc import IntegrityError
+
+    db_session.add(_policy_row(policy_hash="c" * 64, catalog_digest="NOT-A-HEX-DIGEST"))
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+
+def test_db_rejects_negative_classifier_version(db_session):
+    from sqlalchemy.exc import IntegrityError
+
+    db_session.add(_policy_row(policy_hash="d" * 64, classifier_version=-1))
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+
+def test_db_rejects_http_endpoint_without_refinements(db_session):
+    from sqlalchemy.exc import IntegrityError
+
+    # http_endpoint identity REQUIRES both refinements — a row missing either is refused.
+    db_session.add(
+        _policy_row(policy_hash="e" * 64, pass_name="http_endpoint", catalog_digest=None, classifier_version=None)
+    )
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
 
 
 # --- observational persistence (policy + catalog only; no coverage / no pass run) -----------------

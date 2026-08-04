@@ -24,8 +24,29 @@ depends_on = None
 def upgrade() -> None:
     op.add_column("scan_policy", sa.Column("catalog_digest", sa.String(64), nullable=True))
     op.add_column("scan_policy", sa.Column("classifier_version", sa.Integer(), nullable=True))
+    # Fail-closed CHECKs — no corrupt value can enter even via raw SQL:
+    op.create_check_constraint(
+        "ck_scan_policy_catalog_digest_hex",
+        "scan_policy",
+        "catalog_digest IS NULL OR catalog_digest ~ '^[0-9a-f]{64}$'",
+    )
+    op.create_check_constraint(
+        "ck_scan_policy_classifier_version_nonneg",
+        "scan_policy",
+        "classifier_version IS NULL OR classifier_version >= 0",
+    )
+    # The http_endpoint pass's identity REQUIRES both refinements (its catalog is a classified
+    # subset); any other pass leaves them NULL.
+    op.create_check_constraint(
+        "ck_scan_policy_endpoint_refinements",
+        "scan_policy",
+        "pass_name <> 'http_endpoint' OR (catalog_digest IS NOT NULL AND classifier_version IS NOT NULL)",
+    )
 
 
 def downgrade() -> None:
+    op.drop_constraint("ck_scan_policy_endpoint_refinements", "scan_policy", type_="check")
+    op.drop_constraint("ck_scan_policy_classifier_version_nonneg", "scan_policy", type_="check")
+    op.drop_constraint("ck_scan_policy_catalog_digest_hex", "scan_policy", type_="check")
     op.drop_column("scan_policy", "classifier_version")
     op.drop_column("scan_policy", "catalog_digest")

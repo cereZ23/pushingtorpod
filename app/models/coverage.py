@@ -96,6 +96,19 @@ class ScanPolicy(Base):
         # raw SQL. (policy_hash is already the PK; this unique exists to anchor the FK.)
         UniqueConstraint("policy_hash", "phase", "pass_name", name="uq_policy_phase_pass"),
         Index("idx_scan_policy_pass", "engine_name", "pass_name"),
+        # Fail-closed guards on the Sprint-3 identity refinements (mirror migration 029).
+        CheckConstraint(
+            "catalog_digest IS NULL OR catalog_digest ~ '^[0-9a-f]{64}$'",
+            name="ck_scan_policy_catalog_digest_hex",
+        ),
+        CheckConstraint(
+            "classifier_version IS NULL OR classifier_version >= 0",
+            name="ck_scan_policy_classifier_version_nonneg",
+        ),
+        CheckConstraint(
+            "pass_name <> 'http_endpoint' OR (catalog_digest IS NOT NULL AND classifier_version IS NOT NULL)",
+            name="ck_scan_policy_endpoint_refinements",
+        ),
     )
 
     def __repr__(self) -> str:
