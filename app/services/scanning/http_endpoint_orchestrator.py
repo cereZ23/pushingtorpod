@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -63,21 +64,24 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_PORT = {"http": 80, "https": 443}
 
-# The pass produces TWO distinct signals so the phase-9 rollup (3b-2) can tell an innocuous skip from
-# an incomplete coverage:
-#   - ``coverage_complete``  : the endpoint pass ran to full COVERED completion (drives truncated_passes)
-#   - ``coverage_authorizing``: the endpoint coverage is trustworthy enough to (later) authorise —
-#     True for completed / no_targets / feature_disabled (nothing to cover or N/A), False for
-#     insufficient_phase_budget / partial / failed (coverage is incomplete).
-_AUTHORIZING_SKIP_REASONS = frozenset({"no_targets", "feature_disabled"})
+# The pass produces TWO orthogonal signals for the phase-9 rollup (3b-2):
+#   - ``phase_non_degrading``  : this pass must NOT degrade the existing pipeline — True for a full
+#     COMPLETED run and for the innocuous skips (feature_disabled / no_targets). It only means
+#     "don't worsen the phase", NOT that anything was verified.
+#   - ``coverage_authorizing`` : the endpoint coverage may (later) authorise a miss/close — True
+#     ONLY for a COMPLETED run. Crucially, no_targets / feature_disabled are NOT authorizing: an
+#     endpoint absent from the crawl (or a disabled feature) means NO historical endpoint was
+#     verified, so it can never license a close (Katana: "absent ≠ remediation"). And even when the
+#     pass COMPLETED, the consumer must still require the specific endpoint's COVERED row.
+_NON_DEGRADING_SKIP_REASONS = frozenset({"no_targets", "feature_disabled"})
+
+
+def _phase_non_degrading(status: str, skip_reason: Optional[str]) -> bool:
+    return status == PASS_COMPLETED or (status == PASS_SKIPPED and skip_reason in _NON_DEGRADING_SKIP_REASONS)
 
 
 def _coverage_authorizing(status: str, skip_reason: Optional[str]) -> bool:
-    if status == PASS_COMPLETED:
-        return True
-    if status == PASS_SKIPPED:
-        return skip_reason in _AUTHORIZING_SKIP_REASONS
-    return False  # partial / failed
+    return status == PASS_COMPLETED
 
 
 class EndpointPassStructuralError(Exception):
@@ -130,6 +134,7 @@ def _skipped(
         "skip_reason": reason,
         "coverage_complete": False,
         "coverage_authorizing": _coverage_authorizing(PASS_SKIPPED, reason),
+        "phase_non_degrading": _phase_non_degrading(PASS_SKIPPED, reason),
     }
     return EndpointPassResult(
         status=PASS_SKIPPED,
@@ -229,6 +234,7 @@ def run_http_endpoint_pass(
                 "pass_name": PASS_HTTP_ENDPOINT,
                 "coverage_complete": False,
                 "coverage_authorizing": False,
+                "phase_non_degrading": False,
                 "error": str(exc),
             },
         )
@@ -422,9 +428,12 @@ def _run_one_batch(
     interactsh_server,
     relevant_flags,
 ):
-    # Contextual per-batch temp dir → the target file is guaranteed cleaned up; a cleanup failure is
-    # logged with a reason code (never a path/URL), not silently swallowed.
-    with tempfile.TemporaryDirectory(prefix="http_endpoint_targets_") as td:
+    # Contextual per-batch temp dir. Cleanup is EXPLICIT: a cleanup failure is logged with a reason
+    # code (never a path/URL) and downgrades the batch to at least PARTIAL — it must NEVER raise out
+    # of the pass and lose the already-computed verdict/coverage.
+    td = tempfile.mkdtemp(prefix="http_endpoint_targets_")
+    cleanup_failed = False
+    try:
         target_file = os.path.join(td, "targets.txt")
         _write_target_file(target_file, batch)
         # A runner exception must NOT explode the whole pass: a timeout → PARTIAL, any other runner
@@ -453,6 +462,20 @@ def _run_one_batch(
                 },
             )
             evidence = BatchExecutionEvidence(launched=False, exit_code=None, parse_incomplete=True)
+    finally:
+        try:
+            shutil.rmtree(td)
+        except Exception as exc:
+            cleanup_failed = True
+            logger.warning(
+                "http_endpoint target_cleanup_failed",
+                extra={
+                    "tenant_id": tenant_id,
+                    "scan_run_id": scan_run_id,
+                    "batch_index": batch.index,
+                    "reason_code": type(exc).__name__,
+                },
+            )
 
     # 13 attribute findings by BATCH TARGET (never a hostname search). Ambiguity → parse_incomplete.
     attributed, attribution_ok = _attribute_findings(evidence.findings, batch)
@@ -487,6 +510,9 @@ def _run_one_batch(
             if res.get("errors"):
                 writer_ok = False
         except Exception as exc:
+            # A DB error aborts the PostgreSQL transaction — roll back so the coverage write below
+            # doesn't hit PendingRollbackError.
+            _safe_rollback(db)
             writer_ok = False
             logger.warning(
                 "http_endpoint finding write error",
@@ -497,7 +523,8 @@ def _run_one_batch(
                     "reason_code": type(exc).__name__,
                 },
             )
-    if not writer_ok and status == CoverageStatus.COVERED:
+    # A failed write OR a failed target cleanup means the batch cannot be authorised → at least PARTIAL.
+    if (not writer_ok or cleanup_failed) and status == CoverageStatus.COVERED:
         status = CoverageStatus.PARTIAL
 
     # Write coverage LAST (still per-batch + immediate). A coverage-write error FAILS the batch.
@@ -540,6 +567,13 @@ def _attribute_findings(findings, batch) -> tuple[list[dict], bool]:
 # --- coverage + finalize ------------------------------------------------------------------------
 
 
+def _safe_rollback(db) -> None:
+    try:
+        db.rollback()
+    except Exception:  # a rollback that itself fails must not mask the original error
+        pass
+
+
 def _write_coverage(repo, tenant_id, scan_run_id, batch: EndpointBatch, status: CoverageStatus) -> None:
     try:
         repo.record_endpoint_coverage(
@@ -563,8 +597,15 @@ def _finalize(
     if forced_status is not None:
         pass_status, skip_reason = forced_status, (extra_error and "staging_failed") or None
     else:
+        # A run where EVERY launched batch FAILED (no COVERED, no PARTIAL) is a FAILED pass, not a
+        # generic PARTIAL — a single-batch runner failure must surface as FAILED.
+        launched = [s for s in statuses if s != CoverageStatus.SKIPPED]
+        all_launched_failed = bool(launched) and all(s == CoverageStatus.FAILED for s in launched)
         pass_status, skip_reason = aggregate_pass_status(
-            statuses, flag_enabled=True, selected_count=len(selection.selected), structural_error=structural_error
+            statuses,
+            flag_enabled=True,
+            selected_count=len(selection.selected),
+            structural_error=structural_error or all_launched_failed,
         )
     stats = _rollup_stats(base_stats, batch_results, bundle, pass_status, skip_reason, extra_error)
     return EndpointPassResult(
@@ -620,6 +661,7 @@ def _rollup_stats(base_stats, batch_results, bundle, pass_status, skip_reason, e
             "findings_discovered": sum(br.findings_created + br.findings_updated for br in batch_results),
             "coverage_complete": pass_status == "completed",
             "coverage_authorizing": _coverage_authorizing(pass_status, skip_reason),
+            "phase_non_degrading": _phase_non_degrading(pass_status, skip_reason),
             "skip_reason": skip_reason,
         }
     )

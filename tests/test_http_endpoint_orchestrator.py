@@ -306,7 +306,7 @@ def test_runner_timeout_exception_is_partial(db_session, _enabled):
     assert rows and all(r.status == CoverageStatus.PARTIAL for r in rows)
 
 
-def test_runner_generic_exception_is_failed(db_session, _enabled):
+def test_runner_generic_exception_single_batch_is_failed(db_session, _enabled):
     tenant = _enabled
     a = _asset(db_session, tenant)
     _endpoint(db_session, a, "https://app.curci.it/admin")
@@ -314,9 +314,41 @@ def test_runner_generic_exception_is_failed(db_session, _enabled):
     res, run = _call(
         db_session, tenant, assets=[a], runner=_RaisingRunner(EndpointRunnerError("boom")), custom_policy_hash=custom
     )
-    assert res.status in ("partial", "failed")  # not COVERED, and no explosion
+    assert res.status == "failed"  # the ONLY launched batch failed → pass FAILED (not a soft PARTIAL)
     rows = db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id).all()
-    assert rows and all(r.status != CoverageStatus.COVERED for r in rows)
+    assert rows and all(r.status == CoverageStatus.FAILED for r in rows)
+
+
+class _SequenceRunner:
+    """Returns/raises a different thing per call — proves the remaining batches still run."""
+
+    def __init__(self, seq):
+        self._seq = list(seq)
+        self.calls = 0
+
+    def run_batch(self, **kw):
+        item = self._seq[self.calls]
+        self.calls += 1
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+def test_multi_batch_error_then_covered_is_partial(db_session, _enabled, monkeypatch):
+    # batch 1 runner error → FAILED; batch 2 fully proven → COVERED; pass PARTIAL — proves the
+    # remaining batches DO run after a batch error.
+    monkeypatch.setattr(settings, "nuclei_http_endpoint_batch_size", 1)
+    tenant = _enabled
+    a = _asset(db_session, tenant)
+    _endpoint(db_session, a, "https://app.curci.it/a1")
+    _endpoint(db_session, a, "https://app.curci.it/a2")
+    custom = _custom_policy(db_session)
+    runner = _SequenceRunner([EndpointRunnerError("boom"), _proven(1, 2)])
+    res, run = _call(db_session, tenant, assets=[a], runner=runner, custom_policy_hash=custom)
+    assert res.status == "partial"
+    assert runner.calls == 2  # the second batch DID run
+    statuses = {r.status for r in db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id)}
+    assert statuses == {CoverageStatus.FAILED, CoverageStatus.COVERED}
 
 
 def test_writer_errors_downgrade_to_partial(db_session, _enabled, monkeypatch):
@@ -347,6 +379,35 @@ def test_writer_errors_downgrade_to_partial(db_session, _enabled, monkeypatch):
     assert rows and all(r.status == CoverageStatus.PARTIAL for r in rows)
 
 
+def test_writer_raises_is_rolled_back_and_coverage_saved(db_session, _enabled, monkeypatch):
+    # The writer RAISES a DB error → the session must be rolled back so the PARTIAL coverage still
+    # persists (no PendingRollbackError on the coverage write).
+    from sqlalchemy.exc import IntegrityError
+
+    tenant = _enabled
+    a = _asset(db_session, tenant)
+    _endpoint(db_session, a, "https://app.curci.it/admin")
+    custom = _custom_policy(db_session)
+
+    def _with_finding(n_targets, n_templates):
+        return _proven(
+            n_targets,
+            n_templates,
+            findings=[{"target": "https://app.curci.it/admin", "template_id": "ep-a", "name": "x", "severity": "high"}],
+        )
+
+    from app.repositories.finding_repository import FindingRepository
+
+    def _boom(self, f, t, scan_run_id=None):
+        raise IntegrityError("stmt", {}, Exception("db aborted"))
+
+    monkeypatch.setattr(FindingRepository, "bulk_upsert_findings", _boom)
+    res, run = _call(db_session, tenant, assets=[a], runner=_FakeRunner(_with_finding), custom_policy_hash=custom)
+    assert res.status == "partial"
+    rows = db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id).all()
+    assert rows and all(r.status == CoverageStatus.PARTIAL for r in rows)  # coverage really persisted
+
+
 def test_base_url_dropped_uses_real_base_with_odd_port(db_session, _enabled):
     tenant = _enabled
     a = _asset(db_session, tenant)
@@ -367,14 +428,16 @@ def test_base_url_dropped_uses_real_base_with_odd_port(db_session, _enabled):
     assert res.stats["selected_count"] == 1  # only /admin survives
 
 
-def test_coverage_authorizing_signal(db_session, _enabled):
+def test_coverage_authorizing_vs_non_degrading_signals(db_session, _enabled):
     tenant = _enabled
     a = _asset(db_session, tenant)
     custom = _custom_policy(db_session)
-    # no targets → skipped but semantically complete → authorizing True
+    # no_targets: NOT authorizing (an absent endpoint ≠ verified/remediation), but non-degrading.
     res_nt, _ = _call(db_session, tenant, assets=[a], runner=_FakeRunner(_proven), custom_policy_hash=custom)
-    assert res_nt.status == "skipped" and res_nt.stats["coverage_authorizing"] is True
-    # insufficient budget → skipped but coverage NOT authorizing
+    assert res_nt.status == "skipped"
+    assert res_nt.stats["coverage_authorizing"] is False
+    assert res_nt.stats["phase_non_degrading"] is True
+    # insufficient budget: neither authorizing nor non-degrading (coverage is incomplete).
     _endpoint(db_session, a, "https://app.curci.it/admin")
     res_ib, _ = _call(
         db_session,
@@ -384,4 +447,17 @@ def test_coverage_authorizing_signal(db_session, _enabled):
         custom_policy_hash=custom,
         deadline=NOW - timedelta(seconds=1),
     )
-    assert res_ib.skip_reason == "insufficient_phase_budget" and res_ib.stats["coverage_authorizing"] is False
+    assert res_ib.skip_reason == "insufficient_phase_budget"
+    assert res_ib.stats["coverage_authorizing"] is False
+    assert res_ib.stats["phase_non_degrading"] is False
+
+
+def test_completed_pass_is_authorizing(db_session, _enabled):
+    tenant = _enabled
+    a = _asset(db_session, tenant)
+    _endpoint(db_session, a, "https://app.curci.it/admin")
+    custom = _custom_policy(db_session)
+    res, _ = _call(db_session, tenant, assets=[a], runner=_FakeRunner(_proven), custom_policy_hash=custom)
+    assert res.status == "completed"
+    assert res.stats["coverage_authorizing"] is True
+    assert res.stats["phase_non_degrading"] is True
