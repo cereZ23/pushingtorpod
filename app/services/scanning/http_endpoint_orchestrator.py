@@ -533,31 +533,34 @@ def _run_one_batch(
     _write_coverage(repo, tenant_id, scan_run_id, batch, status)
 
     # Per-batch diagnostic (shadow observability): the counts + proof flags that DECIDED the verdict,
-    # so a PARTIAL/FAILED reason is visible. Counts + booleans ONLY — never a URL/target/finding body.
+    # so a PARTIAL/FAILED reason is visible. Fields go IN THE MESSAGE (celery's formatter drops
+    # `extra`). Counts + booleans ONLY — never a URL/target/finding body.
     logger.info(
-        "http_endpoint batch verdict",
-        extra={
-            "tenant_id": tenant_id,
-            "scan_run_id": scan_run_id,
-            "batch_index": batch.index,
-            "status": status.value,
-            "n_targets": len(batch.targets),
-            "exit_code": evidence.exit_code,
-            "timed_out": evidence.timed_out,
-            "truncated": evidence.truncated,
-            "unresponsive": evidence.unresponsive_targets,
-            "targets_loaded": evidence.targets_loaded,
-            "templates_loaded": evidence.templates_loaded,
-            "completion_percent": evidence.completion_percent,
-            "output_complete": evidence.output_complete,
-            "catalog_verified": evidence.catalog_verified,
-            "targets_completed": evidence.targets_completed,
-            "parse_incomplete": evidence.parse_incomplete,
-            "attribution_ok": attribution_ok,
-            "writer_ok": writer_ok,
-            "cleanup_failed": cleanup_failed,
-            "findings": len(evidence.findings),
-        },
+        "http_endpoint batch verdict run=%s batch=%s status=%s n_targets=%s exit=%s completion=%s "
+        "requests=%s/%s templates_loaded=%s targets_loaded=%s unresponsive=%s timed_out=%s truncated=%s "
+        "output_complete=%s catalog_verified=%s targets_completed=%s parse_incomplete=%s "
+        "attribution_ok=%s writer_ok=%s cleanup_failed=%s findings=%s",
+        scan_run_id,
+        batch.index,
+        status.value,
+        len(batch.targets),
+        evidence.exit_code,
+        evidence.completion_percent,
+        evidence.requests_done,
+        evidence.requests_total,
+        evidence.templates_loaded,
+        evidence.targets_loaded,
+        evidence.unresponsive_targets,
+        evidence.timed_out,
+        evidence.truncated,
+        evidence.output_complete,
+        evidence.catalog_verified,
+        evidence.targets_completed,
+        evidence.parse_incomplete,
+        attribution_ok,
+        writer_ok,
+        cleanup_failed,
+        len(evidence.findings),
     )
     return EndpointBatchResult(batch, evidence, status, created, updated)
 

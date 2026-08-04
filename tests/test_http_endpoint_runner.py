@@ -191,6 +191,7 @@ def test_real_json_stats_extracted_and_not_a_finding():
     ev = parse_nuclei_batch_output(0, _REAL_STATS_100 + "\n", "", expected_targets=21, expected_templates=284)
     assert ev.findings == ()  # a stats record is NOT a finding
     assert ev.templates_loaded == 284 and ev.targets_loaded == 21 and ev.completion_percent == 100
+    assert ev.requests_done == 8904 and ev.requests_total == 8904  # exposed for the per-batch diagnostic
     assert ev.catalog_verified and ev.targets_completed and ev.output_complete
 
 
