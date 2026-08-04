@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from app.models.coverage import (
     CoverageStatus,
     ScanCoverage,
+    ScanEndpointCoverage,
     ScanPolicy,
     ScanPolicyCatalog,
     ScanPolicyTemplate,
@@ -82,11 +83,11 @@ def _rank_expr(col):
     )
 
 
-def _conservative_merge(new):
+def _conservative_merge(new, old):
     """SQL CASE for on-conflict: the LESS-authorising status wins, so a late/concurrent
     write can never promote a PARTIAL/FAILED/SKIPPED verdict to COVERED. UNSTARTED is a
-    pure placeholder — any real verdict replaces it, and it never replaces a real one."""
-    old = ScanCoverage.status
+    pure placeholder — any real verdict replaces it, and it never replaces a real one.
+    ``old`` is the existing-row status column (scan_coverage OR scan_endpoint_coverage)."""
     return case(
         (old == CoverageStatus.UNSTARTED, new),
         (new == CoverageStatus.UNSTARTED, old),
@@ -319,13 +320,130 @@ class CoverageRepository:
         stmt = insert(ScanCoverage).values(rows)
         stmt = stmt.on_conflict_do_update(
             constraint="uq_coverage_run_pass_asset",
-            set_={"status": _conservative_merge(stmt.excluded.status), "updated_at": stmt.excluded.updated_at},
+            set_={
+                "status": _conservative_merge(stmt.excluded.status, ScanCoverage.status),
+                "updated_at": stmt.excluded.updated_at,
+            },
             where=ScanCoverage.policy_hash == stmt.excluded.policy_hash,
         )
         result = self.db.execute(stmt)
         if result.rowcount != len(rows):
             self.db.rollback()
             raise CoverageWriteError("concurrent coverage write under a different policy_hash (atomic guard tripped)")
+        self.db.commit()
+
+    # --- endpoint coverage (Sprint 2) ----------------------------------------
+
+    def record_endpoint_coverage(
+        self,
+        *,
+        tenant_id: int,
+        scan_run_id: int,
+        phase: str,
+        pass_name: str,
+        policy_hash: str,
+        entries: Iterable[tuple[int, str]],
+        status: CoverageStatus,
+    ) -> int:
+        """Atomically upsert one endpoint-coverage verdict per (asset, endpoint_shape_hash) for a pass.
+
+        ``entries`` are (asset_id, endpoint_shape_hash) pairs; each hash MUST be a canonical 64-hex
+        identity (``endpoint_identity.endpoint_shape_hash`` — never a URL/path/value). Same fail-closed
+        contract as ``record_pass_coverage``: run/policy/phase/pass validated, assets tenant-owned,
+        and no existing (run, phase, pass, asset, shape) row may name a DIFFERENT policy_hash.
+        Conservative merge on conflict (a non-COVERED status never downgrades to COVERED). Returns
+        the number of rows written.
+        """
+        run = self.db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
+        if run is None or run.tenant_id != tenant_id:
+            raise CoverageWriteError(f"scan_run {scan_run_id} does not belong to tenant {tenant_id}")
+        policy = self.db.query(ScanPolicy).filter(ScanPolicy.policy_hash == policy_hash).first()
+        if policy is None:
+            raise CoverageWriteError(f"unknown policy_hash {policy_hash!r} (persist the policy first)")
+        if policy.phase != phase or policy.pass_name != pass_name:
+            raise CoverageWriteError(
+                f"policy {policy_hash} is for phase {policy.phase!r}/pass {policy.pass_name!r}, "
+                f"not {phase!r}/{pass_name!r}"
+            )
+
+        # entries are (asset_id, endpoint_shape_hash). Fail-closed: reject anything that is not a
+        # canonical 64-hex identity hash so a caller can NEVER persist a raw URL/query/token.
+        from app.services.endpoint_identity import is_shape_hash
+
+        pairs = sorted({(int(a), str(h)) for a, h in entries})
+        bad = [h for _a, h in pairs if not is_shape_hash(h)]
+        if bad:
+            raise CoverageWriteError(f"endpoint_shape_hash must be a 64-hex identity hash, got {bad[:3]}")
+        if not pairs:
+            return 0
+        asset_ids = {a for a, _s in pairs}
+        owned = {
+            row[0]
+            for row in self.db.query(Asset.id).filter(Asset.id.in_(asset_ids), Asset.tenant_id == tenant_id).all()
+        }
+        stray = sorted(asset_ids - owned)
+        if stray:
+            raise CoverageWriteError(f"assets {stray} do not belong to tenant {tenant_id}")
+
+        keyset = set(pairs)
+        existing = (
+            self.db.query(
+                ScanEndpointCoverage.asset_id,
+                ScanEndpointCoverage.endpoint_shape_hash,
+                ScanEndpointCoverage.policy_hash,
+            )
+            .filter(
+                ScanEndpointCoverage.scan_run_id == scan_run_id,
+                ScanEndpointCoverage.phase == phase,
+                ScanEndpointCoverage.pass_name == pass_name,
+                ScanEndpointCoverage.asset_id.in_(asset_ids),
+            )
+            .all()
+        )
+        conflicting = [(r[0], r[1]) for r in existing if (r[0], r[1]) in keyset and r[2] != policy_hash]
+        if conflicting:
+            raise CoverageWriteError(
+                f"endpoint coverage for {conflicting} already recorded under a different policy_hash"
+            )
+
+        now = datetime.now(timezone.utc)
+        rows = [
+            {
+                "tenant_id": tenant_id,
+                "scan_run_id": scan_run_id,
+                "asset_id": a,
+                "phase": phase,
+                "pass_name": pass_name,
+                "policy_hash": policy_hash,
+                "endpoint_shape_hash": h,
+                "status": status,
+                "created_at": now,
+                "updated_at": now,
+            }
+            for a, h in pairs
+        ]
+        self._upsert_endpoint_coverage_rows(rows)
+        return len(rows)
+
+    def _upsert_endpoint_coverage_rows(self, rows: list[dict]) -> None:
+        """Atomic endpoint-coverage upsert with the policy-hash guard — same TOCTOU protection as
+        ``_upsert_coverage_rows``: a conflicting row under a DIFFERENT policy is skipped, and any
+        shortfall rolls back and fails closed."""
+        stmt = insert(ScanEndpointCoverage).values(rows)
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_endpoint_coverage_run_pass_asset_shape",
+            set_={
+                "status": _conservative_merge(stmt.excluded.status, ScanEndpointCoverage.status),
+                "updated_at": stmt.excluded.updated_at,
+            },
+            where=ScanEndpointCoverage.policy_hash == stmt.excluded.policy_hash,
+        )
+        result = self.db.execute(stmt)
+        if result.rowcount != len(rows):
+            self.db.rollback()
+            raise CoverageWriteError(
+                "concurrent endpoint-coverage write under a different policy_hash (atomic guard tripped)"
+            )
         self.db.commit()
 
     # --- read helpers (for the auto-close consumer, later) -------------------

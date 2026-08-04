@@ -53,6 +53,7 @@ ENGINE_BUILTIN_MISCONFIG = "builtin_misconfig"
 # default-logins + misconfiguration + technologies + ssl, …) — NOT just "cve".
 PASS_CUSTOM_HTTP = "custom_http"
 PASS_HTTP_STOCK = "http_stock"
+PASS_HTTP_ENDPOINT = "http_endpoint"  # Sprint 3: reduced endpoint_sensitive templates on Katana endpoints
 PASS_CDN_SSL_TAKEOVER = "cdn_ssl_takeover"
 PASS_DNS_NETWORK = "dns_network"
 PASS_MISCONFIG = "misconfig"
@@ -64,6 +65,7 @@ PASS_DAST = "dast"
 _PASS_SPEC: dict[str, tuple[str, str]] = {
     PASS_CUSTOM_HTTP: ("9", ENGINE_NUCLEI),
     PASS_HTTP_STOCK: ("9", ENGINE_NUCLEI),
+    PASS_HTTP_ENDPOINT: ("9", ENGINE_NUCLEI),
     PASS_CDN_SSL_TAKEOVER: ("9", ENGINE_NUCLEI),
     PASS_DNS_NETWORK: ("9", ENGINE_NUCLEI),
     PASS_MISCONFIG: ("8", ENGINE_BUILTIN_MISCONFIG),

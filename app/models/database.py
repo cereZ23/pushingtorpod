@@ -200,6 +200,14 @@ class Finding(Base):
     last_eligible_run_id = Column(Integer, ForeignKey("scan_runs.id", ondelete="SET NULL"), nullable=True)
     last_detected_scan_run_id = Column(Integer, ForeignKey("scan_runs.id", ondelete="SET NULL"), nullable=True)
 
+    # Provenance (Sprint 2): the coverage identity that authorises this finding's auto-close.
+    # NULL on historic findings = UNKNOWN (never inferred; they stay ineligible until re-detected
+    # with provenance). endpoint_shape_hash is the sha256 hex identity (endpoint_identity — NO
+    # URL/value stored); origin_policy_hash is FK-constrained to scan_policy so provenance can never
+    # name a non-existent policy, and the pass derives from it (no redundant origin_pass column).
+    endpoint_shape_hash = Column(String(64), nullable=True)
+    origin_policy_hash = Column(String(64), ForeignKey("scan_policy.policy_hash", ondelete="SET NULL"), nullable=True)
+
     asset = relationship("Asset", back_populates="findings")
 
     @validates("evidence")
@@ -248,6 +256,13 @@ class Finding(Base):
         CheckConstraint("eligible_miss_streak >= 0", name="ck_finding_miss_streak_nonneg"),
         Index("idx_finding_last_eligible_run", "last_eligible_run_id"),
         Index("idx_finding_last_detected_run", "last_detected_scan_run_id"),
+        # Sprint 2: provenance identity must be a canonical 64-lowercase-hex hash (or NULL) — the
+        # same guard as scan_endpoint_coverage, so no ORM/Core writer can slip a URL or a bad hash
+        # into a finding's provenance even outside the repository's validated path.
+        CheckConstraint(
+            "endpoint_shape_hash IS NULL OR endpoint_shape_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_finding_endpoint_shape_hash_hex",
+        ),
     )
 
     def __repr__(self):
