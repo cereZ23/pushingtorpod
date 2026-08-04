@@ -81,3 +81,24 @@ def http_stock_roots(tier: int) -> list[str]:
 def tier_severity(tier: int) -> list[str]:
     """Severity whitelist for ``tier`` (defaults to tier 1)."""
     return list(TIER_SEVERITY.get(tier, TIER_SEVERITY[1]))
+
+
+def nuclei_relevant_flags(*, interactsh_enabled: bool) -> dict[str, str]:
+    """The nuclei runtime capabilities a pass ENABLES, mirroring the ACTUAL nuclei CLI flags — NOT
+    inferred from template roots (selecting ``dast/`` does NOT enable DAST; nuclei needs ``-dast``).
+    Each maps to a real arg: code→-code, headless→-headless, dast→-dast, self_contained→-esc,
+    interactsh→a configured ``-iserver`` (i.e. NOT ``-ni``). Recorded in the manifest's
+    ``relevant_flags`` so the coverage catalog only counts detectors nuclei actually executes, and
+    enabling a capability yields a DIFFERENT policy_hash.
+
+    Prod's ``_build_nuclei_args`` passes NONE of -code/-headless/-dast/-esc → those are ``false``.
+    Only interactsh can be on today (iff a server is configured). To enable another capability later,
+    thread its boolean to BOTH ``_build_nuclei_args`` (emit the flag) AND here (declare it) together —
+    declaring a capability the command doesn't actually pass is the divergence this prevents."""
+    return {
+        "code": "false",
+        "headless": "false",
+        "dast": "false",
+        "self_contained": "false",
+        "interactsh": "true" if interactsh_enabled else "false",
+    }

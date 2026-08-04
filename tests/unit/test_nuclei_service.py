@@ -124,6 +124,19 @@ class TestNucleiService:
         assert "-ni" in args
         assert "-iserver" not in args
 
+    def test_build_nuclei_args_does_not_enable_capability_flags(self, nuclei_service):
+        # The coverage policy declares code/headless/dast/self_contained = false; that MUST match
+        # the actual command, which passes none of the corresponding nuclei flags.
+        args = nuclei_service._build_nuclei_args(
+            urls_file="/tmp/urls.txt",
+            templates=None,
+            severity=["high"],
+            rate_limit=300,
+            concurrency=25,
+        )
+        for flag in ("-code", "-headless", "-dast", "-esc"):
+            assert flag not in args
+
     def test_build_nuclei_args_configured_interactsh_is_explicit_no_ni(self, nuclei_service):
         args = nuclei_service._build_nuclei_args(
             urls_file="/tmp/urls.txt",

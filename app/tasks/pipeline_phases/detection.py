@@ -533,6 +533,9 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
             ran=True,
             errored=custom_failed,
             truncated=custom_truncated,
+            # The custom pass calls run_nuclei_scan WITHOUT interactsh_server → CLI gets -ni (OAST
+            # off) regardless of tier, so the policy must declare interactsh disabled to match.
+            interactsh_enabled=False,
         )
 
     # #3: the parallel passes' batching budget must come from the wall-clock REMAINING after
@@ -619,6 +622,9 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
                     ran=True,
                     errored=pass_failed,
                     truncated=pass_truncated,
+                    # Only the HTTP-stock pass runs with interactsh (iff enabled); dns/network and
+                    # cdn/ssl passes never pass a server, so OAST templates aren't runtime-applicable.
+                    interactsh_enabled=(use_interactsh and policy_pass == PASS_HTTP_STOCK),
                 )
 
     if truncated_passes:

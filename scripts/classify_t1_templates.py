@@ -35,7 +35,7 @@ def main(tier: int, out_path: str | None) -> int:
     from app.services.rule_catalog import enumerate_nuclei_from_snapshot
     from app.services.rule_revision import resolve_nuclei_rule_snapshot
     from app.services.scan_policy import build_nuclei_policy_manifest
-    from app.services.scan_tiers import http_stock_roots, tier_severity
+    from app.services.scan_tiers import http_stock_roots, nuclei_relevant_flags, tier_severity
 
     roots = http_stock_roots(tier)
     severity = tier_severity(tier)
@@ -52,6 +52,7 @@ def main(tier: int, out_path: str | None) -> int:
         severity=list(severity),
         template_roots=split_roots,
         exclude_tags=exclude,
+        relevant_flags=nuclei_relevant_flags(interactsh_enabled=False),
     )
     ruleset = enumerate_nuclei_from_snapshot(manifest, snapshot, parse_yaml=yaml.safe_load)
 
