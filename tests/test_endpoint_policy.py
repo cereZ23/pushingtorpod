@@ -16,10 +16,9 @@ import pytest
 from app.services.endpoint_policy import (
     EndpointDisjunctionError,
     build_http_endpoint_policy_bundle,
-    endpoint_catalog_digest,
 )
 from app.services.endpoint_template_classifier import CLASSIFIER_VERSION
-from app.services.rule_catalog import RuleCatalogError
+from app.services.rule_catalog import RuleCatalogError, catalog_digest_for_rules
 from app.services.rule_revision import compute_rule_revision, content_digest
 from app.services.scan_policy import PASS_HTTP_ENDPOINT, build_nuclei_policy_manifest
 
@@ -186,8 +185,8 @@ def test_bundle_is_order_independent():
 
 def test_catalog_digest_is_deterministic_and_value_only():
     b = _build(_MIXED)
-    # recompute from the ruleset in a different order → identical
-    assert endpoint_catalog_digest(list(reversed(b.ruleset.rules))) == b.catalog_digest
+    # recompute from the ruleset in a different order → identical (the ONE canonical digest)
+    assert catalog_digest_for_rules(list(reversed(b.ruleset.rules))) == b.catalog_digest
 
 
 # --- disjunction with custom_http -----------------------------------------------------------------
@@ -232,9 +231,19 @@ def test_persist_endpoint_bundle_roundtrip(db_session):
     ph = persist_endpoint_policy_bundle(repo, b)
     assert ph == b.manifest.policy_hash  # persist_policy accepts the refined manifest
 
-    assert db_session.query(ScanPolicy).filter_by(policy_hash=ph).count() == 1
+    row = db_session.query(ScanPolicy).filter_by(policy_hash=ph).one()
+    # the stored row mirrors the FULL manifest — the refinements are persisted, not just hashed
+    assert row.catalog_digest == b.catalog_digest
+    assert row.classifier_version == CLASSIFIER_VERSION
+
     tmpl_ids = {t.detector_id for t in db_session.query(ScanPolicyTemplate).filter_by(policy_hash=ph)}
     assert tmpl_ids == {"ep-a", "ep-b"}  # only the endpoint_sensitive catalog is persisted
     assert db_session.query(ScanPolicyCatalog).filter_by(policy_hash=ph).count() == 1
+
+    # The manifest-embedded catalog_digest EXACTLY equals what the repo stamps + reads back — ONE
+    # canonical digest, no drift between the identity and the catalog table.
+    assert b.catalog_digest == repo.catalog_build(ph)[1]
+    assert b.catalog_digest == repo.catalog_fingerprint(ph)[1]
+
     # idempotent
     assert persist_endpoint_policy_bundle(repo, b) == ph

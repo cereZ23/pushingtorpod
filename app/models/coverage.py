@@ -80,6 +80,12 @@ class ScanPolicy(Base):
     rule_roots = Column(JSON, nullable=False)  # sorted list
     exclude_tags = Column(JSON, nullable=False)  # sorted list
     relevant_flags = Column(JSON, nullable=False)  # sorted {k: v}
+    # Optional identity refinements (Sprint 3, migration 029): when the applicable set is a CLASSIFIED
+    # subset (the http_endpoint pass), the derived catalog digest + classifier version are part of
+    # policy_hash, so they are persisted here too — the stored row must mirror the FULL manifest.
+    # NULL for every other pass (their identity is unchanged).
+    catalog_digest = Column(String(64), nullable=True)
+    classifier_version = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     templates = relationship("ScanPolicyTemplate", back_populates="policy", cascade="all, delete-orphan")

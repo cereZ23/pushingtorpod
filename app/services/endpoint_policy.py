@@ -24,8 +24,6 @@ Construction order (per the approved contract):
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass
 from typing import Callable, Iterable, Sequence
 
@@ -38,6 +36,7 @@ from app.services.rule_catalog import (
     ApplicableRule,
     ApplicableRuleSet,
     RuleCatalogError,
+    catalog_digest_for_rules,
     enumerate_nuclei_from_snapshot,
 )
 from app.services.scan_policy import PASS_HTTP_ENDPOINT, ScanPolicyManifest, build_nuclei_policy_manifest
@@ -60,18 +59,6 @@ class EndpointPolicyBundle:
     selected_template_paths: tuple[str, ...]  # EXACT set Sprint 3 will hand to Nuclei
     catalog_digest: str
     classifier_version: int
-
-
-def endpoint_catalog_digest(rules: Iterable[ApplicableRule]) -> str:
-    """Deterministic digest of the endpoint catalog over ordered (detector_id, relative_path,
-    content_digest) tuples. Order-independent (sorted) and value-only — no URL, no template body."""
-    payload = json.dumps(
-        sorted([r.detector_id, r.relative_path, r.content_digest] for r in rules),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def build_http_endpoint_policy_bundle(
@@ -141,8 +128,9 @@ def build_http_endpoint_policy_bundle(
         dupes = sorted({i for i in ids if ids.count(i) > 1})
         raise RuleCatalogError(f"endpoint policy: duplicate detector id(s) {dupes}")
 
-    # 4. catalog_digest over the reduced set.
-    catalog_digest = endpoint_catalog_digest(endpoint_rules)
+    # 4. catalog_digest over the reduced set — the ONE canonical digest (id, path, content_digest,
+    #    severity, tags), i.e. EXACTLY the value the coverage repo will stamp into scan_policy_catalog.
+    catalog_digest = catalog_digest_for_rules(endpoint_rules)
 
     # 5. Disjunction with custom_http — fail-closed, ids only (never a URL).
     overlap = sorted(set(ids) & {str(c).strip() for c in custom_detector_ids})

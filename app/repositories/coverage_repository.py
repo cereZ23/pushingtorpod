@@ -13,8 +13,6 @@ per-asset/batch granularity comes with the pass wiring.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from datetime import datetime, timezone
 from typing import Iterable, Optional
 
@@ -33,22 +31,13 @@ from app.models.coverage import (
 from app.models.database import Asset
 from app.models.scanning import ScanRun
 from app.services.rule_catalog import ApplicableRuleSet
+from app.services.rule_catalog import catalog_digest_from_map as _catalog_digest_from_map
 from app.services.scan_policy import ScanPolicyManifest
 
 
-def _catalog_digest_from_map(catalog: dict) -> str:
-    """Deterministic digest over a catalog map ``{detector_id: (rel_path, content_digest,
-    severity, tags_tuple)}`` — the shape both ``_read_catalog`` (stored rows) and the
-    ``expected`` set (from a ruleset) produce, so the two always agree. Sensitive to every
-    field, so an extra, missing, or swapped row moves the digest."""
-    payload = json.dumps(
-        [[d, catalog[d][0], catalog[d][1], catalog[d][2], list(catalog[d][3])] for d in sorted(catalog)],
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+# The catalog digest lives in app.services.rule_catalog now (ONE canonical definition, shared with
+# the manifest identity so the stamped digest and any policy_hash-embedded digest can never drift).
+# Imported above as _catalog_digest_from_map to keep the call sites below unchanged.
 
 
 class CoverageWriteError(Exception):
@@ -121,6 +110,10 @@ class CoverageRepository:
             "rule_roots": list(manifest.rule_roots),
             "exclude_tags": list(manifest.exclude_tags),
             "relevant_flags": dict(manifest.relevant_flags),
+            # Persist the optional identity refinements too, so the stored row mirrors the FULL
+            # manifest that feeds policy_hash (NULL for passes that don't use them).
+            "catalog_digest": manifest.catalog_digest,
+            "classifier_version": manifest.classifier_version,
         }
         stmt = insert(ScanPolicy).values(
             policy_hash=manifest.policy_hash, created_at=datetime.now(timezone.utc), **expected
