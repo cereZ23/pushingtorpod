@@ -20,6 +20,13 @@ from app.services.scanning.http_endpoint_runner import (
 )
 
 _FLAGS_OFF = {"code": "false", "headless": "false", "dast": "false", "self_contained": "false", "interactsh": "false"}
+_FLAGS_INTERACTSH = {**_FLAGS_OFF, "interactsh": "true"}
+
+# The REAL Nuclei -stats JSON record (numeric values as STRINGS), as observed in Curci prod logs.
+_REAL_STATS_99 = '{"duration":"0:01:12","hosts":"21","percent":"99","requests":"8851","templates":"284","total":"8904"}'
+_REAL_STATS_100 = (
+    '{"duration":"0:01:20","hosts":"21","percent":"100","requests":"8904","templates":"284","total":"8904"}'
+)
 
 
 def _args(**over):
@@ -56,9 +63,43 @@ def test_interactsh_ni_when_no_server():
 
 
 def test_interactsh_iserver_when_configured():
-    a = _args(interactsh_server="oast.internal")
+    a = _args(interactsh_server="oast.internal", relevant_flags=_FLAGS_INTERACTSH)
     assert "-iserver" in a and a[a.index("-iserver") + 1] == "oast.internal"
     assert "-ni" not in a
+    assert "-itoken" not in a  # no empty -itoken (it can invalidate the config)
+
+
+def test_interactsh_server_flag_mismatch_raises():
+    # server present but manifest interactsh=false → CLI would diverge → error BEFORE any subprocess
+    with pytest.raises(EndpointRunnerError):
+        _args(interactsh_server="oast.internal", relevant_flags=_FLAGS_OFF)
+    # flag=true but no server → also a mismatch
+    with pytest.raises(EndpointRunnerError):
+        _args(interactsh_server=None, relevant_flags=_FLAGS_INTERACTSH)
+
+
+def test_non_canonical_capability_value_raises():
+    with pytest.raises(EndpointRunnerError):
+        _args(relevant_flags={**_FLAGS_OFF, "dast": "yes"})
+
+
+def test_unknown_capability_key_raises():
+    with pytest.raises(EndpointRunnerError):
+        _args(relevant_flags={**_FLAGS_OFF, "bogus": "false"})
+
+
+def test_missing_capability_raises():
+    incomplete = {"code": "false", "headless": "false", "dast": "false", "interactsh": "false"}  # no self_contained
+    with pytest.raises(EndpointRunnerError):
+        _args(relevant_flags=incomplete)
+
+
+@pytest.mark.parametrize(
+    "kw", [{"rate_limit": 0}, {"concurrency": -1}, {"request_timeout": 0}, {"max_host_errors": -5}]
+)
+def test_nonpositive_knobs_raise(kw):
+    with pytest.raises(EndpointRunnerError):
+        _args(**kw)
 
 
 def test_no_capability_flag_when_disabled():
@@ -133,6 +174,53 @@ def test_findings_keep_input_target():
 
 def test_nonzero_exit_not_output_complete():
     ev = parse_nuclei_batch_output(2, "", _COMPLETE_ERR, expected_targets=5, expected_templates=219)
+    assert ev.output_complete is False
+
+
+# --- parser: REAL Nuclei JSON stats format --------------------------------------------------------
+
+
+def test_real_json_stats_extracted_and_not_a_finding():
+    # the JSON stats record is on stdout; it must be parsed as stats, NOT counted as a finding.
+    ev = parse_nuclei_batch_output(0, _REAL_STATS_100 + "\n", "", expected_targets=21, expected_templates=284)
+    assert ev.findings == ()  # a stats record is NOT a finding
+    assert ev.templates_loaded == 284 and ev.targets_loaded == 21 and ev.completion_percent == 100
+    assert ev.catalog_verified and ev.targets_completed and ev.output_complete
+
+
+def test_real_json_stats_on_stderr_also_parsed():
+    ev = parse_nuclei_batch_output(0, "", _REAL_STATS_100, expected_targets=21, expected_templates=284)
+    assert ev.completion_percent == 100 and ev.templates_loaded == 284 and ev.targets_loaded == 21
+
+
+def test_percent_99_is_not_complete():
+    ev = parse_nuclei_batch_output(0, _REAL_STATS_99 + "\n", "", expected_targets=21, expected_templates=284)
+    assert ev.completion_percent == 99
+    assert ev.catalog_verified is True  # templates match...
+    assert ev.targets_completed is False and ev.output_complete is False  # ...but 99% ≠ complete
+
+
+def test_real_unresponsive_line_counts_and_blocks_completion():
+    err = _REAL_STATS_100 + "\nSkipped link.example.it:443 from target list as found unresponsive permanently\n"
+    ev = parse_nuclei_batch_output(0, "", err, expected_targets=21, expected_templates=284)
+    assert ev.unresponsive_targets == 1  # exactly one, not double-counted
+    assert ev.targets_completed is False
+
+
+def test_input_target_wins_over_constructed_url():
+    stdout = (
+        '{"template-id":"ep-a","input":"https://h/admin","url":"https://h/admin/probe","info":{"severity":"high"}}\n'
+    )
+    ev = parse_nuclei_batch_output(0, stdout, _REAL_STATS_100, expected_targets=21, expected_templates=284)
+    assert ev.findings[0]["target"] == "https://h/admin"  # original input, not the template URL
+
+
+def test_unknown_json_object_sets_parse_incomplete():
+    # a JSON object with no template-id and not a stats record → unknown → parse incomplete, not a finding
+    stdout = '{"foo":"bar","baz":1}\n'
+    ev = parse_nuclei_batch_output(0, stdout, _REAL_STATS_100, expected_targets=21, expected_templates=284)
+    assert ev.parse_incomplete is True
+    assert ev.findings == ()
     assert ev.output_complete is False
 
 
