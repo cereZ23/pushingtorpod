@@ -123,9 +123,16 @@ def test_invalid_exit_code_is_failed(exit_code):
     assert batch_verdict(**{**_PROVEN, "exit_code": exit_code}) == CoverageStatus.FAILED
 
 
-def test_failed_wins_over_partial():
-    # a structural failure (bad exit) dominates even if uncertainty signals are also set
-    assert batch_verdict(**{**_PROVEN, "exit_code": 1, "timed_out": True}) == CoverageStatus.FAILED
+def test_timeout_wins_over_bad_exit_code():
+    # a timed-out batch is killed → non-zero/None exit, but the contract is timeout → PARTIAL, so the
+    # incompleteness must win over the exit code (else every timeout would wrongly read as FAILED).
+    assert batch_verdict(**{**_PROVEN, "exit_code": 1, "timed_out": True}) == CoverageStatus.PARTIAL
+    assert batch_verdict(**{**_PROVEN, "exit_code": None, "truncated": True}) == CoverageStatus.PARTIAL
+
+
+def test_bad_exit_without_uncertainty_is_failed():
+    # a non-zero exit NOT attributable to timeout/truncation is a structural failure
+    assert batch_verdict(**{**_PROVEN, "exit_code": 1}) == CoverageStatus.FAILED
 
 
 # --- pass status aggregation ----------------------------------------------------------------------
@@ -175,6 +182,12 @@ def test_all_batches_skipped_for_budget_is_insufficient_phase_budget():
     assert st == PASS_SKIPPED and reason == "insufficient_phase_budget"
 
 
+def test_empty_statuses_with_selected_is_insufficient_phase_budget():
+    # selected>0 but NO batch status recorded (nothing launched) → SKIPPED, not PARTIAL
+    st, reason = aggregate_pass_status([], flag_enabled=True, selected_count=50)
+    assert st == PASS_SKIPPED and reason == "insufficient_phase_budget"
+
+
 def test_some_covered_then_skipped_is_partial():
     st, _ = aggregate_pass_status(
         [CoverageStatus.COVERED, CoverageStatus.SKIPPED], flag_enabled=True, selected_count=50
@@ -196,6 +209,8 @@ def test_valid_config_passes():
         {"batch_timeout_seconds": 0},
         {"budget_seconds": -1},
         {"max_per_host": 0},
+        {"batch_size": True},  # bool is an int subclass — must NOT slip through as a count
+        {"max_per_host": False},
     ],
 )
 def test_invalid_config_rejected(kw):

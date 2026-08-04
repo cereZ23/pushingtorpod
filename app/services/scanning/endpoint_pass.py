@@ -102,19 +102,22 @@ def batch_verdict(
     positive-proof kwargs are required, so ``batch_verdict()`` with no args raises).
 
     - ``launched=False`` → a caller error (SKIPPED is the caller's decision, not this function's) → raises.
-    - process unstartable / invalid exit code (``exit_code`` None or non-zero) → FAILED.
     - ANY uncertainty signal (timeout, budget, truncation, drift, unresponsive, partial parse) → PARTIAL.
+      Evaluated BEFORE the exit code: a timed-out batch is killed and returns a non-zero / None exit,
+      but the contract is timeout → PARTIAL, so incompleteness caused by the run must win over the exit.
+    - only THEN, a process unstartable / invalid exit code (``exit_code`` None or non-zero) not
+      attributable to timeout/truncation → FAILED.
     - a missing positive proof (output not complete, catalog not verified, targets not all completed) →
       PARTIAL — the run happened but its completeness can't be proven, so it must not authorise.
-    - COVERED: launched, ``exit_code == 0``, no uncertainty signal, AND output_complete AND
+    - COVERED: launched, no uncertainty signal, ``exit_code == 0``, AND output_complete AND
       catalog_verified AND targets_completed.
     """
     if not launched:
         raise ValueError("batch_verdict: launched must be True — mark an unlaunched batch SKIPPED at the caller")
-    if exit_code is None or exit_code != 0:
-        return CoverageStatus.FAILED
     if timed_out or budget_expired or truncated or drift or unresponsive or parse_incomplete:
         return CoverageStatus.PARTIAL
+    if exit_code is None or exit_code != 0:
+        return CoverageStatus.FAILED
     if not (output_complete and catalog_verified and targets_completed):
         return CoverageStatus.PARTIAL
     return CoverageStatus.COVERED
@@ -145,7 +148,8 @@ def aggregate_pass_status(
     if selected_count == 0:
         return PASS_SKIPPED, "no_targets"
     statuses = list(batch_statuses)
-    if statuses and all(s == CoverageStatus.SKIPPED for s in statuses):
+    # targets selected but nothing launched — no batch ran, or every batch was budget-skipped.
+    if not statuses or all(s == CoverageStatus.SKIPPED for s in statuses):
         return PASS_SKIPPED, "insufficient_phase_budget"
     covered = sum(1 for s in statuses if s == CoverageStatus.COVERED)
     if structural_error and covered == 0:
@@ -239,5 +243,7 @@ def validate_endpoint_pass_config(
         ("budget_seconds", budget_seconds),
         ("max_per_host", max_per_host),
     ):
-        if not isinstance(value, int) or value <= 0:
+        # `type(value) is int` (not isinstance) — bool is a subclass of int, so True/False must NOT
+        # slip through as a valid count.
+        if type(value) is not int or value <= 0:
             raise ValueError(f"http_endpoint config: {name} must be a positive int, got {value!r}")
