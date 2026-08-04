@@ -105,6 +105,31 @@ def test_workflows_is_opaque_unknown():
     assert _cat({"id": "x", "workflows": [{"template": "other.yaml"}]}) == UNKNOWN
 
 
+def test_unknown_variable_in_baseurl_suffix_is_unknown():
+    # {{BaseURL}}{{SomePath}} — the appended part depends on an unresolved variable → unknown
+    assert _cat({"id": "x", "http": [{"path": ["{{BaseURL}}{{SomePath}}"]}]}) == UNKNOWN
+    assert _cat({"id": "x", "http": [{"path": ["{{BaseURL}}/{{dir}}/x"]}]}) == UNKNOWN
+
+
+def test_variable_only_in_query_is_still_endpoint_sensitive():
+    # a variable in the QUERY (not the path) is fine — it still tests the given endpoint as-is
+    assert _cat({"id": "x", "http": [{"path": ["{{BaseURL}}?q={{payload}}"]}]}) == ENDPOINT_SENSITIVE
+
+
+# --- semantic overrides (fix 3) ----------------------------------------------
+
+
+def test_takeover_family_is_host_only_despite_baseurl_as_is():
+    # subdomain-takeover templates hit {{BaseURL}} as-is but are host/domain-level → host_only
+    doc = {"id": "azure-takeover", "info": {"tags": "takeover"}, "http": [{"path": ["{{BaseURL}}"]}]}
+    assert _cat(doc) == HOST_ONLY
+
+
+def test_takeover_tag_among_others_still_host_only():
+    doc = {"id": "x", "info": {"tags": ["takeover", "cloud"]}, "http": [{"path": ["{{BaseURL}}"]}]}
+    assert _cat(doc) == HOST_ONLY
+
+
 def test_unknown_url_variable_is_unknown():
     assert _cat({"id": "x", "http": [{"path": ["{{Hostname}}/x"]}]}) == UNKNOWN
 

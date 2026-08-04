@@ -52,6 +52,10 @@ _ROOTURL_RE = re.compile(r"^\{\{\s*RootURL\s*\}\}", re.IGNORECASE)
 # request-line of a raw HTTP request: "METHOD <path> HTTP/x"
 _RAW_REQUEST_LINE_RE = re.compile(r"^\s*[A-Z]+\s+(\S+)\s+HTTP/", re.IGNORECASE)
 _FUZZ_TAGS = frozenset({"fuzz", "fuzzing", "dast"})
+# Semantic host/domain-level families: their check is about the HOST, not a path — running them
+# on discovered endpoints would just duplicate the host-level check. A syntactic {{BaseURL}}-as-is
+# match is not enough to call these endpoint-sensitive (e.g. subdomain-takeover templates).
+_HOST_LEVEL_TAGS = frozenset({"takeover"})
 
 
 @dataclass(frozen=True)
@@ -103,9 +107,15 @@ def _path_shape(path: str) -> str:
     if m:
         rest = s[m.end() :]
         rest_path = rest.split("?", 1)[0].split("#", 1)[0]
-        return "base_bare" if rest_path in ("", "/") else "base_appended"
+        if rest_path in ("", "/"):
+            return "base_bare"
+        if "{{" in rest_path:
+            # an unresolved variable in the path SUFFIX (e.g. {{BaseURL}}{{SomePath}}): what it
+            # appends depends on the input — cannot prove it is host-only → unknown (fail-closed).
+            return "other"
+        return "base_appended"
     if _ROOTURL_RE.match(s):
-        return "root"
+        return "root"  # RootURL is always the host root regardless of input → host-level
     return "other"
 
 
@@ -146,6 +156,12 @@ def classify_nuclei_template(doc: Mapping) -> TemplateClass:
     """Classify a parsed nuclei template. Deterministic; fail-closed to ``unknown``."""
     if not isinstance(doc, Mapping):
         return TemplateClass(UNKNOWN, "template is not a mapping")
+
+    # Semantic override: a host/domain-level family (e.g. takeover) is about the HOST, so it is
+    # host_only even when its request hits {{BaseURL}} as-is — running it per-endpoint just repeats
+    # the host check. This corrects the syntactic classifier for these families.
+    if _HOST_LEVEL_TAGS & _tags(doc):
+        return TemplateClass(HOST_ONLY, "host/domain-level family (tag) — endpoints add no coverage")
 
     requests = _http_requests(doc)
 
