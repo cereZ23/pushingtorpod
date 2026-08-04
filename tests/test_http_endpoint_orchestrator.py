@@ -24,7 +24,11 @@ from app.services.endpoint_identity import endpoint_shape_hash
 from app.services.rule_catalog import ApplicableRule, ApplicableRuleSet
 from app.services.rule_revision import compute_rule_revision, content_digest
 from app.services.scan_policy import build_nuclei_policy_manifest
-from app.services.scanning.http_endpoint_runner import BatchExecutionEvidence
+from app.services.scanning.http_endpoint_runner import (
+    BatchExecutionEvidence,
+    EndpointRunnerError,
+    EndpointRunnerTimeout,
+)
 
 _File = namedtuple("_File", "relative_path content")
 _Rev = namedtuple("_Rev", "digest")
@@ -152,14 +156,19 @@ def _custom_policy(db):
     return m.policy_hash
 
 
-def _call(db, tenant, *, assets, runner, custom_policy_hash, deadline=None, now=NOW, interactsh_server=None):
+def _call(
+    db, tenant, *, assets, runner, custom_policy_hash, deadline=None, now=NOW, interactsh_server=None, base_urls=None
+):
     run = _run(db, tenant)
+    if base_urls is None:
+        base_urls = [f"https://{a.identifier}" for a in assets]
     return orch.run_http_endpoint_pass(
         db=db,
         tenant_id=tenant.id,
         scan_run_id=run.id,
         scan_tier=1,
         assets=assets,
+        base_urls=base_urls,
         phase_9_deadline=deadline or (NOW + timedelta(seconds=3600)),
         custom_policy_hash=custom_policy_hash,
         interactsh_server=interactsh_server,
@@ -274,3 +283,105 @@ def test_no_url_in_stats(db_session, _enabled):
     blob = json.dumps(res.stats) + repr(res)
     for leak in ("secret-token-abc123", "SUPERSECRET", "app.curci.it/reset"):
         assert leak not in blob
+
+
+class _RaisingRunner:
+    def __init__(self, exc):
+        self._exc = exc
+
+    def run_batch(self, **kw):
+        raise self._exc
+
+
+def test_runner_timeout_exception_is_partial(db_session, _enabled):
+    tenant = _enabled
+    a = _asset(db_session, tenant)
+    _endpoint(db_session, a, "https://app.curci.it/admin")
+    custom = _custom_policy(db_session)
+    res, run = _call(
+        db_session, tenant, assets=[a], runner=_RaisingRunner(EndpointRunnerTimeout("t")), custom_policy_hash=custom
+    )
+    assert res.status == "partial"  # a runner timeout is caught → PARTIAL, not an explosion
+    rows = db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id).all()
+    assert rows and all(r.status == CoverageStatus.PARTIAL for r in rows)
+
+
+def test_runner_generic_exception_is_failed(db_session, _enabled):
+    tenant = _enabled
+    a = _asset(db_session, tenant)
+    _endpoint(db_session, a, "https://app.curci.it/admin")
+    custom = _custom_policy(db_session)
+    res, run = _call(
+        db_session, tenant, assets=[a], runner=_RaisingRunner(EndpointRunnerError("boom")), custom_policy_hash=custom
+    )
+    assert res.status in ("partial", "failed")  # not COVERED, and no explosion
+    rows = db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id).all()
+    assert rows and all(r.status != CoverageStatus.COVERED for r in rows)
+
+
+def test_writer_errors_downgrade_to_partial(db_session, _enabled, monkeypatch):
+    tenant = _enabled
+    a = _asset(db_session, tenant)
+    _endpoint(db_session, a, "https://app.curci.it/admin")
+    custom = _custom_policy(db_session)
+
+    # a fully-proven run that returns one finding on the batch target...
+    def _with_finding(n_targets, n_templates):
+        return _proven(
+            n_targets,
+            n_templates,
+            findings=[{"target": "https://app.curci.it/admin", "template_id": "ep-a", "name": "x", "severity": "high"}],
+        )
+
+    # ...but the finding writer reports errors → the batch must NOT stay COVERED.
+    from app.repositories.finding_repository import FindingRepository
+
+    monkeypatch.setattr(
+        FindingRepository,
+        "bulk_upsert_findings",
+        lambda self, f, t, scan_run_id=None: {"created": 0, "updated": 0, "errors": ["bad"]},
+    )
+    res, run = _call(db_session, tenant, assets=[a], runner=_FakeRunner(_with_finding), custom_policy_hash=custom)
+    assert res.status == "partial"
+    rows = db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id).all()
+    assert rows and all(r.status == CoverageStatus.PARTIAL for r in rows)
+
+
+def test_base_url_dropped_uses_real_base_with_odd_port(db_session, _enabled):
+    tenant = _enabled
+    a = _asset(db_session, tenant)
+    _endpoint(db_session, a, "https://app.curci.it:8443/")  # a base URL on a non-default port
+    _endpoint(db_session, a, "https://app.curci.it/admin")  # a real deep endpoint
+    custom = _custom_policy(db_session)
+    runner = _FakeRunner(_proven)
+    # phase 9 scanned the base on :8443 → the orchestrator must drop that candidate (not reconstruct :443)
+    res, run = _call(
+        db_session,
+        tenant,
+        assets=[a],
+        runner=runner,
+        custom_policy_hash=custom,
+        base_urls=["https://app.curci.it:8443"],
+    )
+    assert res.stats["base_url_dropped"] == 1
+    assert res.stats["selected_count"] == 1  # only /admin survives
+
+
+def test_coverage_authorizing_signal(db_session, _enabled):
+    tenant = _enabled
+    a = _asset(db_session, tenant)
+    custom = _custom_policy(db_session)
+    # no targets → skipped but semantically complete → authorizing True
+    res_nt, _ = _call(db_session, tenant, assets=[a], runner=_FakeRunner(_proven), custom_policy_hash=custom)
+    assert res_nt.status == "skipped" and res_nt.stats["coverage_authorizing"] is True
+    # insufficient budget → skipped but coverage NOT authorizing
+    _endpoint(db_session, a, "https://app.curci.it/admin")
+    res_ib, _ = _call(
+        db_session,
+        tenant,
+        assets=[a],
+        runner=_FakeRunner(_proven),
+        custom_policy_hash=custom,
+        deadline=NOW - timedelta(seconds=1),
+    )
+    assert res_ib.skip_reason == "insufficient_phase_budget" and res_ib.stats["coverage_authorizing"] is False

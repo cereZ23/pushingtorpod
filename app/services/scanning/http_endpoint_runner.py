@@ -17,6 +17,17 @@ from dataclasses import dataclass, field
 from typing import Mapping, Optional, Protocol, runtime_checkable
 
 
+class EndpointRunnerError(Exception):
+    """A structural runner failure (process unstartable, staging/exec error) → batch FAILED.
+
+    Carries a reason code only — NEVER a URL / target / command / output.
+    """
+
+
+class EndpointRunnerTimeout(EndpointRunnerError):
+    """The batch exceeded its timeout / budget → batch PARTIAL (incompleteness, not a hard failure)."""
+
+
 @dataclass(frozen=True)
 class BatchExecutionEvidence:
     """What the runner observed for ONE batch — the raw counts + the derived positive proofs.

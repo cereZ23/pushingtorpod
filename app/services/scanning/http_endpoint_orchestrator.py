@@ -18,6 +18,7 @@ Fail-closed contract (see the step-3b spec):
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import tempfile
@@ -39,6 +40,7 @@ from app.services.rule_revision import resolve_nuclei_rule_snapshot
 from app.services.scan_policy import PASS_HTTP_ENDPOINT
 from app.services.scan_tiers import http_stock_roots, nuclei_relevant_flags, tier_severity
 from app.services.scanning.endpoint_pass import (
+    PASS_COMPLETED,
     PASS_FAILED,
     PASS_SKIPPED,
     EndpointBatch,
@@ -51,9 +53,31 @@ from app.services.scanning.endpoint_pass import (
     stage_selected_templates,
     validate_endpoint_pass_config,
 )
-from app.services.scanning.http_endpoint_runner import BatchExecutionEvidence, EndpointNucleiRunner
+from app.services.scanning.http_endpoint_runner import (
+    BatchExecutionEvidence,
+    EndpointNucleiRunner,
+    EndpointRunnerTimeout,
+)
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_PORT = {"http": 80, "https": 443}
+
+# The pass produces TWO distinct signals so the phase-9 rollup (3b-2) can tell an innocuous skip from
+# an incomplete coverage:
+#   - ``coverage_complete``  : the endpoint pass ran to full COVERED completion (drives truncated_passes)
+#   - ``coverage_authorizing``: the endpoint coverage is trustworthy enough to (later) authorise —
+#     True for completed / no_targets / feature_disabled (nothing to cover or N/A), False for
+#     insufficient_phase_budget / partial / failed (coverage is incomplete).
+_AUTHORIZING_SKIP_REASONS = frozenset({"no_targets", "feature_disabled"})
+
+
+def _coverage_authorizing(status: str, skip_reason: Optional[str]) -> bool:
+    if status == PASS_COMPLETED:
+        return True
+    if status == PASS_SKIPPED:
+        return skip_reason in _AUTHORIZING_SKIP_REASONS
+    return False  # partial / failed
 
 
 class EndpointPassStructuralError(Exception):
@@ -100,7 +124,13 @@ class EndpointPassResult:
 def _skipped(
     reason: str, *, policy_hash=None, catalog_digest=None, classifier_version=None, stats=None
 ) -> EndpointPassResult:
-    base = {"enabled": reason != "feature_disabled", "pass_name": PASS_HTTP_ENDPOINT, "skip_reason": reason}
+    base = {
+        "enabled": reason != "feature_disabled",
+        "pass_name": PASS_HTTP_ENDPOINT,
+        "skip_reason": reason,
+        "coverage_complete": False,
+        "coverage_authorizing": _coverage_authorizing(PASS_SKIPPED, reason),
+    }
     return EndpointPassResult(
         status=PASS_SKIPPED,
         skip_reason=reason,
@@ -111,15 +141,24 @@ def _skipped(
     )
 
 
-def _base_url_keys(assets: Sequence[Asset]) -> set[tuple[str, str, int]]:
-    """(scheme, normalized host, effective port) for each asset's base URLs (http:80 + https:443)."""
+def _base_url_keys(base_urls: Sequence[str]) -> set[tuple[str, str, int]]:
+    """(scheme, normalized host, effective port) for each REAL base URL the phase already scanned.
+
+    These come from phase 9 (http_stock etc.) — NOT reconstructed from assets — so odd ports like
+    :8080 / :8443 and non-default service base targets are matched correctly, not just :80/:443.
+    """
     keys: set[tuple[str, str, int]] = set()
-    for a in assets:
-        h = normalize_host(a.identifier)
-        if not h:
+    for url in base_urls or ():
+        try:
+            p = urlparse(url)
+        except Exception:
             continue
-        keys.add(("http", h, 80))
-        keys.add(("https", h, 443))
+        scheme = (p.scheme or "").lower()
+        host = normalize_host(p.hostname)
+        if not host or scheme not in _DEFAULT_PORT:
+            continue
+        port = p.port if p.port is not None else _DEFAULT_PORT[scheme]
+        keys.add((scheme, host, port))
     return keys
 
 
@@ -147,6 +186,7 @@ def run_http_endpoint_pass(
     scan_run_id: int,
     scan_tier: int,
     assets: Sequence[Asset],
+    base_urls: Sequence[str],
     phase_9_deadline: datetime,
     custom_policy_hash: str,
     interactsh_server: Optional[str],
@@ -184,14 +224,20 @@ def run_http_endpoint_pass(
             policy_hash=None,
             catalog_digest=None,
             classifier_version=None,
-            stats={"enabled": True, "pass_name": PASS_HTTP_ENDPOINT, "coverage_complete": False, "error": str(exc)},
+            stats={
+                "enabled": True,
+                "pass_name": PASS_HTTP_ENDPOINT,
+                "coverage_complete": False,
+                "coverage_authorizing": False,
+                "error": str(exc),
+            },
         )
 
     policy_hash = bundle.manifest.policy_hash
     relevant_flags = dict(bundle.manifest.relevant_flags)
 
     # --- 5 endpoint selection (with explicit base-URL drop) ---
-    candidates, base_url_dropped = _load_candidates(db, tenant_id, [a.id for a in assets], _base_url_keys(assets))
+    candidates, base_url_dropped = _load_candidates(db, tenant_id, [a.id for a in assets], _base_url_keys(base_urls))
     now = now_fn()
     active_scope_entries = _active_scope_entries(db, tenant_id, now) if candidates else []
     selection = select_endpoint_targets(
@@ -376,42 +422,86 @@ def _run_one_batch(
     interactsh_server,
     relevant_flags,
 ):
-    target_file = _write_target_file(batch)
-    try:
-        evidence = runner.run_batch(
-            tenant_id=tenant_id,
-            target_file=target_file,
-            template_dir=template_dir,
-            expected_targets=len(batch.targets),
-            expected_templates=expected_templates,
-            timeout_seconds=timeout_seconds,
-            interactsh_server=interactsh_server,
-            relevant_flags=relevant_flags,
-        )
-    finally:
-        _remove(target_file)
+    # Contextual per-batch temp dir → the target file is guaranteed cleaned up; a cleanup failure is
+    # logged with a reason code (never a path/URL), not silently swallowed.
+    with tempfile.TemporaryDirectory(prefix="http_endpoint_targets_") as td:
+        target_file = os.path.join(td, "targets.txt")
+        _write_target_file(target_file, batch)
+        # A runner exception must NOT explode the whole pass: a timeout → PARTIAL, any other runner
+        # failure → FAILED, so coverage is still written and the remaining batches still run.
+        try:
+            evidence = runner.run_batch(
+                tenant_id=tenant_id,
+                target_file=target_file,
+                template_dir=template_dir,
+                expected_targets=len(batch.targets),
+                expected_templates=expected_templates,
+                timeout_seconds=timeout_seconds,
+                interactsh_server=interactsh_server,
+                relevant_flags=relevant_flags,
+            )
+        except EndpointRunnerTimeout:
+            evidence = BatchExecutionEvidence(launched=True, exit_code=None, timed_out=True)
+        except Exception as exc:  # EndpointRunnerError or any unexpected subprocess-boundary error
+            logger.warning(
+                "http_endpoint batch runner error",
+                extra={
+                    "tenant_id": tenant_id,
+                    "scan_run_id": scan_run_id,
+                    "batch_index": batch.index,
+                    "reason_code": type(exc).__name__,
+                },
+            )
+            evidence = BatchExecutionEvidence(launched=False, exit_code=None, parse_incomplete=True)
 
     # 13 attribute findings by BATCH TARGET (never a hostname search). Ambiguity → parse_incomplete.
     attributed, attribution_ok = _attribute_findings(evidence.findings, batch)
-    status = batch_verdict(
-        launched=evidence.launched,
-        exit_code=evidence.exit_code,
-        output_complete=evidence.output_complete,
-        catalog_verified=evidence.catalog_verified,
-        targets_completed=evidence.targets_completed,
-        timed_out=evidence.timed_out,
-        budget_expired=evidence.budget_expired,
-        truncated=evidence.truncated,
-        drift=evidence.drift,
-        unresponsive=evidence.unresponsive_targets > 0,
-        parse_incomplete=evidence.parse_incomplete or not attribution_ok,
-    )
-    # 12 write coverage IMMEDIATELY; a persistence error must FAIL the batch, never be swallowed.
-    _write_coverage(repo, tenant_id, scan_run_id, batch, status)
+    if not evidence.launched:
+        # A structural runner failure (process never started) is FAILED — batch_verdict rejects
+        # launched=False, so short-circuit here rather than calling it.
+        status = CoverageStatus.FAILED
+    else:
+        status = batch_verdict(
+            launched=evidence.launched,
+            exit_code=evidence.exit_code,
+            output_complete=evidence.output_complete,
+            catalog_verified=evidence.catalog_verified,
+            targets_completed=evidence.targets_completed,
+            timed_out=evidence.timed_out,
+            budget_expired=evidence.budget_expired,
+            truncated=evidence.truncated,
+            drift=evidence.drift,
+            unresponsive=evidence.unresponsive_targets > 0,
+            parse_incomplete=evidence.parse_incomplete or not attribution_ok,
+        )
+
+    # Save findings FIRST, then the FINAL coverage. If the writer raises OR reports errors, the
+    # detection output was not fully processed → downgrade a would-be COVERED to PARTIAL (never
+    # authorise on an incomplete write).
     created = updated = 0
+    writer_ok = True
     if attributed:
-        res = FindingRepository(db).bulk_upsert_findings(attributed, tenant_id, scan_run_id=scan_run_id)
-        created, updated = res.get("created", 0), res.get("updated", 0)
+        try:
+            res = FindingRepository(db).bulk_upsert_findings(attributed, tenant_id, scan_run_id=scan_run_id)
+            created, updated = res.get("created", 0), res.get("updated", 0)
+            if res.get("errors"):
+                writer_ok = False
+        except Exception as exc:
+            writer_ok = False
+            logger.warning(
+                "http_endpoint finding write error",
+                extra={
+                    "tenant_id": tenant_id,
+                    "scan_run_id": scan_run_id,
+                    "batch_index": batch.index,
+                    "reason_code": type(exc).__name__,
+                },
+            )
+    if not writer_ok and status == CoverageStatus.COVERED:
+        status = CoverageStatus.PARTIAL
+
+    # Write coverage LAST (still per-batch + immediate). A coverage-write error FAILS the batch.
+    _write_coverage(repo, tenant_id, scan_run_id, batch, status)
     return EndpointBatchResult(batch, evidence, status, created, updated)
 
 
@@ -529,6 +619,7 @@ def _rollup_stats(base_stats, batch_results, bundle, pass_status, skip_reason, e
             "endpoints_skipped": _eps(CoverageStatus.SKIPPED),
             "findings_discovered": sum(br.findings_created + br.findings_updated for br in batch_results),
             "coverage_complete": pass_status == "completed",
+            "coverage_authorizing": _coverage_authorizing(pass_status, skip_reason),
             "skip_reason": skip_reason,
         }
     )
@@ -540,23 +631,12 @@ def _rollup_stats(base_stats, batch_results, bundle, pass_status, skip_reason, e
 # --- transient target file + canned evidence ----------------------------------------------------
 
 
-def _write_target_file(batch: EndpointBatch) -> str:
-    fd, path = tempfile.mkstemp(prefix="http_endpoint_targets_", suffix=".txt")
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w") as fh:
-            fh.write("\n".join(t.url for t in batch.targets))
-    except Exception:
-        _remove(path)
-        raise
-    return path
-
-
-def _remove(path: str) -> None:
-    try:
-        os.remove(path)
-    except OSError:
-        pass
+def _write_target_file(path: str, batch: EndpointBatch) -> None:
+    """Write the batch URLs to ``path`` (0600) inside the caller's contextual temp dir. The URLs
+    live transiently in the temp file only — never in DB, logs, or object storage."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write("\n".join(t.url for t in batch.targets))
 
 
 def _skipped_evidence() -> BatchExecutionEvidence:
