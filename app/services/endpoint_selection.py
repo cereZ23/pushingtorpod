@@ -253,9 +253,11 @@ def select_endpoint_targets(
          (a foreign / unknown asset). Association is MANDATORY: coverage + provenance need a concrete
          authorised owner, so an unassociable endpoint is NEVER selected.
       5. Rank survivors by priority (api/form/interesting-path → parameterised → plain).
-      6. Apply the per-host cap over a STABLE TOTAL ordering ``(priority, shape_hash, url)`` so the
-         result is independent of candidate order; within a shape only the first survivor is kept
-         (**shape_duplicate**), and once a host reaches ``per_host_cap`` the rest are **cap**-dropped.
+      6. Apply the per-host cap over a STABLE TOTAL ordering ``(priority, shape_hash, url, asset_id,
+         type)`` so the result is independent of candidate order; within a shape only the first
+         survivor is kept (**shape_duplicate**), and once a host reaches ``per_host_cap`` the rest
+         are **cap**-dropped. When the SAME url exists for two authorised assets (the DB uniqueness is
+         ``(asset_id, url, method)``), the duplicate resolves DETERMINISTICALLY to the LOWER asset id.
 
     Args:
         candidates: crawled endpoints (already de-duplicated against base URLs by the caller); each
@@ -322,9 +324,13 @@ def select_endpoint_targets(
         prio = _priority(url.lower(), cand.endpoint_type, bool(parsed.query))
         survivors.append((prio, shape, url, norm_host, cand.endpoint_type, cand.asset_id))
 
-    # Phase 2: STABLE TOTAL order so the cap is order-independent. (priority, shape, url) is a total
-    # order over distinct candidates → reordering the input cannot change the outcome.
-    survivors.sort(key=lambda s: (s[0], s[1], s[2]))
+    # Phase 2: STABLE TOTAL order so the cap is order-independent. The tuple is
+    # (priority, shape, url, host, type, asset_id). The SAME url can exist for two different assets
+    # (the DB uniqueness is (asset_id, url, method)), so (priority, shape, url) alone still ties and
+    # the global shape-dedup would then keep whichever came first in the INPUT. Extend the key with
+    # asset_id (then type) so a cross-asset duplicate resolves DETERMINISTICALLY to the LOWER asset
+    # id — never the input order.
+    survivors.sort(key=lambda s: (s[0], s[1], s[2], s[5], s[4] or ""))
 
     # Phase 3: shape-dedup + per-host cap, in that order.
     seen_shapes: set[str] = set()

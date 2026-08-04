@@ -210,6 +210,27 @@ def test_missing_asset_id_is_unassociated():
     assert r.unassociated[0].reason == "unassociated"
 
 
+def test_cross_asset_duplicate_resolves_to_lower_asset_id_deterministically():
+    # The SAME url can exist for two authorised assets (DB uniqueness is (asset_id, url, method)).
+    # The shape-dedup keeps ONE — and it must be the LOWER asset id regardless of input order, never
+    # whichever candidate happened to come first.
+    assets = [AuthorizedAsset(asset_id=10, host="app.curci.it"), AuthorizedAsset(asset_id=20, host="other.curci.it")]
+    cands = [
+        CandidateEndpoint(url="https://app.curci.it/x", endpoint_type=None, asset_id=20),
+        CandidateEndpoint(url="https://app.curci.it/x", endpoint_type=None, asset_id=10),
+    ]
+
+    def _run(cs):
+        return select_endpoint_targets(cs, authorized_assets=assets, per_host_cap=50, now=NOW, scope_entries=SCOPE)
+
+    fwd = _run(cands)
+    rev = _run(list(reversed(cands)))
+    assert len(fwd.selected) == len(rev.selected) == 1
+    assert fwd.selected[0].asset_id == 10  # lower id wins
+    assert rev.selected[0].asset_id == 10  # ...same under reversed input
+    assert len(fwd.shape_deduplicated) == 1  # the asset-20 duplicate is deduped
+
+
 # --- privacy: no cleartext URL in any repr --------------------------------------------------------
 
 
