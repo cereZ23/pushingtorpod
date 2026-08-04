@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""Versioned, reviewable benchmark/reconcile tool for the proposed endpoint nuclei pass.
+"""Versioned, reviewable tooling for the proposed endpoint nuclei pass.
 
 Modes (default = the safe one):
-  --dry-run    (default) print the PLAN only — endpoint templates, authorised targets, timeout,
-               rate, concurrency. Runs NO nuclei and sends NO traffic.
-  --reconcile  run ``nuclei -tl`` (list templates ONLY — no scan, no traffic) for the T1 policy and
-               diff it against the reconciled applicable set to EXPLAIN why the catalog count and
-               nuclei's "Templates loaded" differ.
-  --run        ACTIVE benchmark: run the endpoint_sensitive templates against AUTHORISED endpoints
-               and time nuclei. Refuses to start if a scan is active. Secure temp dir. No DB writes.
+  --dry-run    (default) print the PLAN only, with REDACTED targets (host + endpoint-shape, no
+               query values). Runs NO nuclei and sends NO traffic.
+  --reconcile  run ``nuclei -tl`` (list templates ONLY — no scan, no traffic) with ABSOLUTE template
+               paths, and diff vs the reconciled applicable set to EXPLAIN nuclei's "Templates
+               loaded" delta.
 
-Safety: targets are the tenant's IN-SCOPE endpoints only (host is a pass asset OR under an ACTIVE
-ScanAuthorization — the SAME boundary as the real pass, via host_in_scope). Read-only: never writes
-findings/coverage. Run inside the worker container:
-    docker compose exec -T worker python scripts/benchmark_endpoint_pass.py --dry-run
+The ACTIVE benchmark is intentionally NOT implemented here yet. To be representative it must reuse
+the pipeline's EXACT endpoint selection (in-scope + static-filter + priority + shape-dedup + per-host
+cap, per --project) and the exact prod nuclei flags — i.e. the ``select_endpoint_targets`` extraction
+that is the first task of Sprint 3. Reimplementing that selection here would diverge from the pass
+and mis-predict its cost, so it is deliberately deferred (see Sprint-3 plan). --dry-run/--reconcile
+send no traffic and are safe to run now.
+
+Run inside the worker:  docker compose exec -T worker python scripts/benchmark_endpoint_pass.py --dry-run
 """
 
 from __future__ import annotations
@@ -22,21 +24,13 @@ import argparse
 import os
 import subprocess
 import sys
-import tempfile
-import time
 from datetime import datetime, timezone
-from urllib.parse import urlparse
 
-DEFAULT_TENANT = 3  # curci
-TEMPLATES_DIR = "/home/appuser/nuclei-templates"
 DEFAULT_CAP = 200
-TIMEOUT = 6
-RATE = 300
-CONCURRENCY = 25
 
 
 def _reconciled_ruleset(tier: int):
-    """Return (roots, severity, exclude, snapshot, ruleset) via the exact pipeline machinery."""
+    """(base_dir, roots, severity, exclude, snapshot, ruleset) via the exact pipeline machinery."""
     import yaml
 
     from app.config import settings
@@ -64,187 +58,156 @@ def _reconciled_ruleset(tier: int):
     return base_dir, split_roots, severity, exclude, snapshot, ruleset
 
 
-def _endpoint_templates(tier: int):
-    """(base_dir, roots, severity, exclude, [abs template paths], [ids], total_applicable)."""
+def _endpoint_ids(tier: int):
+    """(base_dir, ruleset, [endpoint_sensitive ids]) — classified via the app classifier."""
     import yaml
 
     from app.services.endpoint_template_classifier import ENDPOINT_SENSITIVE, classify_nuclei_template
 
-    base_dir, roots, severity, exclude, snapshot, ruleset = _reconciled_ruleset(tier)
+    base_dir, _roots, _sev, _excl, snapshot, ruleset = _reconciled_ruleset(tier)
     docs = {}
     for f in snapshot.files:
         try:
             docs[f.relative_path] = yaml.safe_load(f.content)
         except Exception:
             docs[f.relative_path] = None
-    paths, ids = [], []
-    for rule in ruleset.rules:
-        d = docs.get(rule.relative_path)
-        if isinstance(d, dict) and classify_nuclei_template(d).category == ENDPOINT_SENSITIVE:
-            paths.append(os.path.join(base_dir, rule.relative_path))
-            ids.append(rule.detector_id)
-    return base_dir, roots, severity, exclude, paths, ids, len(ruleset.rules)
+    ids = [
+        r.detector_id
+        for r in ruleset.rules
+        if isinstance(docs.get(r.relative_path), dict)
+        and classify_nuclei_template(docs[r.relative_path]).category == ENDPOINT_SENSITIVE
+    ]
+    return base_dir, ruleset, ids
 
 
-def _active_scan_running(db, tenant: int) -> bool:
+def _scan_in_progress(db, tenant: int):
+    """Fail-closed 'is anything scanning?' — ANY running scan_run (all tenants) OR a Celery
+    run_scan_pipeline task. Celery unreachable → treated as busy (-1). Used to gate an active run."""
     from app.models.scanning import ScanRun
 
-    return db.query(ScanRun).filter(ScanRun.tenant_id == tenant, ScanRun.status.in_(("running", "RUNNING"))).count() > 0
+    db_running = db.query(ScanRun).filter(ScanRun.status.in_(("running", "RUNNING"))).count()
+    celery_running: int
+    try:
+        from app.celery_app import celery
+
+        active = celery.control.inspect(timeout=4).active() or {}
+        celery_running = sum(
+            1 for tasks in active.values() for t in tasks if "run_scan_pipeline" in (t.get("name") or "")
+        )
+    except Exception:
+        celery_running = -1  # unknown → fail-closed (treat as busy)
+    return db_running, celery_running
 
 
-def _authorised_endpoints(db, tenant: int, cap: int):
-    """The tenant's IN-SCOPE endpoint URLs, via the same boundary as the real nuclei pass."""
+def _in_scope_endpoints(db, tenant: int, project: int | None, cap: int):
+    """In-scope endpoint URLs (host_in_scope, same boundary as the pass), scoped to a project when
+    given. NOTE: this does NOT reproduce the pass's static-filter/priority/shape-dedup/cap — that
+    needs the Sprint-3 select_endpoint_targets extraction; used here only for the redacted preview."""
     from app.models.database import Asset
     from app.models.enrichment import Endpoint
     from app.services.scope_authorization import _active_authorizations
-    from app.tasks.scanning import host_in_scope, normalize_host
+    from app.tasks.scanning import endpoint_shape_key, host_in_scope, normalize_host
 
-    assets = db.query(Asset).filter(Asset.tenant_id == tenant, Asset.is_active == True).all()
+    q = db.query(Asset).filter(Asset.tenant_id == tenant, Asset.is_active == True)
+    if project is not None:
+        q = q.filter(Asset.project_id == project)
+    assets = q.all()
     authorised_hosts = {normalize_host(a.identifier) for a in assets}
     authorised_hosts.discard("")
     scope_entries = [
         e for auth in _active_authorizations(db, tenant, datetime.now(timezone.utc)) for e in (auth.scope_entries or [])
     ]
-    urls, seen = [], set()
-    for (u,) in (
-        db.query(Endpoint.url).join(Asset, Asset.id == Endpoint.asset_id).filter(Asset.tenant_id == tenant).all()
-    ):
-        if not u or u in seen:
+    asset_ids = [a.id for a in assets]
+    urls, seen_shapes = [], set()
+    eq = db.query(Endpoint.url).join(Asset, Asset.id == Endpoint.asset_id).filter(Asset.tenant_id == tenant)
+    if asset_ids:
+        eq = eq.filter(Endpoint.asset_id.in_(asset_ids))
+    for (u,) in eq.all():
+        if not u:
             continue
+        from urllib.parse import urlparse
+
         host = urlparse(u).hostname or ""
-        if host_in_scope(host, authorised_hosts, scope_entries):
-            seen.add(u)
-            urls.append(u)
+        if not host_in_scope(host, authorised_hosts, scope_entries):
+            continue
+        shape = endpoint_shape_key(u)  # shared shape fn → redaction + rough dedup
+        if shape in seen_shapes:
+            continue
+        seen_shapes.add(shape)
+        urls.append(u)
     return urls[:cap]
-
-
-def cmd_dry_run(tier: int, tenant: int, cap: int):
-    from app.database import SessionLocal
-
-    _bd, roots, severity, exclude, paths, ids, total = _endpoint_templates(tier)
-    db = SessionLocal()
-    try:
-        targets = _authorised_endpoints(db, tenant, cap)
-        active = _active_scan_running(db, tenant)
-    finally:
-        db.close()
-    print("=== DRY RUN (no nuclei, no traffic) ===")
-    print(f"tier={tier} tenant={tenant}")
-    print(f"applicable set (reconciled): {total}")
-    print(f"endpoint_sensitive templates: {len(paths)}")
-    print(f"authorised in-scope targets:  {len(targets)} (cap {cap})")
-    print(f"active scan running for tenant: {active}  -> --run would {'REFUSE' if active else 'proceed'}")
-    print(f"nuclei flags: -timeout {TIMEOUT} -rl {RATE} -c {CONCURRENCY} -duc -silent -jsonl (read-only)")
-    print(f"est. request upper bound (templates x targets): {len(paths) * len(targets)}")
-    print("\nfirst 5 templates:")
-    for p in paths[:5]:
-        print("  " + p)
-    print("first 5 targets:")
-    for t in targets[:5]:
-        print("  " + t)
 
 
 def cmd_reconcile(tier: int):
     base_dir, roots, severity, exclude, _snap, ruleset = _reconciled_ruleset(tier)
     catalog_rel = {r.relative_path for r in ruleset.rules}
-    args = [
-        "nuclei",
-        "-tl",
-        "-duc",
-        "-silent",
-        "-t",
-        ",".join(roots),
-        "-severity",
-        ",".join(severity),
-        "-etags",
-        ",".join(exclude),
-    ]
+    abs_roots = [os.path.join(base_dir, r) for r in roots]  # fix 1: absolute paths, like the pipeline
+    args = ["nuclei", "-tl", "-duc", "-silent"]
+    for ar in abs_roots:
+        args += ["-t", ar]
+    args += ["-severity", ",".join(severity), "-etags", ",".join(exclude)]
     print("=== RECONCILE (nuclei -tl: LIST ONLY, no scan/traffic) ===")
     print("  " + " ".join(args) + "\n")
-    p = subprocess.run(args, capture_output=True, text=True, timeout=300)
+    try:
+        p = subprocess.run(args, capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        print("nuclei -tl timed out (300s)")
+        return 1
     listed = set()
     for ln in p.stdout.splitlines():
         ln = ln.strip()
-        if not ln:
-            continue
-        rel = ln.replace(base_dir.rstrip("/") + "/", "")
-        listed.add(rel)
+        if ln:
+            listed.add(ln.replace(base_dir.rstrip("/") + "/", ""))
     print(f"catalog applicable: {len(catalog_rel)}   nuclei -tl listed: {len(listed)}   exit={p.returncode}")
     only_catalog = sorted(catalog_rel - listed)
-    only_nuclei = sorted(listed - catalog_rel)
-    print(f"\nin catalog but NOT loaded by nuclei ({len(only_catalog)}):")
-    for rel in only_catalog[:40]:
+    print(f"\nin catalog but NOT loaded by nuclei ({len(only_catalog)})  <-- the delta to explain:")
+    for rel in only_catalog[:60]:
         print("  " + rel)
+    only_nuclei = sorted(listed - catalog_rel)
     print(f"\nloaded by nuclei but NOT in catalog ({len(only_nuclei)}):")
-    for rel in only_nuclei[:40]:
+    for rel in only_nuclei[:20]:
         print("  " + rel)
     if p.stderr.strip():
         print("\n[stderr tail]")
-        for ln in p.stderr.splitlines()[-5:]:
+        for ln in p.stderr.splitlines()[-6:]:
             print("  " + ln)
+    return 0
 
 
-def cmd_run(tier: int, tenant: int, cap: int):
+def cmd_dry_run(tier: int, tenant: int, project: int | None, cap: int):
     from app.database import SessionLocal
+    from app.tasks.scanning import endpoint_shape_key
 
-    _bd, roots, severity, exclude, paths, ids, total = _endpoint_templates(tier)
+    base_dir, ruleset, ep_ids = _endpoint_ids(tier)
     db = SessionLocal()
     try:
-        if _active_scan_running(db, tenant):
-            print("REFUSING: a scan is currently running for this tenant (would compete / confuse).")
-            return 2
-        targets = _authorised_endpoints(db, tenant, cap)
+        targets = _in_scope_endpoints(db, tenant, project, cap)
+        db_running, celery_running = _scan_in_progress(db, tenant)
     finally:
         db.close()
-    if not paths or not targets:
-        print(f"nothing to run (templates={len(paths)}, targets={len(targets)})")
-        return 1
-    tmpdir = tempfile.mkdtemp(prefix="ep_bench_")
-    target_file = os.path.join(tmpdir, "targets.txt")
-    with open(target_file, "w") as fh:
-        fh.write("\n".join(targets))
-    args = [
-        "nuclei",
-        "-t",
-        ",".join(paths),
-        "-l",
-        target_file,
-        "-timeout",
-        str(TIMEOUT),
-        "-rl",
-        str(RATE),
-        "-c",
-        str(CONCURRENCY),
-        "-duc",
-        "-silent",
-        "-no-color",
-        "-jsonl",
-        "-stats",
-        "-si",
-        "20",
-    ]
-    print("=== ACTIVE BENCHMARK ===")
-    print(f"templates={len(paths)} targets={len(targets)} timeout={TIMEOUT} rate={RATE} c={CONCURRENCY}")
-    t0 = time.time()
-    p = subprocess.run(args, capture_output=True, text=True, timeout=1800)
-    dt = time.time() - t0
-    matches = sum(1 for ln in p.stdout.splitlines() if ln.strip().startswith("{"))
-    req_lines = [ln for ln in p.stderr.splitlines() if "request" in ln.lower() or "matched" in ln.lower()]
-    print(f"\nduration={dt:.1f}s  exit={p.returncode}  matches={matches}")
-    for ln in req_lines[-6:]:
-        print("  " + ln)
-    try:
-        os.unlink(target_file)
-        os.rmdir(tmpdir)
-    except OSError:
-        pass
+    busy = db_running > 0 or celery_running != 0
+    print("=== DRY RUN (no nuclei, no traffic) ===")
+    print(f"tier={tier} tenant={tenant} project={project}")
+    print(f"applicable set (reconciled): {len(ruleset.rules)}")
+    print(f"endpoint_sensitive templates: {len(ep_ids)}")
+    print(f"in-scope endpoints (preview, shape-deduped): {len(targets)} (cap {cap})")
+    print(
+        f"scan-in-progress gate: db_running={db_running} celery_run_scan_pipeline={celery_running} -> active would {'REFUSE' if busy else 'proceed'}"
+    )
+    print("NOTE: preview targets are NOT the pass's exact selection (static-filter/priority/cap need")
+    print("      the Sprint-3 select_endpoint_targets extraction). Values below are REDACTED.\n")
+    print("first 8 REDACTED target shapes (host | id-collapsed path | param-names):")
+    for u in targets[:8]:
+        host, path, params = endpoint_shape_key(u)
+        print(f"  {host} | {path} | params={list(params)}")
     return 0
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--tier", type=int, default=1)
-    ap.add_argument("--tenant", type=int, default=DEFAULT_TENANT)
+    ap.add_argument("--tenant", type=int, required=True, help="tenant id (required; no default)")
+    ap.add_argument("--project", type=int, default=None)
     ap.add_argument("--cap", type=int, default=DEFAULT_CAP)
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--dry-run", action="store_true")
@@ -254,8 +217,13 @@ def main():
     if a.reconcile:
         return cmd_reconcile(a.tier)
     if a.run:
-        return cmd_run(a.tier, a.tenant, a.cap)
-    return cmd_dry_run(a.tier, a.tenant, a.cap)  # default = dry-run
+        print(
+            "ACTIVE benchmark is deferred to Sprint 3: it must reuse the pipeline's exact endpoint\n"
+            "selection (select_endpoint_targets) + prod nuclei flags to be representative. Run\n"
+            "--dry-run / --reconcile now (no traffic)."
+        )
+        return 2
+    return cmd_dry_run(a.tier, a.tenant, a.project, a.cap)  # default
 
 
 if __name__ == "__main__":
