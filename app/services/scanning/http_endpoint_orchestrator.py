@@ -531,6 +531,34 @@ def _run_one_batch(
 
     # Write coverage LAST (still per-batch + immediate). A coverage-write error FAILS the batch.
     _write_coverage(repo, tenant_id, scan_run_id, batch, status)
+
+    # Per-batch diagnostic (shadow observability): the counts + proof flags that DECIDED the verdict,
+    # so a PARTIAL/FAILED reason is visible. Counts + booleans ONLY — never a URL/target/finding body.
+    logger.info(
+        "http_endpoint batch verdict",
+        extra={
+            "tenant_id": tenant_id,
+            "scan_run_id": scan_run_id,
+            "batch_index": batch.index,
+            "status": status.value,
+            "n_targets": len(batch.targets),
+            "exit_code": evidence.exit_code,
+            "timed_out": evidence.timed_out,
+            "truncated": evidence.truncated,
+            "unresponsive": evidence.unresponsive_targets,
+            "targets_loaded": evidence.targets_loaded,
+            "templates_loaded": evidence.templates_loaded,
+            "completion_percent": evidence.completion_percent,
+            "output_complete": evidence.output_complete,
+            "catalog_verified": evidence.catalog_verified,
+            "targets_completed": evidence.targets_completed,
+            "parse_incomplete": evidence.parse_incomplete,
+            "attribution_ok": attribution_ok,
+            "writer_ok": writer_ok,
+            "cleanup_failed": cleanup_failed,
+            "findings": len(evidence.findings),
+        },
+    )
     return EndpointBatchResult(batch, evidence, status, created, updated)
 
 
