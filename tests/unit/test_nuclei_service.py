@@ -110,6 +110,33 @@ class TestNucleiService:
         assert "-duc" in args
         assert "-no-httpx" in args
 
+    def test_build_nuclei_args_no_interactsh_server_forces_ni(self, nuclei_service):
+        # No configured server MUST explicitly disable OAST with -ni, else nuclei silently uses its
+        # default public server (oast.me) and sends OOB callbacks to a third party.
+        args = nuclei_service._build_nuclei_args(
+            urls_file="/tmp/urls.txt",
+            templates=None,
+            severity=["high"],
+            rate_limit=300,
+            concurrency=25,
+            interactsh_server=None,
+        )
+        assert "-ni" in args
+        assert "-iserver" not in args
+
+    def test_build_nuclei_args_configured_interactsh_is_explicit_no_ni(self, nuclei_service):
+        args = nuclei_service._build_nuclei_args(
+            urls_file="/tmp/urls.txt",
+            templates=None,
+            severity=["high"],
+            rate_limit=300,
+            concurrency=25,
+            interactsh_server="https://my.oast.example",
+        )
+        assert "-iserver" in args
+        assert args[args.index("-iserver") + 1] == "https://my.oast.example"
+        assert "-ni" not in args
+
     def test_build_nuclei_args_rate_and_concurrency(self, nuclei_service):
         args = nuclei_service._build_nuclei_args(
             urls_file="/tmp/urls.txt",
