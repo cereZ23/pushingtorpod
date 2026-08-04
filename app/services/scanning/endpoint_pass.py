@@ -20,8 +20,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from itertools import groupby
 from typing import Optional, Sequence
+from urllib.parse import urlparse
 
 from app.models.coverage import CoverageStatus
 from app.services.endpoint_selection import SelectedEndpoint
@@ -59,21 +59,46 @@ class EndpointBatch:
         return f"EndpointBatch(index={self.index}, n={len(self.targets)}, shapes=[{shapes}])"
 
 
-def plan_batches(selected: Sequence[SelectedEndpoint], *, batch_size: int, policy_hash: str) -> list[EndpointBatch]:
-    """Split the selection into deterministic, HOST-HOMOGENEOUS batches of at most ``batch_size``.
+def _origin_key(t: SelectedEndpoint) -> tuple[int, str, str, int]:
+    """The scan ORIGIN a target belongs to: ``(asset_id, scheme, host, effective_port)``.
 
-    Grouped PER ASSET (host): a batch never contains more than one ``asset_id``, so when Nuclei
-    declares a host unresponsive only THAT host's endpoints go PARTIAL — endpoints of other hosts in
-    other batches stay COVERED. (A flat chunk let one dead host contaminate up to ``batch_size``
-    endpoints across DIFFERENT hosts.) Deterministic total order ``(asset_id, shape_hash, url)`` so
-    the same selection always yields the same batches — a precondition for reproducible coverage.
+    Nuclei declares an ``host:port`` origin unresponsive, and ONE asset can expose several origins
+    (http vs https, alternate ports) — so the batch boundary must be the origin, not just the asset.
+    ``asset_id`` stays first so a batch is also never mixed across assets (coverage/attribution stay
+    per-asset). Host comes from the already-normalised ``t.host``; scheme+port from the transient url.
+    """
+    p = urlparse(t.url)
+    scheme = (p.scheme or "").lower()
+    port = p.port if p.port is not None else (443 if scheme == "https" else 80 if scheme == "http" else -1)
+    return (t.asset_id, scheme, t.host, port)
+
+
+def plan_batches(selected: Sequence[SelectedEndpoint], *, batch_size: int, policy_hash: str) -> list[EndpointBatch]:
+    """Split the selection into deterministic, ORIGIN-HOMOGENEOUS batches of at most ``batch_size``.
+
+    A batch never spans more than one ``(asset_id, scheme, host, port)`` origin, so when Nuclei
+    declares an ``host:port`` origin unresponsive only THAT origin's endpoints go PARTIAL — endpoints
+    of other origins (other hosts, or other ports/schemes of the SAME asset) stay COVERED in their own
+    batches. (A flat chunk let one dead origin contaminate up to ``batch_size`` endpoints of unrelated
+    origins.)
+
+    Ordering (both levels priority-first, so under budget truncation the highest-value surface runs
+    first regardless of asset id):
+      * origins are ordered by the BEST (lowest) priority they contain, then ``asset_id``, then
+        ``scheme``/``host``/``port`` — a high-value asset precedes a lower-id asset with worse priority;
+      * within an origin, endpoints are ordered ``(priority, shape_hash, url)``.
+    The result is independent of the input order — a precondition for reproducible coverage.
     """
     if batch_size <= 0:
         raise ValueError(f"batch_size must be positive, got {batch_size}")
-    ordered = sorted(selected, key=lambda t: (t.asset_id, t.shape_hash, t.url))
+    groups: dict[tuple[int, str, str, int], list[SelectedEndpoint]] = {}
+    for t in selected:
+        groups.setdefault(_origin_key(t), []).append(t)
+    # Order origins by best priority contained, then the origin tuple (asset_id, scheme, host, port).
+    ordered_origins = sorted(groups, key=lambda o: (min(t.priority for t in groups[o]),) + o)
     batches: list[EndpointBatch] = []
-    for _asset_id, group in groupby(ordered, key=lambda t: t.asset_id):
-        eps = list(group)
+    for origin in ordered_origins:
+        eps = sorted(groups[origin], key=lambda t: (t.priority, t.shape_hash, t.url))
         for i in range(0, len(eps), batch_size):
             batches.append(
                 EndpointBatch(index=len(batches), targets=tuple(eps[i : i + batch_size]), policy_hash=policy_hash)

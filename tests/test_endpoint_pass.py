@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from collections import namedtuple
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 import pytest
 
@@ -32,11 +33,11 @@ from app.services.scanning.endpoint_pass import (
 PH = "p" * 64
 
 
-def _sel(i, *, asset_id=10, prio=0):
+def _sel(i, *, asset_id=10, prio=0, url=None, host="app.curci.it"):
     h = f"{i:064x}"
     return SelectedEndpoint(
-        url=f"https://app.curci.it/{i}",
-        host="app.curci.it",
+        url=url or f"https://app.curci.it/{i}",
+        host=host,
         asset_id=asset_id,
         endpoint_type=None,
         priority=prio,
@@ -129,6 +130,54 @@ def test_plan_batches_coverage_is_per_endpoint():
     entries = [e for b in batches for e in b.entries()]
     assert len(entries) == len(sel)
     assert sorted(entries) == sorted((t.asset_id, t.shape_hash) for t in sel)
+
+
+# --- priority survives batching (budget truncation must run the highest-value surface first) ------
+
+
+def test_high_priority_asset_precedes_lower_id_asset_with_worse_priority():
+    # asset 5 carries a priority-0 endpoint; asset 1 only a priority-2 one. Under a budget cut the
+    # high-value asset MUST batch first, despite its higher asset_id (priority beats id).
+    sel = [_sel(1, asset_id=1, prio=2), _sel(2, asset_id=5, prio=0)]
+    batches = plan_batches(sel, batch_size=5, policy_hash=PH)
+    assert [b.targets[0].asset_id for b in batches] == [5, 1]
+
+
+def test_plan_batches_orders_endpoints_within_origin_by_priority():
+    # Same origin; the priority-0 endpoint comes first inside the batch, then 1, then 2.
+    sel = [_sel(3, asset_id=1, prio=2), _sel(1, asset_id=1, prio=0), _sel(2, asset_id=1, prio=1)]
+    batch = plan_batches(sel, batch_size=5, policy_hash=PH)[0]
+    assert [t.priority for t in batch.targets] == [0, 1, 2]
+
+
+# --- origin (host:port) is the real boundary, not just asset_id -----------------------------------
+
+
+def test_plan_batches_splits_origins_within_one_asset():
+    # One asset_id, two origins (https:443 and http:80). They must NOT share a batch, so a dead
+    # host:port origin cannot contaminate the other origin's endpoints of the SAME asset.
+    sel = [
+        _sel(1, asset_id=9, url="https://app.curci.it/a"),
+        _sel(2, asset_id=9, url="http://app.curci.it/b"),
+    ]
+    batches = plan_batches(sel, batch_size=5, policy_hash=PH)
+    assert len(batches) == 2
+    schemes = {frozenset(urlparse(t.url).scheme for t in b.targets) for b in batches}
+    assert schemes == {frozenset({"https"}), frozenset({"http"})}
+    for b in batches:
+        assert len({urlparse(t.url).scheme for t in b.targets}) == 1
+
+
+def test_plan_batches_splits_alternate_ports_within_one_asset():
+    # Same asset + scheme + host but different ports are distinct origins → distinct batches.
+    sel = [
+        _sel(1, asset_id=9, url="https://app.curci.it/a"),  # :443
+        _sel(2, asset_id=9, url="https://app.curci.it:8443/b"),  # :8443
+    ]
+    batches = plan_batches(sel, batch_size=5, policy_hash=PH)
+    assert len(batches) == 2
+    for b in batches:
+        assert len({urlparse(t.url).port or (443 if urlparse(t.url).scheme == "https" else 80) for t in b.targets}) == 1
 
 
 # --- verdict --------------------------------------------------------------------------------------
