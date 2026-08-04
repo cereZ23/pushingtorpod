@@ -29,9 +29,19 @@ ASSETS = [AuthorizedAsset(asset_id=10, host="app.curci.it")]
 SCOPE = [{"type": "domain", "value": "curci.it"}]
 
 
+def _cand(item):
+    # (url, type) → asset_id defaults to the authorised asset 10; (url, type, asset_id) overrides.
+    if len(item) == 3:
+        u, t, aid = item
+    else:
+        u, t = item
+        aid = 10
+    return CandidateEndpoint(url=u, endpoint_type=t, asset_id=aid)
+
+
 def _sel(cands, *, cap=50, assets=ASSETS, scope=SCOPE):
     return select_endpoint_targets(
-        [CandidateEndpoint(url=u, endpoint_type=t) for u, t in cands],
+        [_cand(c) for c in cands],
         authorized_assets=assets,
         per_host_cap=cap,
         now=NOW,
@@ -174,11 +184,30 @@ def test_invalid_candidates_are_excluded_failclosed():
 # --- explicit endpoint → asset_id association -----------------------------------------------------
 
 
-def test_explicit_asset_association():
+def test_explicit_asset_association_is_always_a_concrete_int():
+    # Every selected endpoint carries the endpoint's owning asset_id — NEVER None. sub.curci.it was
+    # crawled under the authorised asset 10, so its endpoints are attributed to 10.
     r = _sel([("https://app.curci.it/a", None), ("https://sub.curci.it/b", None)])
-    by_host = {s.host: s.asset_id for s in r.selected}
-    assert by_host["app.curci.it"] == 10  # exact asset → its id
-    assert by_host["sub.curci.it"] is None  # in-scope via authorization, but not itself an asset
+    assert len(r.selected) == 2
+    assert all(isinstance(s.asset_id, int) for s in r.selected)
+    assert {s.asset_id for s in r.selected} == {10}
+
+
+def test_foreign_asset_id_is_unassociated_not_selected():
+    # In-scope host but asset_id NOT among authorized_assets → unassociated, never scanned.
+    r = _sel([("https://app.curci.it/a", None, 999)])
+    assert not r.selected
+    assert len(r.unassociated) == 1
+    assert r.unassociated[0].reason == "unassociated"
+    assert r.unassociated[0].host == "app.curci.it"
+
+
+def test_missing_asset_id_is_unassociated():
+    # No owning asset at all → cannot be attributed → unassociated (coverage.asset_id is NOT NULL).
+    r = _sel([("https://app.curci.it/a", None, None)])
+    assert not r.selected
+    assert len(r.unassociated) == 1
+    assert r.unassociated[0].reason == "unassociated"
 
 
 # --- privacy: no cleartext URL in any repr --------------------------------------------------------
@@ -270,7 +299,7 @@ def test_equivalence_with_legacy_on_realistic_fixture():
         max_per_host=50,
     )
     new = select_endpoint_targets(
-        [CandidateEndpoint(url=u, endpoint_type=t) for u, t in endpoints if u and u not in url_to_asset],
+        [CandidateEndpoint(url=u, endpoint_type=t, asset_id=10) for u, t in endpoints if u and u not in url_to_asset],
         authorized_assets=ASSETS,
         per_host_cap=50,
         now=NOW,

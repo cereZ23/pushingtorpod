@@ -53,7 +53,7 @@ def _query_katana_endpoints(db, tenant_id: int, asset_ids: list):
     from app.models.enrichment import Endpoint
 
     return (
-        db.query(Endpoint.url, Endpoint.endpoint_type)
+        db.query(Endpoint.url, Endpoint.endpoint_type, Endpoint.asset_id)
         .join(Asset, Asset.id == Endpoint.asset_id)
         .filter(
             Asset.tenant_id == tenant_id,
@@ -268,8 +268,8 @@ def run_nuclei_scan(
             # Candidates are the crawled endpoints minus those already among the base targets.
             selection = select_endpoint_targets(
                 [
-                    CandidateEndpoint(url=ep_url, endpoint_type=ep_type)
-                    for ep_url, ep_type in endpoints
+                    CandidateEndpoint(url=ep_url, endpoint_type=ep_type, asset_id=ep_asset_id)
+                    for ep_url, ep_type, ep_asset_id in endpoints
                     if ep_url and ep_url not in url_to_asset
                 ],
                 authorized_assets=[AuthorizedAsset(asset_id=a.id, host=a.identifier) for a in assets],
@@ -283,10 +283,10 @@ def run_nuclei_scan(
             if endpoint_urls:
                 scan_targets.extend(endpoint_urls)
                 # Register Katana endpoint hostnames in host_to_asset so that findings matched on
-                # these URLs can still be mapped back to the correct asset. The selector already
-                # resolved endpoint host → asset_id, so use its explicit association.
+                # these URLs can still be mapped back to the correct asset. The selector guarantees a
+                # concrete authorised asset_id for every selected endpoint.
                 for sel in selection.selected:
-                    if sel.asset_id is not None and sel.host not in host_to_asset:
+                    if sel.host not in host_to_asset:
                         host_to_asset[sel.host] = sel.asset_id
                 tenant_logger.info(
                     f"Added {len(endpoint_urls)} Katana endpoints to Nuclei targets "

@@ -149,19 +149,31 @@ class AuthorizedAsset:
 
 @dataclass(frozen=True)
 class CandidateEndpoint:
-    """A crawled endpoint offered to the selector. ``asset_id`` optional — resolved by host match."""
+    """A crawled endpoint offered to the selector.
+
+    ``asset_id`` is the endpoint's OWNING asset (``Endpoint.asset_id`` — a real, tenant-owned FK).
+    The selector requires it to be one of ``authorized_assets``; a missing or foreign asset_id sends
+    the candidate to the ``unassociated`` bucket, never ``selected`` (coverage/provenance need a
+    concrete asset, and ``scan_endpoint_coverage.asset_id`` is NOT NULL).
+    """
 
     url: str
     endpoint_type: Optional[str] = None
+    asset_id: Optional[int] = None
 
 
 @dataclass(frozen=True)
 class SelectedEndpoint:
-    """An authorised endpoint to submit to the pass, with its explicit asset association."""
+    """An authorised endpoint to submit to the pass, with its MANDATORY asset association.
+
+    ``asset_id`` is always a concrete, authorised asset id (never None) — the selector guarantees it,
+    so downstream coverage (``scan_endpoint_coverage.asset_id`` NOT NULL) and finding provenance
+    have a real owner for isolation + attribution.
+    """
 
     url: str  # transient — for the caller to scan; NEVER logged/persisted (see __repr__)
     host: str
-    asset_id: Optional[int]
+    asset_id: int
     endpoint_type: Optional[str]
     priority: int
     shape_hash: str
@@ -199,6 +211,7 @@ class EndpointSelectionResult:
     shape_deduplicated: list[ExcludedEndpoint] = field(default_factory=list)
     cap_dropped: list[ExcludedEndpoint] = field(default_factory=list)
     invalid: list[ExcludedEndpoint] = field(default_factory=list)
+    unassociated: list[ExcludedEndpoint] = field(default_factory=list)
     per_host_counts: dict[str, int] = field(default_factory=dict)
 
     @property
@@ -215,6 +228,7 @@ class EndpointSelectionResult:
             "shape_duplicate": len(self.shape_deduplicated),
             "cap": len(self.cap_dropped),
             "invalid": len(self.invalid),
+            "unassociated": len(self.unassociated),
         }
 
     def __repr__(self) -> str:
@@ -235,14 +249,18 @@ def select_endpoint_targets(
       1. **invalid** — empty/unparseable, non-http(s), or hostless → excluded fail-closed.
       2. **out_of_scope** — host not an authorised asset and not covered by an active scope entry.
       3. **static** — the path ends in a static asset extension (css/js/img/font/archive/…).
-      4. Rank survivors by priority (api/form/interesting-path → parameterised → plain).
-      5. Apply the per-host cap over a STABLE TOTAL ordering ``(priority, shape_hash, url)`` so the
+      4. **unassociated** — no ``asset_id``, or an ``asset_id`` that is not one of ``authorized_assets``
+         (a foreign / unknown asset). Association is MANDATORY: coverage + provenance need a concrete
+         authorised owner, so an unassociable endpoint is NEVER selected.
+      5. Rank survivors by priority (api/form/interesting-path → parameterised → plain).
+      6. Apply the per-host cap over a STABLE TOTAL ordering ``(priority, shape_hash, url)`` so the
          result is independent of candidate order; within a shape only the first survivor is kept
          (**shape_duplicate**), and once a host reaches ``per_host_cap`` the rest are **cap**-dropped.
 
     Args:
-        candidates: crawled endpoints (already de-duplicated against base URLs by the caller).
-        authorized_assets: the exact assets this pass may scan (host + asset_id for association).
+        candidates: crawled endpoints (already de-duplicated against base URLs by the caller); each
+            carries its owning ``asset_id`` (``Endpoint.asset_id``).
+        authorized_assets: the exact assets this pass may scan (host for scope + asset_id whitelist).
         per_host_cap: max endpoints kept PER HOST (applied per host, never globally).
         now: injected clock (scope entries are pre-resolved as-of this instant by the caller). The
             function performs NO internal ``datetime.now()`` — the clock is always injected.
@@ -258,16 +276,13 @@ def select_endpoint_targets(
 
     authorised_hosts = {normalize_host(a.host) for a in authorized_assets}
     authorised_hosts.discard("")
-    host_to_asset: dict[str, int] = {}
-    for a in authorized_assets:
-        h = normalize_host(a.host)
-        if h and h not in host_to_asset:  # first wins → stable association
-            host_to_asset[h] = a.asset_id
+    authorized_asset_ids = {a.asset_id for a in authorized_assets}
 
     result = EndpointSelectionResult()
 
-    # Phase 1: validate + scope + static, computing the canonical identity for each survivor.
-    survivors: list[tuple[int, str, str, str, Optional[str]]] = []  # (prio, shape_hash, url, host, type)
+    # Phase 1: validate + scope + static + association, computing the identity for each survivor.
+    # (prio, shape_hash, url, host, type, asset_id)
+    survivors: list[tuple[int, str, str, str, Optional[str], int]] = []
     for cand in candidates:
         url = cand.url
         if not url:
@@ -291,6 +306,11 @@ def select_endpoint_targets(
         if any(parsed.path.lower().endswith(ext) for ext in STATIC_EXTENSIONS):
             result.static_filtered.append(ExcludedEndpoint(host=norm_host, shape_hash=None, reason="static"))
             continue
+        # Association is MANDATORY and validated against the authorised asset set — a missing or
+        # foreign asset_id can never be scanned/attributed (fail-closed).
+        if cand.asset_id is None or cand.asset_id not in authorized_asset_ids:
+            result.unassociated.append(ExcludedEndpoint(host=norm_host, shape_hash=None, reason="unassociated"))
+            continue
 
         try:
             shape = endpoint_shape_hash(url)
@@ -300,7 +320,7 @@ def select_endpoint_targets(
             continue
 
         prio = _priority(url.lower(), cand.endpoint_type, bool(parsed.query))
-        survivors.append((prio, shape, url, norm_host, cand.endpoint_type))
+        survivors.append((prio, shape, url, norm_host, cand.endpoint_type, cand.asset_id))
 
     # Phase 2: STABLE TOTAL order so the cap is order-independent. (priority, shape, url) is a total
     # order over distinct candidates → reordering the input cannot change the outcome.
@@ -308,7 +328,7 @@ def select_endpoint_targets(
 
     # Phase 3: shape-dedup + per-host cap, in that order.
     seen_shapes: set[str] = set()
-    for prio, shape, url, norm_host, ep_type in survivors:
+    for prio, shape, url, norm_host, ep_type, asset_id in survivors:
         if shape in seen_shapes:
             result.shape_deduplicated.append(
                 ExcludedEndpoint(host=norm_host, shape_hash=shape, reason="shape_duplicate")
@@ -323,7 +343,7 @@ def select_endpoint_targets(
             SelectedEndpoint(
                 url=url,
                 host=norm_host,
-                asset_id=host_to_asset.get(norm_host),
+                asset_id=asset_id,
                 endpoint_type=ep_type,
                 priority=prio,
                 shape_hash=shape,
