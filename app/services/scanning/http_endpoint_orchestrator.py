@@ -68,8 +68,9 @@ _DEFAULT_PORT = {"http": 80, "https": 443}
 
 # The pass produces TWO orthogonal signals for the phase-9 rollup (3b-2):
 #   - ``phase_non_degrading``  : this pass must NOT degrade the existing pipeline — True for a full
-#     COMPLETED run and for the innocuous skips (feature_disabled / no_targets). It only means
-#     "don't worsen the phase", NOT that anything was verified.
+#     COMPLETED run, innocuous skips (feature_disabled / no_targets), and a fully attempted run whose
+#     only limitation is an explicitly attributed unresponsive origin. It means "the pipeline
+#     finished", NOT that every endpoint was verified.
 #   - ``coverage_authorizing`` : the endpoint coverage may (later) authorise a miss/close — True
 #     ONLY for a COMPLETED run. Crucially, no_targets / feature_disabled are NOT authorizing: an
 #     endpoint absent from the crawl (or a disabled feature) means NO historical endpoint was
@@ -107,6 +108,7 @@ class EndpointBatchResult:
     status: CoverageStatus
     findings_created: int
     findings_updated: int
+    operationally_complete: bool = False
 
 
 @dataclass
@@ -441,12 +443,14 @@ def _run_one_batch(
         # A runner exception must NOT explode the whole pass: a timeout → PARTIAL, any other runner
         # failure → FAILED, so coverage is still written and the remaining batches still run.
         try:
+            expected_authority = _batch_authority(batch)
             evidence = runner.run_batch(
                 tenant_id=tenant_id,
                 target_file=target_file,
                 template_dir=template_dir,
                 expected_targets=len(batch.targets),
                 expected_templates=expected_templates,
+                expected_authority=expected_authority,
                 timeout_seconds=timeout_seconds,
                 interactsh_server=interactsh_server,
                 relevant_flags=relevant_flags,
@@ -497,7 +501,9 @@ def _run_one_batch(
             truncated=evidence.truncated,
             drift=evidence.drift,
             unresponsive=evidence.unresponsive_targets > 0,
-            parse_incomplete=evidence.parse_incomplete or not attribution_ok,
+            parse_incomplete=(
+                evidence.parse_incomplete or not evidence.unresponsive_attribution_complete or not attribution_ok
+            ),
         )
 
     # Save findings FIRST, then the FINAL coverage. If the writer raises OR reports errors, the
@@ -529,6 +535,33 @@ def _run_one_batch(
     if (not writer_ok or cleanup_failed) and status == CoverageStatus.COVERED:
         status = CoverageStatus.PARTIAL
 
+    # Operational completion and authorising coverage are intentionally separate. A clean Nuclei
+    # invocation that definitively identifies this batch's own origin as unresponsive is a terminal
+    # scan outcome: its endpoint coverage remains PARTIAL/non-authorising, but it must not make the
+    # whole customer scan look interrupted. Every other uncertainty still degrades phase 9.
+    unresponsive_only_limitation = (
+        status == CoverageStatus.PARTIAL
+        and evidence.launched
+        and evidence.exit_code == 0
+        and not evidence.timed_out
+        and not evidence.budget_expired
+        and not evidence.truncated
+        and not evidence.drift
+        and not evidence.parse_incomplete
+        and evidence.unresponsive_targets > 0
+        and evidence.unresponsive_attribution_complete
+        and evidence.targets_loaded == len(batch.targets)
+        and evidence.catalog_verified
+        and evidence.completion_percent is not None
+        and evidence.requests_done is not None
+        and evidence.requests_total is not None
+        and 0 <= evidence.requests_done <= evidence.requests_total
+        and attribution_ok
+        and writer_ok
+        and not cleanup_failed
+    )
+    operationally_complete = status == CoverageStatus.COVERED or unresponsive_only_limitation
+
     # Write coverage LAST (still per-batch + immediate). A coverage-write error FAILS the batch.
     _write_coverage(repo, tenant_id, scan_run_id, batch, status)
 
@@ -537,9 +570,10 @@ def _run_one_batch(
     # `extra`). Counts + booleans ONLY — never a URL/target/finding body.
     logger.info(
         "http_endpoint batch verdict run=%s batch=%s status=%s n_targets=%s exit=%s completion=%s "
-        "requests=%s/%s templates_loaded=%s targets_loaded=%s unresponsive=%s timed_out=%s truncated=%s "
+        "requests=%s/%s templates_loaded=%s targets_loaded=%s unresponsive_events=%s "
+        "unresponsive_targets=%s unresponsive_attributed=%s timed_out=%s truncated=%s "
         "output_complete=%s catalog_verified=%s targets_completed=%s parse_incomplete=%s "
-        "attribution_ok=%s writer_ok=%s cleanup_failed=%s findings=%s",
+        "attribution_ok=%s writer_ok=%s cleanup_failed=%s operationally_complete=%s findings=%s",
         scan_run_id,
         batch.index,
         status.value,
@@ -550,7 +584,9 @@ def _run_one_batch(
         evidence.requests_total,
         evidence.templates_loaded,
         evidence.targets_loaded,
+        evidence.unresponsive_events,
         evidence.unresponsive_targets,
+        evidence.unresponsive_attribution_complete,
         evidence.timed_out,
         evidence.truncated,
         evidence.output_complete,
@@ -560,9 +596,30 @@ def _run_one_batch(
         attribution_ok,
         writer_ok,
         cleanup_failed,
+        operationally_complete,
         len(evidence.findings),
     )
-    return EndpointBatchResult(batch, evidence, status, created, updated)
+    return EndpointBatchResult(batch, evidence, status, created, updated, operationally_complete)
+
+
+def _batch_authority(batch: EndpointBatch) -> tuple[str, int]:
+    """Return the single normalized host:port expected by an origin-homogeneous batch."""
+    authorities: set[tuple[str, int]] = set()
+    for target in batch.targets:
+        try:
+            parsed = urlparse(target.url)
+            host = normalize_host(parsed.hostname)
+            scheme = (parsed.scheme or "").lower()
+            port = parsed.port if parsed.port is not None else _DEFAULT_PORT.get(scheme)
+        except (TypeError, ValueError):
+            host = None
+            port = None
+        if not host or port is None:
+            raise EndpointPassStructuralError("batch_origin_invalid")
+        authorities.add((host, port))
+    if len(authorities) != 1:
+        raise EndpointPassStructuralError("batch_origin_mixed")
+    return next(iter(authorities))
 
 
 def _attribute_findings(findings, batch) -> tuple[list[dict], bool]:
@@ -679,6 +736,12 @@ def _rollup_stats(base_stats, batch_results, bundle, pass_status, skip_reason, e
     def _eps(s):
         return sum(len(br.batch.targets) for br in batch_results if br.status == s)
 
+    execution_complete = bool(batch_results) and all(br.operationally_complete for br in batch_results)
+    unresponsive_limited = [
+        br
+        for br in batch_results
+        if br.status == CoverageStatus.PARTIAL and br.operationally_complete and br.evidence.unresponsive_targets > 0
+    ]
     stats = dict(base_stats)
     stats.update(
         {
@@ -691,10 +754,17 @@ def _rollup_stats(base_stats, batch_results, bundle, pass_status, skip_reason, e
             "endpoints_partial": _eps(CoverageStatus.PARTIAL),
             "endpoints_failed": _eps(CoverageStatus.FAILED),
             "endpoints_skipped": _eps(CoverageStatus.SKIPPED),
+            "batches_unresponsive": len(unresponsive_limited),
+            "endpoints_unresponsive": sum(len(br.batch.targets) for br in unresponsive_limited),
             "findings_discovered": sum(br.findings_created + br.findings_updated for br in batch_results),
             "coverage_complete": pass_status == "completed",
             "coverage_authorizing": _coverage_authorizing(pass_status, skip_reason),
-            "phase_non_degrading": _phase_non_degrading(pass_status, skip_reason),
+            "execution_complete": execution_complete,
+            "completed_with_limitations": execution_complete and pass_status == "partial",
+            "coverage_limitation": (
+                "unresponsive_origins" if execution_complete and pass_status == "partial" else None
+            ),
+            "phase_non_degrading": _phase_non_degrading(pass_status, skip_reason) or execution_complete,
             "skip_reason": skip_reason,
         }
     )
@@ -753,8 +823,9 @@ def _endpoint_error_stats(reason_code: str) -> dict:
 
 def phase_degraded_by_endpoint(stats: dict) -> bool:
     """Whether the endpoint pass's outcome must mark phase 9 truncated. Driven by
-    ``phase_non_degrading`` (NOT status): feature_disabled / no_targets / completed → False;
-    insufficient_phase_budget / partial / failed / error → True."""
+    ``phase_non_degrading`` (NOT status): feature_disabled / no_targets / completed / fully-attempted
+    with attributed unresponsive origins → False; insufficient budget / ambiguous partial / failed /
+    unexpected error → True."""
     return not bool(stats.get("phase_non_degrading", False))
 
 

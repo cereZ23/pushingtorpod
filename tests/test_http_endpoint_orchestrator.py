@@ -64,6 +64,7 @@ class _FakeRunner:
         template_dir,
         expected_targets,
         expected_templates,
+        expected_authority,
         timeout_seconds,
         interactsh_server,
         relevant_flags,
@@ -73,6 +74,7 @@ class _FakeRunner:
                 "template_dir": template_dir,
                 "expected_targets": expected_targets,
                 "expected_templates": expected_templates,
+                "expected_authority": expected_authority,
                 "timeout": timeout_seconds,
                 "interactsh_server": interactsh_server,
                 "flags": dict(relevant_flags),
@@ -98,6 +100,24 @@ def _proven(n_targets, n_templates, findings=()):
 def _timeout(n_targets, n_templates):
     return BatchExecutionEvidence(
         launched=True, exit_code=None, timed_out=True, targets_loaded=None, templates_loaded=n_templates
+    )
+
+
+def _unresponsive(n_targets, n_templates):
+    return BatchExecutionEvidence(
+        launched=True,
+        exit_code=0,
+        unresponsive_events=2,
+        unresponsive_targets=1,
+        unresponsive_attribution_complete=True,
+        targets_loaded=n_targets,
+        templates_loaded=n_templates,
+        completion_percent=54,
+        requests_done=176,
+        requests_total=323,
+        output_complete=False,
+        catalog_verified=True,
+        targets_completed=False,
     )
 
 
@@ -255,6 +275,79 @@ def test_timeout_batch_is_partial(db_session, _enabled):
     rows = db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id).all()
     assert rows and all(r.status == CoverageStatus.PARTIAL for r in rows)
     assert res.stats["coverage_complete"] is False
+    assert res.stats["phase_non_degrading"] is False
+
+
+def test_attributed_unresponsive_is_partial_coverage_but_operationally_complete(db_session, _enabled):
+    tenant = _enabled
+    a = _asset(db_session, tenant)
+    _endpoint(db_session, a, "https://app.curci.it/admin")
+    custom = _custom_policy(db_session)
+    res, run = _call(db_session, tenant, assets=[a], runner=_FakeRunner(_unresponsive), custom_policy_hash=custom)
+    rows = db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id).all()
+    assert res.status == "partial" and rows[0].status == CoverageStatus.PARTIAL
+    assert res.stats["coverage_complete"] is False
+    assert res.stats["coverage_authorizing"] is False
+    assert res.stats["execution_complete"] is True
+    assert res.stats["completed_with_limitations"] is True
+    assert res.stats["coverage_limitation"] == "unresponsive_origins"
+    assert res.stats["phase_non_degrading"] is True
+    assert res.stats["batches_unresponsive"] == 1
+    assert res.stats["endpoints_unresponsive"] == 1
+
+
+def test_unattributed_unresponsive_still_degrades_phase(db_session, _enabled):
+    tenant = _enabled
+    a = _asset(db_session, tenant)
+    _endpoint(db_session, a, "https://app.curci.it/admin")
+    custom = _custom_policy(db_session)
+
+    def ambiguous(n_targets, n_templates):
+        return BatchExecutionEvidence(
+            launched=True,
+            exit_code=0,
+            unresponsive_events=1,
+            unresponsive_targets=0,
+            unresponsive_attribution_complete=False,
+            targets_loaded=n_targets,
+            templates_loaded=n_templates,
+            completion_percent=100,
+            requests_done=323,
+            requests_total=323,
+            output_complete=True,
+            catalog_verified=True,
+            targets_completed=False,
+        )
+
+    res, _ = _call(db_session, tenant, assets=[a], runner=_FakeRunner(ambiguous), custom_policy_hash=custom)
+    assert res.status == "partial"
+    assert res.stats["execution_complete"] is False
+    assert res.stats["phase_non_degrading"] is False
+
+
+def test_attributed_unresponsive_without_final_request_stats_still_degrades(db_session, _enabled):
+    tenant = _enabled
+    a = _asset(db_session, tenant)
+    _endpoint(db_session, a, "https://app.curci.it/admin")
+    custom = _custom_policy(db_session)
+
+    def missing_stats(n_targets, n_templates):
+        return BatchExecutionEvidence(
+            launched=True,
+            exit_code=0,
+            unresponsive_events=1,
+            unresponsive_targets=1,
+            unresponsive_attribution_complete=True,
+            targets_loaded=n_targets,
+            templates_loaded=n_templates,
+            catalog_verified=True,
+            targets_completed=False,
+        )
+
+    res, _ = _call(db_session, tenant, assets=[a], runner=_FakeRunner(missing_stats), custom_policy_hash=custom)
+    assert res.status == "partial"
+    assert res.stats["execution_complete"] is False
+    assert res.stats["phase_non_degrading"] is False
 
 
 def test_deadline_already_passed_skips_all(db_session, _enabled):
@@ -532,5 +625,6 @@ def test_phase_degraded_by_endpoint_rollup():
     from app.services.scanning.http_endpoint_orchestrator import phase_degraded_by_endpoint as deg
 
     assert deg({"phase_non_degrading": True}) is False  # feature_disabled / no_targets / completed
+    assert deg({"phase_non_degrading": True, "completed_with_limitations": True}) is False
     assert deg({"phase_non_degrading": False}) is True  # insufficient_phase_budget / partial / failed / error
     assert deg({}) is True  # missing signal → fail-closed (degrades)
