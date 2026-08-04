@@ -748,7 +748,7 @@ def test_endpoint_coverage_atomic_guard_rejects_concurrent_different_policy(db_s
 def test_finding_provenance_policy_fk_is_enforced(db_session, test_tenant):
     # origin_policy_hash is FK-constrained to scan_policy — a finding can never name a policy that
     # does not exist (incoherent provenance is a DB-level IntegrityError, not a silent write).
-    from app.models.database import Finding, FindingSeverity
+    from app.models.database import Finding, FindingSeverity, FindingStatus
 
     asset = _asset(db_session, test_tenant, "prov.test.com")
     f = Finding(
@@ -757,7 +757,7 @@ def test_finding_provenance_policy_fk_is_enforced(db_session, test_tenant):
         template_id="CVE-Z",
         name="z",
         severity=FindingSeverity.HIGH,
-        status="open",
+        status=FindingStatus.OPEN,
         endpoint_shape_hash=_esh("https://prov.test.com/x"),
         origin_policy_hash="deadbeef" * 8,  # no such policy
     )
@@ -765,3 +765,94 @@ def test_finding_provenance_policy_fk_is_enforced(db_session, test_tenant):
     with pytest.raises(IntegrityError):
         db_session.commit()
     db_session.rollback()
+
+
+def test_endpoint_coverage_db_check_rejects_invalid_hash(db_session, test_tenant):
+    # A writer that BYPASSES the repository (raw ORM/Core) still cannot store a bad hash: the DB
+    # CHECK enforces 64-lowercase-hex, so the ledger is safe even off the validated path.
+    from app.models.coverage import CoverageStatus, ScanEndpointCoverage
+
+    repo, m, run, asset = _endpoint_repo_setup(db_session, test_tenant)
+    row = ScanEndpointCoverage(
+        tenant_id=test_tenant.id,
+        scan_run_id=run.id,
+        asset_id=asset.id,
+        phase=m.phase,
+        pass_name=m.pass_name,
+        policy_hash=m.policy_hash,
+        endpoint_shape_hash="https://ep.test.com/x",  # a raw URL — must be rejected
+        status=CoverageStatus.COVERED,
+    )
+    db_session.add(row)
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+
+def test_finding_db_check_rejects_invalid_endpoint_hash(db_session, test_tenant):
+    # Same guard on the finding provenance column — an ORM writer cannot slip in a raw URL.
+    from app.models.database import Finding, FindingSeverity, FindingStatus
+
+    asset = _asset(db_session, test_tenant, "chk.test.com")
+    f = Finding(
+        asset_id=asset.id,
+        source="nuclei",
+        template_id="CVE-Q",
+        name="q",
+        severity=FindingSeverity.HIGH,
+        status=FindingStatus.OPEN,
+        endpoint_shape_hash="NOTAHASH",  # not 64-hex → DB CHECK rejects
+    )
+    db_session.add(f)
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+
+def test_endpoint_coverage_policy_phase_pass_mismatch_is_rejected(db_session, test_tenant):
+    from app.models.coverage import CoverageStatus
+    from app.repositories.coverage_repository import CoverageWriteError
+
+    repo, m, run, asset = _endpoint_repo_setup(db_session, test_tenant)
+    with pytest.raises(CoverageWriteError):
+        repo.record_endpoint_coverage(
+            tenant_id=test_tenant.id,
+            scan_run_id=run.id,
+            phase=m.phase,
+            pass_name="WRONG_PASS",  # policy is http_stock → mismatch
+            policy_hash=m.policy_hash,
+            entries=[(asset.id, _esh("https://ep.test.com/x"))],
+            status=CoverageStatus.COVERED,
+        )
+
+
+def test_endpoint_coverage_run_of_another_tenant_is_rejected(db_session, test_tenant):
+    from app.models.coverage import CoverageStatus
+    from app.repositories.coverage_repository import CoverageWriteError
+
+    repo, m, _run_, asset = _endpoint_repo_setup(db_session, test_tenant)
+    other = _second_tenant(db_session)
+    other_run = _run(db_session, other)  # run owned by a DIFFERENT tenant
+    with pytest.raises(CoverageWriteError):
+        repo.record_endpoint_coverage(
+            tenant_id=test_tenant.id,
+            scan_run_id=other_run.id,
+            phase=m.phase,
+            pass_name=m.pass_name,
+            policy_hash=m.policy_hash,
+            entries=[(asset.id, _esh("https://ep.test.com/x"))],
+            status=CoverageStatus.COVERED,
+        )
+
+
+def test_endpoint_coverage_unstarted_is_replaced_by_covered(db_session, test_tenant):
+    # UNSTARTED is a pure placeholder — a real verdict replaces it (the ONE promotion allowed),
+    # whereas PARTIAL → COVERED is forbidden (covered by test_endpoint_coverage_conservative_merge).
+    from app.models.coverage import CoverageStatus, ScanEndpointCoverage
+
+    repo, m, run, asset = _endpoint_repo_setup(db_session, test_tenant)
+    h = _esh("https://ep.test.com/planned")
+    _rec(repo, test_tenant, run, m, [(asset.id, h)], CoverageStatus.UNSTARTED)
+    _rec(repo, test_tenant, run, m, [(asset.id, h)], CoverageStatus.COVERED)
+    row = db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id, endpoint_shape_hash=h).one()
+    assert row.status == CoverageStatus.COVERED

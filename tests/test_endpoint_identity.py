@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from app.services.endpoint_identity import (
     IDENTITY_VERSION,
     canonical_endpoint,
@@ -20,6 +22,35 @@ from app.services.endpoint_identity import (
 )
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+
+# --- fail-closed on invalid input -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "",  # empty
+        "not-a-url",  # no scheme
+        "//host/x",  # scheme-relative → no scheme
+        "ftp://host/x",  # non-HTTP scheme
+        "mailto:a@b.c",  # non-HTTP scheme
+        "https:///x",  # no host
+        "http://",  # no host
+    ],
+)
+def test_canonical_rejects_non_web_or_hostless(bad):
+    # An invalid endpoint must NEVER silently yield a hash (that would forge a coverage identity).
+    with pytest.raises(ValueError):
+        canonical_endpoint(bad)
+    with pytest.raises(ValueError):
+        endpoint_shape_hash(bad)
+
+
+def test_canonical_rejects_invalid_idna_host():
+    # An empty label (double dot) is not encodable IDNA → explicit failure, not a silent hash.
+    with pytest.raises(ValueError):
+        canonical_endpoint("https://exa..mple.com/x")
 
 
 # --- shape / determinism -------------------------------------------------------------------------

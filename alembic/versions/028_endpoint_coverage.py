@@ -4,9 +4,12 @@ Persists WHAT was scanned at endpoint granularity so the coverage-aware auto-clo
 endpoint-derived findings once the dedicated endpoint pass exists (Sprint 3+).
 
 Identity is a HASH ONLY — ``endpoint_shape_hash`` (64 hex, SHA-256 of a versioned canonical JSON;
-see app/services/endpoint_identity.py). The URL / path / query is NEVER stored, so no token / PII /
-UUID can leak; scheme + effective port are part of the hash so ``:80``/``:443``/``:8443`` never
-collide, and the path is case-preserved.
+see app/services/endpoint_identity.py). The URL / path / query is NEVER stored, so no cleartext
+token / PII / UUID lives in these tables (confidentiality-at-rest; the unsalted hash is not
+un-guessable). Both ``scan_endpoint_coverage`` and the ``findings`` provenance column carry a CHECK
+that the hash is 64-lowercase-hex, so no raw URL can be persisted even outside the repository path.
+Scheme + effective port are part of the hash so ``:80``/``:443``/``:8443`` never collide, and the
+path is case-preserved.
 
 - ``scan_endpoint_coverage``: one conservative verdict per (run, phase, pass, asset,
   endpoint_shape_hash). Mirrors ``scan_coverage`` (composite policy FK, status CHECK, RLS).
@@ -83,6 +86,13 @@ def upgrade() -> None:
             sa.ForeignKey("scan_policy.policy_hash", ondelete="SET NULL"),
             nullable=True,
         ),
+    )
+    # Same hex guard as scan_endpoint_coverage: a finding's provenance hash must be a canonical
+    # 64-lowercase-hex identity (or NULL) — so no ORM/Core writer can persist a URL or a bad hash.
+    op.create_check_constraint(
+        "ck_finding_endpoint_shape_hash_hex",
+        "findings",
+        "endpoint_shape_hash IS NULL OR endpoint_shape_hash ~ '^[0-9a-f]{64}$'",
     )
 
     if op.get_bind().dialect.name == "postgresql":

@@ -198,8 +198,9 @@ class ScanEndpointCoverage(Base):
     Records WHAT was scanned at endpoint granularity so the coverage-aware auto-close can safely
     close endpoint-derived findings once the dedicated endpoint pass exists. ``endpoint_shape_hash``
     is the SHA-256 hex of the versioned canonical identity (see ``endpoint_identity``) — the URL /
-    path / query is NEVER stored, so no token/PII can leak. Same composite policy FK + status
-    contract as ``scan_coverage``. One verdict per (run, phase, pass, asset, endpoint_shape_hash).
+    path / query is NEVER stored, so no cleartext token/PII lives here (confidentiality-at-rest; the
+    unsalted hash is not un-guessable). Same composite policy FK + status contract as
+    ``scan_coverage``. One verdict per (run, phase, pass, asset, endpoint_shape_hash).
     """
 
     __tablename__ = "scan_endpoint_coverage"

@@ -1,9 +1,13 @@
 """Canonical endpoint IDENTITY hash — the single load-bearing key for endpoint coverage (Sprint 2).
 
 We persist ONLY a SHA-256 hash (``endpoint_shape_hash``, 64 lowercase hex), NEVER the URL / path /
-query — so no secret, token, or PII (reset tokens, usernames, UUIDs, emails carried in the path or
-query) can ever leak into the coverage or finding tables. The hash is taken over a VERSIONED
-canonical JSON, so the identity is stable and collision-safe:
+query — so NO CLEARTEXT DATA (reset tokens, usernames, UUIDs, emails carried in the path or query)
+is ever stored in the coverage or finding tables. This is confidentiality-at-rest, NOT a claim of
+irreversibility: SHA-256 here is UNSALTED, so an attacker who can guess a candidate endpoint can
+confirm it by recomputing the hash — predictable surfaces are inferrable. The value is that the
+plaintext is absent, not that the identity is un-guessable.
+
+The hash is taken over a VERSIONED canonical JSON, so the identity is stable and collision-safe:
 
 - ``v``       — identity schema version (bump ⇒ every hash changes; old rows stay distinct).
 - ``scheme``  — http/https (lowercased). Included so ``http://h/x`` ≠ ``https://h/x``.
@@ -43,15 +47,23 @@ def _collapse(seg: str) -> str:
 
 
 def canonical_endpoint(url: str, *, method: Optional[str] = None) -> dict:
-    """The canonical identity dict the hash is taken over (pure; useful for tests/debugging)."""
+    """The canonical identity dict the hash is taken over (pure; useful for tests/debugging).
+
+    Fails CLOSED on anything that is not a well-formed web endpoint: the scheme must be http/https,
+    a host must be present, and the host must be valid IDNA. An invalid input must never silently
+    yield a hash (that would create a bogus coverage identity), so we raise ``ValueError`` instead.
+    """
     p = urlparse(url or "")
     scheme = (p.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        raise ValueError(f"endpoint identity requires an http/https URL, got scheme {scheme!r}")
     host = (p.hostname or "").strip().rstrip(".").lower()
-    if host:
-        try:
-            host = host.encode("idna").decode("ascii")
-        except Exception:
-            pass
+    if not host:
+        raise ValueError(f"endpoint identity requires a host, got {url!r}")
+    try:
+        host = host.encode("idna").decode("ascii")
+    except (UnicodeError, ValueError) as exc:
+        raise ValueError(f"invalid IDNA host {host!r}: {exc}") from exc
     port = p.port if p.port is not None else _DEFAULT_PORT.get(scheme)
     path = "/".join(_collapse(s) for s in p.path.split("/"))  # case preserved; only id segments collapse
     params = sorted(parse_qs(p.query, keep_blank_values=True).keys())

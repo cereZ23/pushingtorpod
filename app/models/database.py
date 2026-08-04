@@ -256,6 +256,13 @@ class Finding(Base):
         CheckConstraint("eligible_miss_streak >= 0", name="ck_finding_miss_streak_nonneg"),
         Index("idx_finding_last_eligible_run", "last_eligible_run_id"),
         Index("idx_finding_last_detected_run", "last_detected_scan_run_id"),
+        # Sprint 2: provenance identity must be a canonical 64-lowercase-hex hash (or NULL) — the
+        # same guard as scan_endpoint_coverage, so no ORM/Core writer can slip a URL or a bad hash
+        # into a finding's provenance even outside the repository's validated path.
+        CheckConstraint(
+            "endpoint_shape_hash IS NULL OR endpoint_shape_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_finding_endpoint_shape_hash_hex",
+        ),
     )
 
     def __repr__(self):
