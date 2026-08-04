@@ -69,6 +69,46 @@ def _make_ruleset(policy_hash: str, rules: list[ApplicableRule]) -> ApplicableRu
     return ApplicableRuleSet(policy_hash=policy_hash, rules=ordered)
 
 
+# --- ONE canonical catalog digest (shared by the coverage repo's stamp AND any manifest identity) -
+#
+# There must be exactly ONE definition of "the digest of a catalog", else the value stamped into
+# scan_policy_catalog and any value folded into a policy_hash would silently disagree. It is taken
+# over the full per-detector tuple (detector_id, relative_path, content_digest, severity, tags) so an
+# extra / missing / swapped / re-severitied / re-tagged row moves the digest. Order-independent
+# (detectors sorted); value-only (no URL, no template body).
+
+
+def catalog_digest_from_map(catalog: dict) -> str:
+    """Digest over a catalog map ``{detector_id: (relative_path, content_digest, severity, tags)}``.
+
+    This is the shape both the coverage repo's ``_read_catalog`` (stored rows) and an
+    ``ApplicableRuleSet`` produce, so the stamped digest and a manifest-embedded digest always agree.
+    Detectors are sorted AND tags are sorted, so two semantically-equal catalogs whose tags arrived
+    in a different order hash identically (tags are already sorted by ``normalize_tags`` upstream —
+    this makes the digest robust regardless).
+    """
+    payload = json.dumps(
+        [[d, catalog[d][0], catalog[d][1], catalog[d][2], sorted(catalog[d][3])] for d in sorted(catalog)],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def catalog_digest_for_rules(rules) -> str:
+    """The canonical catalog digest for an iterable of ``ApplicableRule`` — the SAME value the
+    coverage repo stamps into ``scan_policy_catalog`` for the same detectors. A duplicate detector id
+    is a REJECTED error (fail-closed), never silently collapsed."""
+    catalog: dict = {}
+    for r in rules:
+        if r.detector_id in catalog:
+            raise RuleCatalogError(f"catalog_digest_for_rules: duplicate detector id {r.detector_id!r}")
+        catalog[r.detector_id] = (r.relative_path, r.content_digest, r.severity, tuple(r.tags))
+    return catalog_digest_from_map(catalog)
+
+
 # --- Nuclei capabilities (runtime-applicable gate) --------------------------
 
 CAP_CODE = "code"
