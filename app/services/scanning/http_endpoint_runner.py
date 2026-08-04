@@ -106,7 +106,7 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 # Legacy TEXT stats (fallback only). The REAL Nuclei -stats output is a JSON object (see below).
 _TEMPLATES_LOADED_RE = re.compile(r"Templates loaded for current scan:\s*(\d+)", re.IGNORECASE)
 _TARGETS_LOADED_RE = re.compile(r"Targets loaded for current scan:\s*(\d+)", re.IGNORECASE)
-_REQUESTS_PCT_RE = re.compile(r"Requests:\s*\d+/\d+\s*\((\d+)%\)", re.IGNORECASE)
+_REQUESTS_PCT_RE = re.compile(r"Requests:\s*(\d+)/(\d+)\s*\((\d+)%\)", re.IGNORECASE)
 # A NUMERIC unresponsive summary, e.g. "Found 3 unresponsive hosts".
 _UNRESPONSIVE_N_RE = re.compile(r"(\d+)\s+unresponsive", re.IGNORECASE)
 # A PER-TARGET unresponsive line, exactly as prod emits it:
@@ -121,11 +121,14 @@ _CAPABILITY_FLAG = {"code": "-code", "headless": "-headless", "dast": "-dast", "
 _REQUIRED_CAPS = ("code", "headless", "dast", "self_contained", "interactsh")
 
 
+_STATS_REQUIRED_KEYS = frozenset({"percent", "requests", "total", "hosts", "templates"})
+
+
 def _is_stats_obj(obj: dict) -> bool:
     """A Nuclei -stats JSON record, e.g. {"percent":"99","requests":"8851","total":"8904",
-    "hosts":"21","templates":"284","duration":"0:01:12"} — recognised by its stat keys, NEVER a
-    finding (which carries template-id)."""
-    return isinstance(obj, dict) and ("percent" in obj or ("requests" in obj and "total" in obj))
+    "hosts":"21","templates":"284","duration":"0:01:12"} — recognised by its FULL stat-key set (so a
+    finding that happens to carry a stray key is never misread). Callers check template-id first."""
+    return isinstance(obj, dict) and _STATS_REQUIRED_KEYS.issubset(obj)
 
 
 def _to_int(v) -> Optional[int]:
@@ -172,13 +175,14 @@ def _scan_json_lines(text: str, *, findings: list, stats: list, collect_findings
         if not isinstance(obj, dict):
             incomplete = True
             continue
-        if _is_stats_obj(obj):
-            stats.append(obj)
-        elif obj.get("template-id"):
+        # template-id FIRST: a finding is never misclassified as stats even with a stray stat key.
+        if obj.get("template-id"):
             if collect_findings:
                 findings.append(_finding_from_result(obj))
+        elif _is_stats_obj(obj):
+            stats.append(obj)
         else:
-            incomplete = True  # JSON without template-id and not a stats record → unknown
+            incomplete = True  # JSON without template-id and not a stats record → unknown/truncated
     return incomplete
 
 
@@ -215,13 +219,15 @@ def parse_nuclei_batch_output(
     findings: list[dict] = []
     stats_records: list[dict] = []
     err = _ANSI_RE.sub("", stderr or "")
-    # findings come from stdout only; stats JSON can appear on either stream.
+    # findings come from stdout only; stats JSON can appear on either stream. A malformed/unknown JSON
+    # on EITHER stream marks the parse incomplete — else a truncated stderr stats could be ignored
+    # while the text fallback wrongly authorises.
     inc_out = _scan_json_lines(stdout, findings=findings, stats=stats_records, collect_findings=True)
-    _scan_json_lines(err, findings=findings, stats=stats_records, collect_findings=False)
-    parse_incomplete = inc_out
+    inc_err = _scan_json_lines(err, findings=findings, stats=stats_records, collect_findings=False)
+    parse_incomplete = inc_out or inc_err
 
     # Prefer the JSON stats (last record wins per key); fall back to the legacy text format.
-    templates_json = hosts_json = percent_json = None
+    templates_json = hosts_json = percent_json = requests_json = total_json = None
     for rec in stats_records:
         if "templates" in rec:
             templates_json = _to_int(rec["templates"])
@@ -229,14 +235,31 @@ def parse_nuclei_batch_output(
             hosts_json = _to_int(rec["hosts"])
         if "percent" in rec:
             percent_json = _to_int(rec["percent"])
+        if "requests" in rec:
+            requests_json = _to_int(rec["requests"])
+        if "total" in rec:
+            total_json = _to_int(rec["total"])
     templates_loaded = templates_json if templates_json is not None else _last_int(_TEMPLATES_LOADED_RE, err)
     targets_loaded = hosts_json if hosts_json is not None else _last_int(_TARGETS_LOADED_RE, err)
     if percent_json is not None:
-        completion_percent = percent_json
+        completion_percent, requests_done, requests_total = percent_json, requests_json, total_json
     else:
-        pcts = _REQUESTS_PCT_RE.findall(err)
-        completion_percent = int(pcts[-1]) if pcts else None
+        text = _REQUESTS_PCT_RE.findall(err)
+        if text:
+            done_s, total_s, pct_s = text[-1]  # "Requests: a/b (c%)"
+            completion_percent, requests_done, requests_total = int(pct_s), int(done_s), int(total_s)
+        else:
+            completion_percent = requests_done = requests_total = None
     unresponsive = _count_unresponsive(err)
+
+    # A scan is fully complete ONLY at 100% AND with every request accounted for (a/b at 100% but
+    # a != b — e.g. a dropped request — is NOT complete).
+    fully_complete = (
+        completion_percent == 100
+        and requests_done is not None
+        and requests_total is not None
+        and requests_done == requests_total
+    )
 
     catalog_verified = (
         expected_templates is not None and templates_loaded is not None and templates_loaded == expected_templates
@@ -244,14 +267,12 @@ def parse_nuclei_batch_output(
     targets_completed = (
         targets_loaded is not None
         and targets_loaded == expected_targets
-        and completion_percent == 100
+        and fully_complete
         and unresponsive == 0
         and not timed_out
         and not truncated
     )
-    output_complete = (
-        returncode == 0 and not parse_incomplete and completion_percent == 100 and not timed_out and not truncated
-    )
+    output_complete = returncode == 0 and not parse_incomplete and fully_complete and not timed_out and not truncated
     return BatchExecutionEvidence(
         launched=True,
         exit_code=returncode,
@@ -292,9 +313,10 @@ def build_nuclei_args(
     mismatch): every capability declared with a canonical ``true``/``false``, no unknown capability,
     the interactsh server present iff the interactsh flag is ``true``, and positive-int tuning knobs.
     """
+    server = (interactsh_server or "").strip() or None  # normalise: blank/whitespace → no server
     _validate_runner_inputs(
         relevant_flags=relevant_flags,
-        interactsh_server=interactsh_server,
+        interactsh_server=server,
         rate_limit=rate_limit,
         concurrency=concurrency,
         request_timeout=request_timeout,
@@ -330,8 +352,8 @@ def build_nuclei_args(
     for cap, flag in _CAPABILITY_FLAG.items():
         if relevant_flags[cap] == "true":
             args.append(flag)
-    if interactsh_server:
-        args += ["-iserver", interactsh_server]  # NO empty -itoken (it can invalidate the config)
+    if server:
+        args += ["-iserver", server]  # NO empty -itoken (it can invalidate the config)
     else:
         args.append("-ni")
     return args
@@ -346,7 +368,8 @@ def _validate_runner_inputs(
     request_timeout,
     max_host_errors,
 ) -> None:
-    """Fail-closed pre-flight so the CLI can never diverge from the manifest (raises before exec)."""
+    """Fail-closed pre-flight so the CLI can never diverge from the manifest (raises before exec).
+    ``interactsh_server`` is already normalised (blank → None)."""
     for cap in _REQUIRED_CAPS:
         v = relevant_flags.get(cap)
         if v not in ("true", "false"):
@@ -354,7 +377,7 @@ def _validate_runner_inputs(
     unknown = set(relevant_flags) - set(_REQUIRED_CAPS)
     if unknown:
         raise EndpointRunnerError(f"unknown capabilities {sorted(unknown)}")
-    if (interactsh_server is not None) != (relevant_flags["interactsh"] == "true"):
+    if bool(interactsh_server) != (relevant_flags["interactsh"] == "true"):
         raise EndpointRunnerError("interactsh server/flag mismatch (CLI would diverge from the manifest)")
     for name, val in (
         ("rate_limit", rate_limit),
@@ -442,6 +465,8 @@ class NucleiEndpointRunner:
         interactsh_server: Optional[str],
         relevant_flags: Mapping[str, str],
     ) -> BatchExecutionEvidence:
+        if type(timeout_seconds) is not int or timeout_seconds <= 0:
+            raise EndpointRunnerError(f"timeout_seconds must be a positive int, got {timeout_seconds!r}")
         args = build_nuclei_args(
             target_file=target_file,
             template_dir=template_dir,

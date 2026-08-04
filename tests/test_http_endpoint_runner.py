@@ -102,6 +102,12 @@ def test_nonpositive_knobs_raise(kw):
         _args(**kw)
 
 
+def test_blank_interactsh_server_is_ni():
+    # whitespace/blank server → normalised to no server → -ni, and consistent with interactsh=false
+    a = _args(interactsh_server="   ", relevant_flags=_FLAGS_OFF)
+    assert "-ni" in a and "-iserver" not in a
+
+
 def test_no_capability_flag_when_disabled():
     a = _args()
     for flag in ("-code", "-headless", "-dast", "-esc"):
@@ -224,6 +230,39 @@ def test_unknown_json_object_sets_parse_incomplete():
     assert ev.output_complete is False
 
 
+def test_100_percent_but_requests_lt_total_is_not_complete():
+    # every request must be accounted for: 100% with requests != total (a dropped request) ⇒ NOT complete
+    stats = '{"percent":"100","requests":"8903","total":"8904","hosts":"21","templates":"284"}'
+    ev = parse_nuclei_batch_output(0, stats + "\n", "", expected_targets=21, expected_templates=284)
+    assert ev.completion_percent == 100
+    assert ev.targets_completed is False and ev.output_complete is False
+
+
+def test_partial_stats_keyset_is_not_stats():
+    # only "percent" (not the full key set) → not a stats record → unknown JSON → parse incomplete
+    ev = parse_nuclei_batch_output(0, '{"percent":"100"}\n', "", expected_targets=21, expected_templates=284)
+    assert ev.parse_incomplete is True and ev.findings == ()
+    assert ev.completion_percent is None
+
+
+def test_finding_with_stray_percent_stays_a_finding():
+    # a finding carrying stat keys must stay a finding (template-id is checked first)
+    stdout = (
+        '{"template-id":"ep-a","input":"https://h/x","percent":"100","requests":"1","total":"1",'
+        '"hosts":"1","templates":"1","info":{"severity":"high"}}\n'
+    )
+    ev = parse_nuclei_batch_output(0, stdout, _REAL_STATS_100, expected_targets=21, expected_templates=284)
+    assert len(ev.findings) == 1 and ev.findings[0]["template_id"] == "ep-a"
+
+
+def test_truncated_json_on_stderr_blocks_completion():
+    # a truncated stats JSON on stderr marks the parse incomplete — the text fallback must NOT authorise
+    err = "Requests: 1/1 (100%)\n{ truncated json\n"
+    ev = parse_nuclei_batch_output(0, "", err, expected_targets=21, expected_templates=284)
+    assert ev.parse_incomplete is True
+    assert ev.output_complete is False  # would wrongly be True if stderr incompleteness were ignored
+
+
 # --- run_batch: exec injection --------------------------------------------------------------------
 
 
@@ -273,3 +312,11 @@ def test_run_batch_generic_error_raises_runner_error():
 
     with pytest.raises(EndpointRunnerError):
         _call(_runner(fake_exec))
+
+
+def test_run_batch_rejects_nonpositive_timeout():
+    calls = []
+    runner = _runner(lambda a, t: calls.append(1) or (0, "", _COMPLETE_ERR))
+    with pytest.raises(EndpointRunnerError):
+        _call(runner, timeout_seconds=0)
+    assert calls == []  # exec never invoked
