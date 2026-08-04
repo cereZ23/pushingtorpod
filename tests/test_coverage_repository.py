@@ -554,3 +554,100 @@ def test_asset_of_another_tenant_is_rejected(db_session, test_tenant):
         )
     # nothing was written
     assert db_session.query(ScanCoverage).filter(ScanCoverage.scan_run_id == run.id).count() == 0
+
+
+# --- endpoint coverage (Sprint 2) --------------------------------------------
+
+
+def _endpoint_repo_setup(db_session, test_tenant):
+    from app.repositories.coverage_repository import CoverageRepository
+
+    repo = CoverageRepository(db_session)
+    m = _manifest()
+    repo.persist_policy(m)
+    run = _run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "ep.test.com")
+    return repo, m, run, asset
+
+
+def _rec(repo, tenant, run, m, entries, status):
+    return repo.record_endpoint_coverage(
+        tenant_id=tenant.id,
+        scan_run_id=run.id,
+        phase=m.phase,
+        pass_name=m.pass_name,
+        policy_hash=m.policy_hash,
+        entries=entries,
+        status=status,
+    )
+
+
+def test_endpoint_coverage_idempotent_upsert(db_session, test_tenant):
+    from app.models.coverage import CoverageStatus, ScanEndpointCoverage
+
+    repo, m, run, asset = _endpoint_repo_setup(db_session, test_tenant)
+    n1 = _rec(repo, test_tenant, run, m, [(asset.id, "ep.test.com|/admin|")], CoverageStatus.COVERED)
+    n2 = _rec(repo, test_tenant, run, m, [(asset.id, "ep.test.com|/admin|")], CoverageStatus.COVERED)
+    assert n1 == 1 and n2 == 1
+    rows = db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id).all()
+    assert len(rows) == 1  # idempotent — same (run, pass, asset, shape) → one row
+
+
+def test_endpoint_coverage_conservative_merge(db_session, test_tenant):
+    from app.models.coverage import CoverageStatus, ScanEndpointCoverage
+
+    repo, m, run, asset = _endpoint_repo_setup(db_session, test_tenant)
+    shape = "ep.test.com|/api/{id}|q"
+    _rec(repo, test_tenant, run, m, [(asset.id, shape)], CoverageStatus.COVERED)
+    _rec(repo, test_tenant, run, m, [(asset.id, shape)], CoverageStatus.PARTIAL)  # downgrade wins
+    row = db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id, endpoint_shape=shape).one()
+    assert row.status == CoverageStatus.PARTIAL
+    _rec(repo, test_tenant, run, m, [(asset.id, shape)], CoverageStatus.COVERED)  # cannot promote back
+    db_session.refresh(row)
+    assert row.status == CoverageStatus.PARTIAL
+
+
+def test_endpoint_coverage_distinct_shapes_are_separate_rows(db_session, test_tenant):
+    from app.models.coverage import CoverageStatus, ScanEndpointCoverage
+
+    repo, m, run, asset = _endpoint_repo_setup(db_session, test_tenant)
+    n = _rec(
+        repo,
+        test_tenant,
+        run,
+        m,
+        [(asset.id, "ep.test.com|/a|"), (asset.id, "ep.test.com|/b|"), (asset.id, "ep.test.com|/a|")],
+        CoverageStatus.COVERED,
+    )
+    assert n == 2  # dedup collapses the repeated /a; /a and /b are distinct shapes
+    assert db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id).count() == 2
+
+
+def test_endpoint_coverage_foreign_asset_refused(db_session, test_tenant):
+    from app.models.coverage import CoverageStatus
+    from app.repositories.coverage_repository import CoverageWriteError
+
+    repo, m, run, _asset_ = _endpoint_repo_setup(db_session, test_tenant)
+    other = _second_tenant(db_session)
+    foreign = _asset(db_session, other, "foreign.test.com")
+    with pytest.raises(CoverageWriteError):
+        _rec(repo, test_tenant, run, m, [(foreign.id, "foreign.test.com|/x|")], CoverageStatus.COVERED)
+
+
+def test_endpoint_coverage_unknown_policy_refused(db_session, test_tenant):
+    from app.models.coverage import CoverageStatus
+    from app.repositories.coverage_repository import CoverageRepository, CoverageWriteError
+
+    repo = CoverageRepository(db_session)
+    run = _run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "ep2.test.com")
+    with pytest.raises(CoverageWriteError):
+        repo.record_endpoint_coverage(
+            tenant_id=test_tenant.id,
+            scan_run_id=run.id,
+            phase="9",
+            pass_name="http_stock",
+            policy_hash="deadbeef" * 8,
+            entries=[(asset.id, "ep2.test.com|/x|")],
+            status=CoverageStatus.COVERED,
+        )
