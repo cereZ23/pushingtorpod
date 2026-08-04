@@ -165,8 +165,12 @@ def test_malformed_jsonl_sets_parse_incomplete():
 
 def test_unresponsive_line_counts():
     err = _COMPLETE_ERR + "[WRN] Found 3 unresponsive hosts\n"
-    ev = parse_nuclei_batch_output(0, "", err, expected_targets=5, expected_templates=219)
-    assert ev.unresponsive_targets == 3
+    ev = parse_nuclei_batch_output(
+        0, "", err, expected_targets=5, expected_templates=219, expected_authority=("h", 443)
+    )
+    assert ev.unresponsive_events == 3
+    assert ev.unresponsive_targets == 0  # numeric summary alone cannot identify an input origin
+    assert ev.unresponsive_attribution_complete is False
     assert ev.targets_completed is False  # any unresponsive ⇒ not complete
 
 
@@ -209,8 +213,47 @@ def test_percent_99_is_not_complete():
 
 def test_real_unresponsive_line_counts_and_blocks_completion():
     err = _REAL_STATS_100 + "\nSkipped link.example.it:443 from target list as found unresponsive permanently\n"
-    ev = parse_nuclei_batch_output(0, "", err, expected_targets=21, expected_templates=284)
+    ev = parse_nuclei_batch_output(
+        0,
+        "",
+        err,
+        expected_targets=21,
+        expected_templates=284,
+        expected_authority=("link.example.it", 443),
+    )
+    assert ev.unresponsive_events == 1
     assert ev.unresponsive_targets == 1  # exactly one, not double-counted
+    assert ev.unresponsive_attribution_complete is True
+    assert ev.targets_completed is False
+
+
+def test_repeated_unresponsive_lines_are_one_unique_expected_origin():
+    line = "Skipped link.example.it:443 from target list as found unresponsive permanently\n"
+    ev = parse_nuclei_batch_output(
+        0,
+        "",
+        _REAL_STATS_100 + "\n" + line + line,
+        expected_targets=1,
+        expected_templates=284,
+        expected_authority=("link.example.it", 443),
+    )
+    assert ev.unresponsive_events == 2
+    assert ev.unresponsive_targets == 1
+    assert ev.unresponsive_attribution_complete is True
+
+
+def test_foreign_unresponsive_origin_is_ambiguous_not_attributed():
+    err = _REAL_STATS_100 + "\nSkipped other.example.it:443 from target list as found unresponsive permanently\n"
+    ev = parse_nuclei_batch_output(
+        0,
+        "",
+        err,
+        expected_targets=1,
+        expected_templates=284,
+        expected_authority=("link.example.it", 443),
+    )
+    assert ev.unresponsive_events == 1 and ev.unresponsive_targets == 0
+    assert ev.unresponsive_attribution_complete is False
     assert ev.targets_completed is False
 
 
@@ -278,6 +321,7 @@ def _call(runner, **over):
         template_dir="/tmp/tpl",
         expected_targets=5,
         expected_templates=219,
+        expected_authority=("h", 443),
         timeout_seconds=120,
         interactsh_server=None,
         relevant_flags=_FLAGS_OFF,

@@ -19,6 +19,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Mapping, Optional, Protocol, Sequence, runtime_checkable
+from urllib.parse import urlparse
 
 
 class EndpointRunnerError(Exception):
@@ -47,7 +48,9 @@ class BatchExecutionEvidence:
     budget_expired: bool = False
     truncated: bool = False
     drift: bool = False
+    unresponsive_events: int = 0
     unresponsive_targets: int = 0
+    unresponsive_attribution_complete: bool = True
     targets_loaded: Optional[int] = None
     templates_loaded: Optional[int] = None
     completion_percent: Optional[int] = None
@@ -65,7 +68,9 @@ class BatchExecutionEvidence:
             f"BatchExecutionEvidence(launched={self.launched}, exit={self.exit_code}, "
             f"timed_out={self.timed_out}, targets_loaded={self.targets_loaded}, "
             f"templates_loaded={self.templates_loaded}, completion={self.completion_percent}, "
-            f"unresponsive={self.unresponsive_targets}, output_complete={self.output_complete}, "
+            f"unresponsive_events={self.unresponsive_events}, unresponsive={self.unresponsive_targets}, "
+            f"unresponsive_attributed={self.unresponsive_attribution_complete}, "
+            f"output_complete={self.output_complete}, "
             f"catalog_verified={self.catalog_verified}, targets_completed={self.targets_completed}, "
             f"parse_incomplete={self.parse_incomplete}, findings={len(self.findings)})"
         )
@@ -91,6 +96,7 @@ class EndpointNucleiRunner(Protocol):
         template_dir: str,
         expected_targets: int,
         expected_templates: int,
+        expected_authority: tuple[str, int],
         timeout_seconds: int,
         interactsh_server: Optional[str],
         relevant_flags: Mapping[str, str],
@@ -113,9 +119,7 @@ _REQUESTS_PCT_RE = re.compile(r"Requests:\s*(\d+)/(\d+)\s*\((\d+)%\)", re.IGNORE
 _UNRESPONSIVE_N_RE = re.compile(r"(\d+)\s+unresponsive", re.IGNORECASE)
 # A PER-TARGET unresponsive line, exactly as prod emits it:
 #   "Skipped link.example.it:443 from target list as found unresponsive permanently"
-_UNRESPONSIVE_LINE_RE = re.compile(
-    r"(from target list[^\n]*unresponsive|found unresponsive permanently)", re.IGNORECASE
-)
+_UNRESPONSIVE_LINE_RE = re.compile(r"skipped\s+(?P<authority>\S+)\s+from target list[^\n]*unresponsive", re.IGNORECASE)
 
 # Nuclei capability flags gated by the policy's relevant_flags (never passed when the value is false).
 _CAPABILITY_FLAG = {"code": "-code", "headless": "-headless", "dast": "-dast", "self_contained": "-esc"}
@@ -188,16 +192,51 @@ def _scan_json_lines(text: str, *, findings: list, stats: list, collect_findings
     return incomplete
 
 
-def _count_unresponsive(err: str) -> int:
-    """Count unresponsive/skipped targets from real prod lines, without double-counting a line."""
-    n = 0
+def _parse_authority(value: str) -> Optional[tuple[str, int]]:
+    """Parse Nuclei's transient ``host:port`` token without retaining or logging it."""
+    try:
+        parsed = urlparse(f"//{value}")
+        host = (parsed.hostname or "").lower().rstrip(".")
+        port = parsed.port
+    except ValueError:
+        return None
+    return (host, port) if host and port is not None else None
+
+
+def _unresponsive_evidence(err: str, expected_authority: Optional[tuple[str, int]]) -> tuple[int, int, bool]:
+    """Return ``(events, unique_expected_origins, attribution_complete)``.
+
+    Nuclei may repeat the same per-target warning, so occurrences are diagnostic only and the
+    authorising signal is the deduplicated origin. Numeric summaries alone cannot prove WHICH input
+    was skipped and therefore remain fail-closed/ambiguous.
+    """
+    events = 0
+    reported_total = 0
+    matched: set[tuple[str, int]] = set()
+    ambiguous = False
+    expected = (expected_authority[0].lower().rstrip("."), expected_authority[1]) if expected_authority else None
     for line in err.splitlines():
-        m = _UNRESPONSIVE_N_RE.search(line)
-        if m:
-            n += int(m.group(1))  # numeric summary line
-        elif _UNRESPONSIVE_LINE_RE.search(line):
-            n += 1  # per-target "... from target list ... unresponsive" / "found unresponsive permanently"
-    return n
+        per_target = _UNRESPONSIVE_LINE_RE.search(line)
+        if per_target:
+            events += 1
+            authority = _parse_authority(per_target.group("authority"))
+            if authority is None or expected is None:
+                ambiguous = True
+            elif authority == expected:
+                matched.add(authority)
+            else:
+                ambiguous = True
+            continue
+        summary = _UNRESPONSIVE_N_RE.search(line)
+        if summary:
+            reported_total = max(reported_total, int(summary.group(1)))
+
+    # A summary larger than the uniquely attributed input set proves there are unresolved reports.
+    if reported_total:
+        events = max(events, reported_total)
+        if reported_total > len(matched):
+            ambiguous = True
+    return events, len(matched), not ambiguous
 
 
 def parse_nuclei_batch_output(
@@ -207,6 +246,7 @@ def parse_nuclei_batch_output(
     *,
     expected_targets: int,
     expected_templates: Optional[int],
+    expected_authority: Optional[tuple[str, int]] = None,
     timed_out: bool = False,
     truncated: bool = False,
     duration_seconds: float = 0.0,
@@ -252,7 +292,9 @@ def parse_nuclei_batch_output(
             completion_percent, requests_done, requests_total = int(pct_s), int(done_s), int(total_s)
         else:
             completion_percent = requests_done = requests_total = None
-    unresponsive = _count_unresponsive(err)
+    unresponsive_events, unresponsive, unresponsive_attribution_complete = _unresponsive_evidence(
+        err, expected_authority
+    )
 
     # A scan is fully complete ONLY at 100% AND with every request accounted for (a/b at 100% but
     # a != b — e.g. a dropped request — is NOT complete).
@@ -271,6 +313,7 @@ def parse_nuclei_batch_output(
         and targets_loaded == expected_targets
         and fully_complete
         and unresponsive == 0
+        and unresponsive_attribution_complete
         and not timed_out
         and not truncated
     )
@@ -280,7 +323,9 @@ def parse_nuclei_batch_output(
         exit_code=returncode,
         timed_out=timed_out,
         truncated=truncated,
+        unresponsive_events=unresponsive_events,
         unresponsive_targets=unresponsive,
+        unresponsive_attribution_complete=unresponsive_attribution_complete,
         targets_loaded=targets_loaded,
         templates_loaded=templates_loaded,
         completion_percent=completion_percent,
@@ -465,6 +510,7 @@ class NucleiEndpointRunner:
         template_dir: str,
         expected_targets: int,
         expected_templates: Optional[int],
+        expected_authority: tuple[str, int],
         timeout_seconds: int,
         interactsh_server: Optional[str],
         relevant_flags: Mapping[str, str],
@@ -498,5 +544,6 @@ class NucleiEndpointRunner:
             stderr,
             expected_targets=expected_targets,
             expected_templates=expected_templates,
+            expected_authority=expected_authority,
             duration_seconds=time.monotonic() - started,
         )
