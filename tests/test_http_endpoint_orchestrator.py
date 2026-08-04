@@ -461,3 +461,76 @@ def test_completed_pass_is_authorizing(db_session, _enabled):
     assert res.status == "completed"
     assert res.stats["coverage_authorizing"] is True
     assert res.stats["phase_non_degrading"] is True
+
+
+# --- phase-9 adapter (step 3b-2b wiring) ----------------------------------------------------------
+
+_DISABLED = {"phase_non_degrading": True, "coverage_authorizing": False, "skip_reason": "feature_disabled"}
+
+
+def _adapter(db, tenant, **over):
+    base = dict(
+        tenant_id=tenant.id,
+        scan_run_id=_run(db, tenant).id,
+        scan_tier=1,
+        direct_assets=[],
+        phase_9_deadline=NOW + timedelta(seconds=3600),
+        custom_policy_hash="x" * 64,
+        interactsh_server=None,
+        severity=["high"],
+        exclude_tags="fuzz",
+        rate_limit=150,
+        concurrency=25,
+        request_timeout=6,
+        max_host_errors=20,
+        now_fn=lambda: NOW,
+        log=None,
+    )
+    base.update(over)
+    return orch.run_endpoint_pass_in_phase9(db, **base)
+
+
+def test_adapter_feature_off_is_true_noop(db_session, test_tenant, monkeypatch):
+    monkeypatch.setattr(settings, "nuclei_http_endpoint_enabled", False)
+    called = {"base_urls": 0, "pass": 0}
+    monkeypatch.setattr(
+        orch, "build_base_urls", lambda *a, **k: called.__setitem__("base_urls", called["base_urls"] + 1) or []
+    )
+    monkeypatch.setattr(orch, "run_http_endpoint_pass", lambda **k: called.__setitem__("pass", called["pass"] + 1))
+    stats = _adapter(db_session, test_tenant)
+    assert stats["skip_reason"] == "feature_disabled" and stats["enabled"] is False
+    assert called == {"base_urls": 0, "pass": 0}  # NO service query, NO runner/orchestrator
+    assert orch.phase_degraded_by_endpoint(stats) is False  # a disabled feature never degrades
+
+
+def test_adapter_exception_when_enabled_is_failclosed_no_url(db_session, _enabled, monkeypatch):
+    # an unexpected error (message carrying a URL) must degrade the phase, non-authorizing, no leak
+    def _boom(**k):
+        raise RuntimeError("connect failed for https://secret.curci.it/reset?token=SUPERSECRET")
+
+    monkeypatch.setattr(orch, "run_http_endpoint_pass", _boom)
+    stats = _adapter(db_session, _enabled)
+    assert stats["enabled"] is True and stats["coverage_authorizing"] is False
+    assert stats["phase_non_degrading"] is False
+    assert orch.phase_degraded_by_endpoint(stats) is True
+    assert stats["error"] == "RuntimeError"
+    blob = json.dumps(stats)
+    for leak in ("secret.curci.it", "SUPERSECRET", "https://"):
+        assert leak not in blob  # only the reason code, never the exception message/URL
+
+
+def test_adapter_custom_policy_hash_none_is_visible_failure(db_session, _enabled):
+    # feature ON + no custom catalog → the endpoint failure must be VISIBLE (FAILED), not silent
+    a = _asset(db_session, _enabled)
+    _endpoint(db_session, a, "https://app.curci.it/admin")
+    stats = _adapter(db_session, _enabled, direct_assets=[a], custom_policy_hash=None)
+    assert stats.get("coverage_complete") is False
+    assert orch.phase_degraded_by_endpoint(stats) is True  # a structural failure degrades the phase
+
+
+def test_phase_degraded_by_endpoint_rollup():
+    from app.services.scanning.http_endpoint_orchestrator import phase_degraded_by_endpoint as deg
+
+    assert deg({"phase_non_degrading": True}) is False  # feature_disabled / no_targets / completed
+    assert deg({"phase_non_degrading": False}) is True  # insufficient_phase_budget / partial / failed / error
+    assert deg({}) is True  # missing signal → fail-closed (degrades)

@@ -158,15 +158,17 @@ def emit_nuclei_pass_coverage(
     errored: bool,
     truncated: bool,
     interactsh_enabled: bool = False,
-) -> None:
+) -> str | None:
     """Record one conservative coverage verdict per asset for a finished nuclei pass.
 
     Never raises: a coverage-ledger failure must not affect the scan. ``scan_run_id``
     None (manual/adhoc run) is a no-op — coverage is only meaningful inside a real run.
+    Returns the pass's ``policy_hash`` (so a caller can reference the persisted policy, e.g. the
+    http_endpoint pass disjoining against custom_http), or ``None`` on a no-op / fail-open path.
     """
     asset_ids = sorted({int(a) for a in asset_ids})
     if scan_run_id is None or not asset_ids:
-        return
+        return None
     try:
         exclude = (
             list(exclude_tags)
@@ -212,10 +214,12 @@ def emit_nuclei_pass_coverage(
             scan_run_id,
             manifest.policy_hash[:12],
         )
+        return manifest.policy_hash
     except (RuleResolutionError, subprocess.SubprocessError, OSError) as exc:
         logger.warning("coverage emit skipped for pass %s (resolution failed): %s", pass_name, exc)
     except Exception:  # noqa: BLE001 — fail-open: the ledger must never break a scan
         logger.exception("coverage emit failed for pass %s (run %s) — scan unaffected", pass_name, scan_run_id)
+    return None
 
 
 # --- misconfig (phase 8, built-in engine) ------------------------------------

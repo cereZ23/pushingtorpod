@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.models.risk import Relationship
 
@@ -264,6 +264,9 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     _group_timeout = {1: 1800, 2: 3600, 3: 10800}.get(scan_tier, 3600)
     nuclei_group_budget = int(_group_timeout * 0.9)
     _phase9_start = time.monotonic()  # #3: recompute the budget from REMAINING wall-clock below
+    # Absolute (tz-aware) phase-9 deadline for the sequential http_endpoint pass (it re-derives its
+    # own effective deadline = min(this, start + endpoint budget); it never extends phase 9).
+    _phase9_deadline = datetime.now(timezone.utc) + timedelta(seconds=_group_timeout)
 
     # Tier-aware knobs that keep the T1 pass inside its budget WITHOUT dropping host/template
     # coverage: a tighter Katana endpoint cap (endpoints are ranked → only the low-value tail
@@ -482,9 +485,11 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         PASS_CDN_SSL_TAKEOVER,
         PASS_CUSTOM_HTTP,
         PASS_DNS_NETWORK,
+        PASS_HTTP_ENDPOINT,
         PASS_HTTP_STOCK,
     )
 
+    custom_policy_hash = None  # captured from the custom pass emit; the http_endpoint pass disjoins against it
     if asset_ids:
         tenant_logger.info(
             f"Nuclei custom pass: {len(asset_ids)} direct assets, templates=['/app/custom-nuclei-templates/']"
@@ -520,7 +525,7 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         # A dict-reported failure ({"status":"failed"}) never raises — derive the outcome
         # from the result contract, not just the except path, or it becomes a false COVERED.
         custom_failed, custom_truncated = nuclei_result_outcome(custom_result, exception_occurred=custom_errored)
-        emit_nuclei_pass_coverage(
+        custom_policy_hash = emit_nuclei_pass_coverage(
             db,
             tenant_id=tenant_id,
             scan_run_id=scan_run_id,
@@ -627,6 +632,37 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
                     interactsh_enabled=(use_interactsh and policy_pass == PASS_HTTP_STOCK),
                 )
 
+    # --- http_endpoint pass (Sprint 3, step 3b-2b): SEQUENTIAL, after the parallel base passes so it
+    # doesn't compete for CPU/RAM/net and its cost is measurable. The adapter feature-gates FIRST (a
+    # true no-op — no service query / snapshot / runner — when OFF) and is fail-CLOSED when ON.
+    from app.services.scanning.http_endpoint_orchestrator import (
+        phase_degraded_by_endpoint,
+        run_endpoint_pass_in_phase9,
+    )
+
+    endpoint_stats = run_endpoint_pass_in_phase9(
+        db,
+        tenant_id=tenant_id,
+        scan_run_id=scan_run_id,
+        scan_tier=scan_tier,
+        direct_assets=direct_assets,
+        phase_9_deadline=_phase9_deadline,
+        custom_policy_hash=custom_policy_hash,
+        interactsh_server=(interactsh_server if (use_interactsh and interactsh_server) else None),
+        severity=severity,
+        exclude_tags=exclude_tags,
+        rate_limit=rate_limit,
+        concurrency=concurrency,
+        request_timeout=req_timeout,
+        max_host_errors=mhe_cap,
+        now_fn=lambda: datetime.now(timezone.utc),
+        log=tenant_logger,
+    )
+    # Rollup driven by phase_non_degrading (NOT status): insufficient_phase_budget / partial / failed
+    # / error degrade the phase; feature_disabled / no_targets / completed do not.
+    if phase_degraded_by_endpoint(endpoint_stats):
+        truncated_passes.append(PASS_HTTP_ENDPOINT)
+
     if truncated_passes:
         tenant_logger.warning(
             f"Nuclei coverage INCOMPLETE: passes {truncated_passes} hit their timeout; "
@@ -653,6 +689,9 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         # is visible (never silently treated as a full run).
         "coverage_complete": not truncated_passes,
         "truncated_passes": truncated_passes,
+        # http_endpoint pass stats (Sprint 3) — counts + hashes only, never a URL. None when the
+        # feature flag/allowlist leaves it disabled (then this key carries the SKIPPED reason).
+        "http_endpoint": endpoint_stats,
     }
 
 
