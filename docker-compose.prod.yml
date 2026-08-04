@@ -267,6 +267,16 @@ services:
       MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: json
+      # Sprint 3 http_endpoint pass — SHADOW on Curci (tenant 3) ONLY. Auto-close stays OFF (the
+      # endpoint consumer doesn't exist yet); this only writes scan_endpoint_coverage + findings with
+      # NULL provenance. FIRST-RUN CAUTIOUS knobs (reduced cap / small batches / limited budget); the
+      # definitive run relaxes these back to the code defaults (40 / 25 / 600) in a follow-up change.
+      NUCLEI_HTTP_ENDPOINT_ENABLED: "true"
+      NUCLEI_HTTP_ENDPOINT_TENANT_IDS: "[3]"
+      NUCLEI_HTTP_ENDPOINT_MAX_PER_HOST: "10"
+      NUCLEI_HTTP_ENDPOINT_BATCH_SIZE: "5"
+      NUCLEI_HTTP_ENDPOINT_BATCH_TIMEOUT_SECONDS: "120"
+      NUCLEI_HTTP_ENDPOINT_BUDGET_SECONDS: "180"
     volumes:
       - ./data:/app/data:ro
       - ./app:/app/app
