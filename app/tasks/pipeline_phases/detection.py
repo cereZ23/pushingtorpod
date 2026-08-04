@@ -81,12 +81,9 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     # Include medium for all tiers — many real exposure findings
     # (Dockerfile, docker-compose, .htaccess, .env) are rated medium.
     # Excluding medium from T1 caused false negatives on known vulns.
-    tier_severity = {
-        1: ["critical", "high", "medium"],
-        2: ["critical", "high", "medium"],
-        3: ["critical", "high", "medium", "low"],
-    }
-    severity = tier_severity.get(scan_tier, tier_severity[1])
+    from app.services.scan_tiers import tier_severity as _tier_severity
+
+    severity = _tier_severity(scan_tier)
 
     # Only scan assets that have at least one live HTTP service (discovered
     # by phase 4 HTTPx). Sending ghost subdomains to Nuclei causes 80%+
@@ -319,56 +316,9 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
     # (legal), headless/ (Phase 7 does it), file/code/workflows/ (not HTTP).
     # NOTE: custom/ removed — custom templates are now at /app/custom-nuclei-templates/
     # and appended automatically by nuclei_service.py (survives nuclei auto-update).
-    tier_templates = {
-        1: [
-            "http/cves/",
-            "http/exposed-panels/",
-            "http/takeovers/",
-            "http/default-logins/",
-            "http/exposures/",
-            "http/honeypot/",
-            "http/cnvd/",
-            "http/technologies/wordpress/",  # 239 WP plugin + theme detection
-            "http/technologies/eol/",  # End-of-life software detection
-            "ssl/",
-        ],
-        2: [
-            "http/cves/",
-            "http/exposed-panels/",
-            "http/misconfiguration/",
-            "http/default-logins/",
-            "http/takeovers/",
-            "http/exposures/",
-            "http/vulnerabilities/",
-            "http/iot/",
-            "http/cnvd/",
-            "http/miscellaneous/",
-            "http/honeypot/",
-            "http/technologies/",  # All 512 technology detection (WP, Apache, GraphQL, SAP, etc.)
-            "cloud/",
-            "ssl/",
-            "javascript/",
-        ],
-        3: [
-            "http/cves/",
-            "http/exposed-panels/",
-            "http/misconfiguration/",
-            "http/default-logins/",
-            "http/takeovers/",
-            "http/exposures/",
-            "http/vulnerabilities/",
-            "http/iot/",
-            "http/cnvd/",
-            "http/miscellaneous/",
-            "http/honeypot/",
-            "http/technologies/",
-            "cloud/",
-            "ssl/",
-            "javascript/",
-            "dast/",  # Active payload injection — T3 only (requires authorization)
-        ],
-    }
-    templates_for_scan = tier_templates.get(scan_tier, tier_templates[2])
+    from app.services.scan_tiers import http_stock_roots
+
+    templates_for_scan = http_stock_roots(scan_tier)
 
     # DNS/network template config (Pass 3)
     # All tiers get network/ — exposed SSH, RDP, Redis, MongoDB etc. are
