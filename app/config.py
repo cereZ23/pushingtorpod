@@ -208,6 +208,10 @@ class Settings(BaseSettings):
     # Feature-flagged OFF: enabled first on a controlled tenant. Its budget can never exceed the
     # remaining phase-9 time (enforced at runtime via compute_effective_deadline).
     nuclei_http_endpoint_enabled: bool = False
+    # Per-tenant allowlist: the global bool is NOT enough. An EMPTY list means NO tenant (never
+    # "all") — a global enable must be a future explicit decision, never an implicit wildcard.
+    # A tenant is enabled iff (nuclei_http_endpoint_enabled AND tenant_id in this list).
+    nuclei_http_endpoint_tenant_ids: list[int] = []
     nuclei_http_endpoint_batch_size: int = 25
     nuclei_http_endpoint_batch_timeout_seconds: int = 180
     nuclei_http_endpoint_budget_seconds: int = 600
