@@ -51,6 +51,8 @@ class BatchExecutionEvidence:
     targets_loaded: Optional[int] = None
     templates_loaded: Optional[int] = None
     completion_percent: Optional[int] = None
+    requests_done: Optional[int] = None
+    requests_total: Optional[int] = None
     output_complete: bool = False
     catalog_verified: bool = False
     targets_completed: bool = False
@@ -282,6 +284,8 @@ def parse_nuclei_batch_output(
         targets_loaded=targets_loaded,
         templates_loaded=templates_loaded,
         completion_percent=completion_percent,
+        requests_done=requests_done,
+        requests_total=requests_total,
         output_complete=output_complete,
         catalog_verified=catalog_verified,
         targets_completed=targets_completed,
