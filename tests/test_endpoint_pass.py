@@ -150,6 +150,20 @@ def test_plan_batches_orders_endpoints_within_origin_by_priority():
     assert [t.priority for t in batch.targets] == [0, 1, 2]
 
 
+def test_plan_batches_orders_chunks_globally_by_priority():
+    # Origin A has one highest-priority endpoint followed by a low-priority endpoint. Origin B's
+    # medium-priority chunk must run before A's second chunk, otherwise A can monopolise a tight
+    # phase budget merely because its first chunk contained a priority-0 target.
+    sel = [
+        _sel(1, asset_id=1, prio=0),
+        _sel(2, asset_id=1, prio=3),
+        _sel(3, asset_id=2, prio=1),
+    ]
+    batches = plan_batches(sel, batch_size=1, policy_hash=PH)
+    assert [(b.targets[0].asset_id, b.targets[0].priority) for b in batches] == [(1, 0), (2, 1), (1, 3)]
+    assert [b.index for b in batches] == [0, 1, 2]
+
+
 # --- origin (host:port) is the real boundary, not just asset_id -----------------------------------
 
 

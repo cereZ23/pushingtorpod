@@ -82,11 +82,10 @@ def plan_batches(selected: Sequence[SelectedEndpoint], *, batch_size: int, polic
     batches. (A flat chunk let one dead origin contaminate up to ``batch_size`` endpoints of unrelated
     origins.)
 
-    Ordering (both levels priority-first, so under budget truncation the highest-value surface runs
-    first regardless of asset id):
-      * origins are ordered by the BEST (lowest) priority they contain, then ``asset_id``, then
-        ``scheme``/``host``/``port`` — a high-value asset precedes a lower-id asset with worse priority;
-      * within an origin, endpoints are ordered ``(priority, shape_hash, url)``.
+    Ordering is priority-first, so under budget truncation the highest-value surface runs first
+    regardless of asset id: endpoints are ordered within each origin, then the origin-homogeneous
+    chunks are ordered globally by their BEST (lowest) priority. The origin key and original chunk
+    position provide deterministic tie-breakers.
     The result is independent of the input order — a precondition for reproducible coverage.
     """
     if batch_size <= 0:
@@ -94,16 +93,18 @@ def plan_batches(selected: Sequence[SelectedEndpoint], *, batch_size: int, polic
     groups: dict[tuple[int, str, str, int], list[SelectedEndpoint]] = {}
     for t in selected:
         groups.setdefault(_origin_key(t), []).append(t)
-    # Order origins by best priority contained, then the origin tuple (asset_id, scheme, host, port).
-    ordered_origins = sorted(groups, key=lambda o: (min(t.priority for t in groups[o]),) + o)
-    batches: list[EndpointBatch] = []
-    for origin in ordered_origins:
+    planned: list[tuple[int, tuple[int, str, str, int], int, tuple[SelectedEndpoint, ...]]] = []
+    for origin in sorted(groups):
         eps = sorted(groups[origin], key=lambda t: (t.priority, t.shape_hash, t.url))
         for i in range(0, len(eps), batch_size):
-            batches.append(
-                EndpointBatch(index=len(batches), targets=tuple(eps[i : i + batch_size]), policy_hash=policy_hash)
-            )
-    return batches
+            chunk = tuple(eps[i : i + batch_size])
+            planned.append((min(t.priority for t in chunk), origin, i // batch_size, chunk))
+
+    planned.sort(key=lambda item: (item[0], item[1], item[2]))
+    return [
+        EndpointBatch(index=index, targets=chunk, policy_hash=policy_hash)
+        for index, (_priority, _origin, _chunk_index, chunk) in enumerate(planned)
+    ]
 
 
 def batch_verdict(
