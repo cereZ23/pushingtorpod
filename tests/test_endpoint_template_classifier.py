@@ -130,6 +130,13 @@ def test_takeover_tag_among_others_still_host_only():
     assert _cat(doc) == HOST_ONLY
 
 
+def test_takeover_with_opaque_protocol_is_unknown_not_host_only():
+    # fail-closed: an opaque protocol MUST win over the takeover tag override
+    assert _cat({"id": "x", "info": {"tags": "takeover"}, "code": [{"engine": ["python"]}]}) == UNKNOWN
+    doc = {"id": "x", "info": {"tags": "takeover"}, "http": [{"path": ["{{BaseURL}}"]}], "headless": [{"steps": []}]}
+    assert _cat(doc) == UNKNOWN
+
+
 def test_unknown_url_variable_is_unknown():
     assert _cat({"id": "x", "http": [{"path": ["{{Hostname}}/x"]}]}) == UNKNOWN
 

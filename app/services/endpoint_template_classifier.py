@@ -157,28 +157,26 @@ def classify_nuclei_template(doc: Mapping) -> TemplateClass:
     if not isinstance(doc, Mapping):
         return TemplateClass(UNKNOWN, "template is not a mapping")
 
-    # Semantic override: a host/domain-level family (e.g. takeover) is about the HOST, so it is
-    # host_only even when its request hits {{BaseURL}} as-is — running it per-endpoint just repeats
-    # the host check. This corrects the syntactic classifier for these families.
+    # 1. Opaque protocols come FIRST — fail-closed. An opaque block (code/js/headless/…) means we
+    #    can't reason about targeting, and that MUST win over any semantic tag override below
+    #    (e.g. a takeover template that also carries a `code` block is unknown, not host_only).
+    opaque = [p for p in _OPAQUE_PROTOCOLS if doc.get(p) is not None]
+    if opaque:
+        return TemplateClass(UNKNOWN, f"opaque protocol(s) {opaque} — cannot reason about targeting")
+
+    # 2. Semantic override (only reached when NOT opaque): a host/domain-level family (e.g. takeover)
+    #    is about the HOST, so it is host_only even when its request hits {{BaseURL}} as-is.
     if _HOST_LEVEL_TAGS & _tags(doc):
         return TemplateClass(HOST_ONLY, "host/domain-level family (tag) — endpoints add no coverage")
 
     requests = _http_requests(doc)
 
     if requests is None:
-        # No HTTP block: decide from the other protocol blocks present.
-        opaque = [p for p in _OPAQUE_PROTOCOLS if doc.get(p) is not None]
-        if opaque:
-            return TemplateClass(UNKNOWN, f"opaque protocol(s) {opaque} — cannot reason about targeting")
+        # No HTTP block: decide from the other (non-opaque) protocol blocks present.
         host_level = [p for p in _HOST_LEVEL_PROTOCOLS if doc.get(p) is not None]
         if host_level:
             return TemplateClass(HOST_ONLY, f"host/service protocol(s) {host_level} — no HTTP path")
         return TemplateClass(UNKNOWN, "no recognizable request/protocol block")
-
-    # Opaque protocol alongside HTTP → we can't be sure what the browser/code path does.
-    opaque = [p for p in _OPAQUE_PROTOCOLS if doc.get(p) is not None]
-    if opaque:
-        return TemplateClass(UNKNOWN, f"HTTP mixed with opaque protocol(s) {opaque}")
 
     if _has_fuzzing(doc, requests):
         return TemplateClass(ENDPOINT_SENSITIVE, "fuzzing/dast — exercises the input URL's params")
