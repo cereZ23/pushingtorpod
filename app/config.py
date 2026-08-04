@@ -203,6 +203,16 @@ class Settings(BaseSettings):
     # "mixed" hosts (some paths error, others match).
     nuclei_max_host_errors_t1: int = 20
 
+    # http_endpoint pass (Sprint 3): a dedicated Nuclei pass over Katana endpoints running ONLY the
+    # endpoint_sensitive template subset, with INDEPENDENT batching/timeout/budget (never http_stock's).
+    # Feature-flagged OFF: enabled first on a controlled tenant. Its budget can never exceed the
+    # remaining phase-9 time (enforced at runtime via compute_effective_deadline).
+    nuclei_http_endpoint_enabled: bool = False
+    nuclei_http_endpoint_batch_size: int = 25
+    nuclei_http_endpoint_batch_timeout_seconds: int = 180
+    nuclei_http_endpoint_budget_seconds: int = 600
+    nuclei_http_endpoint_max_per_host: int = 40
+
     # New tool timeouts
     alterx_timeout: int = 300  # 5 min
     puredns_timeout: int = 1800  # 30 min (174k+ candidates at 200/s)
