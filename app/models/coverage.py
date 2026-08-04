@@ -196,10 +196,10 @@ class ScanEndpointCoverage(Base):
     """Per (run, pass, asset, endpoint_shape) coverage status — tenant-scoped, under RLS (Sprint 2).
 
     Records WHAT was scanned at endpoint granularity so the coverage-aware auto-close can safely
-    close endpoint-derived findings once the dedicated endpoint pass exists. ``endpoint_shape`` is
-    the canonical shape STRING (``endpoint_shape_string``: host | id-collapsed path | sorted param
-    NAMES) — NO query/token values. Same composite policy FK + status contract as ``scan_coverage``.
-    One verdict per (scan_run_id, phase, pass_name, asset_id, endpoint_shape), updated idempotently.
+    close endpoint-derived findings once the dedicated endpoint pass exists. ``endpoint_shape_hash``
+    is the SHA-256 hex of the versioned canonical identity (see ``endpoint_identity``) — the URL /
+    path / query is NEVER stored, so no token/PII can leak. Same composite policy FK + status
+    contract as ``scan_coverage``. One verdict per (run, phase, pass, asset, endpoint_shape_hash).
     """
 
     __tablename__ = "scan_endpoint_coverage"
@@ -211,7 +211,7 @@ class ScanEndpointCoverage(Base):
     phase = Column(String(10), nullable=False)
     pass_name = Column(String(64), nullable=False)
     policy_hash = Column(String(64), nullable=False)  # composite FK below → (policy_hash, phase, pass_name)
-    endpoint_shape = Column(String(1024), nullable=False)  # host|/id-path|param,names — never any value
+    endpoint_shape_hash = Column(String(64), nullable=False)  # sha256 hex identity; never a URL/value
     status = Column(_coverage_status_enum(), nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(
@@ -227,7 +227,7 @@ class ScanEndpointCoverage(Base):
             "phase",
             "pass_name",
             "asset_id",
-            "endpoint_shape",
+            "endpoint_shape_hash",
             name="uq_endpoint_coverage_run_pass_asset_shape",
         ),
         ForeignKeyConstraint(
@@ -239,7 +239,8 @@ class ScanEndpointCoverage(Base):
             "status IN ('covered', 'partial', 'failed', 'skipped', 'unstarted')",
             name="ck_endpoint_coverage_status",
         ),
-        Index("idx_endpoint_coverage_tenant_asset_shape", "tenant_id", "asset_id", "endpoint_shape"),
+        CheckConstraint("endpoint_shape_hash ~ '^[0-9a-f]{64}$'", name="ck_endpoint_coverage_shape_hash_hex"),
+        Index("idx_endpoint_coverage_tenant_asset_shape", "tenant_id", "asset_id", "endpoint_shape_hash"),
         Index("idx_endpoint_coverage_run", "scan_run_id"),
         Index("idx_endpoint_coverage_policy", "policy_hash"),
     )
@@ -247,5 +248,6 @@ class ScanEndpointCoverage(Base):
     def __repr__(self) -> str:
         return (
             f"<ScanEndpointCoverage(run={self.scan_run_id}, pass={self.pass_name!r}, asset={self.asset_id}, "
-            f"shape={self.endpoint_shape!r}, status={self.status.value if self.status else None})>"
+            f"shape={self.endpoint_shape_hash[:12] if self.endpoint_shape_hash else None}…, "
+            f"status={self.status.value if self.status else None})>"
         )

@@ -49,19 +49,6 @@ def endpoint_shape_key(url: str) -> tuple:
     return (host, "/".join(segs), tuple(sorted(parse_qs(p.query).keys())))
 
 
-def endpoint_shape_string(url: str) -> str:
-    """The canonical STRING serialization of a URL's shape — the SINGLE source of truth for the
-    endpoint-coverage identity (Sprint 2). One function used by every side (the coverage writer, a
-    finding's provenance ``endpoint_shape``, and the consumer's match), so they can never diverge.
-
-    Format ``host|/id-collapsed/path|p1,p2`` — id/hash path segments collapse to ``{id}`` and only
-    query param NAMES are kept (sorted). NO query/path VALUES or tokens are ever included, so the
-    stored shape is safe to persist. Deterministic; two URLs with the same surface map identically.
-    """
-    host, path, params = endpoint_shape_key(url)
-    return f"{host}|{path}|{','.join(params)}"
-
-
 def normalize_host(host: str | None) -> str:
     """Lowercase, strip a trailing dot, and IDNA-encode a hostname for scope comparison."""
     if not host:

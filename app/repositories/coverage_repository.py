@@ -320,7 +320,10 @@ class CoverageRepository:
         stmt = insert(ScanCoverage).values(rows)
         stmt = stmt.on_conflict_do_update(
             constraint="uq_coverage_run_pass_asset",
-            set_={"status": _conservative_merge(stmt.excluded.status, ScanCoverage.status), "updated_at": stmt.excluded.updated_at},
+            set_={
+                "status": _conservative_merge(stmt.excluded.status, ScanCoverage.status),
+                "updated_at": stmt.excluded.updated_at,
+            },
             where=ScanCoverage.policy_hash == stmt.excluded.policy_hash,
         )
         result = self.db.execute(stmt)
@@ -342,10 +345,10 @@ class CoverageRepository:
         entries: Iterable[tuple[int, str]],
         status: CoverageStatus,
     ) -> int:
-        """Atomically upsert one endpoint-coverage verdict per (asset, endpoint_shape) for a pass.
+        """Atomically upsert one endpoint-coverage verdict per (asset, endpoint_shape_hash) for a pass.
 
-        ``entries`` are (asset_id, endpoint_shape) pairs; endpoint_shape MUST be the canonical
-        ``endpoint_shape_string`` (host|/id-path|param,names — never any value). Same fail-closed
+        ``entries`` are (asset_id, endpoint_shape_hash) pairs; each hash MUST be a canonical 64-hex
+        identity (``endpoint_identity.endpoint_shape_hash`` — never a URL/path/value). Same fail-closed
         contract as ``record_pass_coverage``: run/policy/phase/pass validated, assets tenant-owned,
         and no existing (run, phase, pass, asset, shape) row may name a DIFFERENT policy_hash.
         Conservative merge on conflict (a non-COVERED status never downgrades to COVERED). Returns
@@ -363,7 +366,14 @@ class CoverageRepository:
                 f"not {phase!r}/{pass_name!r}"
             )
 
-        pairs = sorted({(int(a), str(s)) for a, s in entries if s})  # dedup (asset, shape); drop empties
+        # entries are (asset_id, endpoint_shape_hash). Fail-closed: reject anything that is not a
+        # canonical 64-hex identity hash so a caller can NEVER persist a raw URL/query/token.
+        from app.services.endpoint_identity import is_shape_hash
+
+        pairs = sorted({(int(a), str(h)) for a, h in entries})
+        bad = [h for _a, h in pairs if not is_shape_hash(h)]
+        if bad:
+            raise CoverageWriteError(f"endpoint_shape_hash must be a 64-hex identity hash, got {bad[:3]}")
         if not pairs:
             return 0
         asset_ids = {a for a, _s in pairs}
@@ -376,14 +386,20 @@ class CoverageRepository:
             raise CoverageWriteError(f"assets {stray} do not belong to tenant {tenant_id}")
 
         keyset = set(pairs)
-        existing = self.db.query(
-            ScanEndpointCoverage.asset_id, ScanEndpointCoverage.endpoint_shape, ScanEndpointCoverage.policy_hash
-        ).filter(
-            ScanEndpointCoverage.scan_run_id == scan_run_id,
-            ScanEndpointCoverage.phase == phase,
-            ScanEndpointCoverage.pass_name == pass_name,
-            ScanEndpointCoverage.asset_id.in_(asset_ids),
-        ).all()
+        existing = (
+            self.db.query(
+                ScanEndpointCoverage.asset_id,
+                ScanEndpointCoverage.endpoint_shape_hash,
+                ScanEndpointCoverage.policy_hash,
+            )
+            .filter(
+                ScanEndpointCoverage.scan_run_id == scan_run_id,
+                ScanEndpointCoverage.phase == phase,
+                ScanEndpointCoverage.pass_name == pass_name,
+                ScanEndpointCoverage.asset_id.in_(asset_ids),
+            )
+            .all()
+        )
         conflicting = [(r[0], r[1]) for r in existing if (r[0], r[1]) in keyset and r[2] != policy_hash]
         if conflicting:
             raise CoverageWriteError(
@@ -399,12 +415,12 @@ class CoverageRepository:
                 "phase": phase,
                 "pass_name": pass_name,
                 "policy_hash": policy_hash,
-                "endpoint_shape": s,
+                "endpoint_shape_hash": h,
                 "status": status,
                 "created_at": now,
                 "updated_at": now,
             }
-            for a, s in pairs
+            for a, h in pairs
         ]
         self._upsert_endpoint_coverage_rows(rows)
         return len(rows)
@@ -416,7 +432,10 @@ class CoverageRepository:
         stmt = insert(ScanEndpointCoverage).values(rows)
         stmt = stmt.on_conflict_do_update(
             constraint="uq_endpoint_coverage_run_pass_asset_shape",
-            set_={"status": _conservative_merge(stmt.excluded.status, ScanEndpointCoverage.status), "updated_at": stmt.excluded.updated_at},
+            set_={
+                "status": _conservative_merge(stmt.excluded.status, ScanEndpointCoverage.status),
+                "updated_at": stmt.excluded.updated_at,
+            },
             where=ScanEndpointCoverage.policy_hash == stmt.excluded.policy_hash,
         )
         result = self.db.execute(stmt)

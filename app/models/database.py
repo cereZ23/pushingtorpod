@@ -200,13 +200,13 @@ class Finding(Base):
     last_eligible_run_id = Column(Integer, ForeignKey("scan_runs.id", ondelete="SET NULL"), nullable=True)
     last_detected_scan_run_id = Column(Integer, ForeignKey("scan_runs.id", ondelete="SET NULL"), nullable=True)
 
-    # Provenance (Sprint 2): where/how the finding was produced, so the coverage-aware auto-close
-    # knows which coverage row authorises it. NULL on historic findings = UNKNOWN (never inferred;
-    # such findings stay ineligible until re-detected with provenance). endpoint_shape is the
-    # canonical shape string (endpoint_shape_string) — NO query/token values.
-    origin_pass = Column(String(64), nullable=True)
-    endpoint_shape = Column(String(1024), nullable=True)
-    origin_policy_hash = Column(String(64), nullable=True)
+    # Provenance (Sprint 2): the coverage identity that authorises this finding's auto-close.
+    # NULL on historic findings = UNKNOWN (never inferred; they stay ineligible until re-detected
+    # with provenance). endpoint_shape_hash is the sha256 hex identity (endpoint_identity — NO
+    # URL/value stored); origin_policy_hash is FK-constrained to scan_policy so provenance can never
+    # name a non-existent policy, and the pass derives from it (no redundant origin_pass column).
+    endpoint_shape_hash = Column(String(64), nullable=True)
+    origin_policy_hash = Column(String(64), ForeignKey("scan_policy.policy_hash", ondelete="SET NULL"), nullable=True)
 
     asset = relationship("Asset", back_populates="findings")
 

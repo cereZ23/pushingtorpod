@@ -557,6 +557,13 @@ def test_asset_of_another_tenant_is_rejected(db_session, test_tenant):
 
 
 # --- endpoint coverage (Sprint 2) --------------------------------------------
+#
+# Identity is a HASH ONLY (endpoint_identity.endpoint_shape_hash). The repository must reject any
+# entry that is not a canonical 64-hex hash, so a raw URL/path/token can never reach the DB. These
+# tests pin: hash-only writes, conservative merge, scheme/port/path separation, privacy (no raw
+# value in the row), arbitrary-string rejection, the atomic policy guard, and provenance FK.
+
+from app.services.endpoint_identity import endpoint_shape_hash as _esh
 
 
 def _endpoint_repo_setup(db_session, test_tenant):
@@ -586,23 +593,24 @@ def test_endpoint_coverage_idempotent_upsert(db_session, test_tenant):
     from app.models.coverage import CoverageStatus, ScanEndpointCoverage
 
     repo, m, run, asset = _endpoint_repo_setup(db_session, test_tenant)
-    n1 = _rec(repo, test_tenant, run, m, [(asset.id, "ep.test.com|/admin|")], CoverageStatus.COVERED)
-    n2 = _rec(repo, test_tenant, run, m, [(asset.id, "ep.test.com|/admin|")], CoverageStatus.COVERED)
+    h = _esh("https://ep.test.com/admin")
+    n1 = _rec(repo, test_tenant, run, m, [(asset.id, h)], CoverageStatus.COVERED)
+    n2 = _rec(repo, test_tenant, run, m, [(asset.id, h)], CoverageStatus.COVERED)
     assert n1 == 1 and n2 == 1
     rows = db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id).all()
-    assert len(rows) == 1  # idempotent — same (run, pass, asset, shape) → one row
+    assert len(rows) == 1  # idempotent — same (run, pass, asset, shape hash) → one row
 
 
 def test_endpoint_coverage_conservative_merge(db_session, test_tenant):
     from app.models.coverage import CoverageStatus, ScanEndpointCoverage
 
     repo, m, run, asset = _endpoint_repo_setup(db_session, test_tenant)
-    shape = "ep.test.com|/api/{id}|q"
-    _rec(repo, test_tenant, run, m, [(asset.id, shape)], CoverageStatus.COVERED)
-    _rec(repo, test_tenant, run, m, [(asset.id, shape)], CoverageStatus.PARTIAL)  # downgrade wins
-    row = db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id, endpoint_shape=shape).one()
+    h = _esh("https://ep.test.com/api/1?q=x")
+    _rec(repo, test_tenant, run, m, [(asset.id, h)], CoverageStatus.COVERED)
+    _rec(repo, test_tenant, run, m, [(asset.id, h)], CoverageStatus.PARTIAL)  # downgrade wins
+    row = db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id, endpoint_shape_hash=h).one()
     assert row.status == CoverageStatus.PARTIAL
-    _rec(repo, test_tenant, run, m, [(asset.id, shape)], CoverageStatus.COVERED)  # cannot promote back
+    _rec(repo, test_tenant, run, m, [(asset.id, h)], CoverageStatus.COVERED)  # cannot promote back
     db_session.refresh(row)
     assert row.status == CoverageStatus.PARTIAL
 
@@ -611,16 +619,58 @@ def test_endpoint_coverage_distinct_shapes_are_separate_rows(db_session, test_te
     from app.models.coverage import CoverageStatus, ScanEndpointCoverage
 
     repo, m, run, asset = _endpoint_repo_setup(db_session, test_tenant)
-    n = _rec(
-        repo,
-        test_tenant,
-        run,
-        m,
-        [(asset.id, "ep.test.com|/a|"), (asset.id, "ep.test.com|/b|"), (asset.id, "ep.test.com|/a|")],
-        CoverageStatus.COVERED,
-    )
+    ha, hb = _esh("https://ep.test.com/a"), _esh("https://ep.test.com/b")
+    n = _rec(repo, test_tenant, run, m, [(asset.id, ha), (asset.id, hb), (asset.id, ha)], CoverageStatus.COVERED)
     assert n == 2  # dedup collapses the repeated /a; /a and /b are distinct shapes
     assert db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id).count() == 2
+
+
+def test_endpoint_coverage_scheme_and_port_do_not_collide(db_session, test_tenant):
+    from app.models.coverage import CoverageStatus, ScanEndpointCoverage
+
+    repo, m, run, asset = _endpoint_repo_setup(db_session, test_tenant)
+    entries = [
+        (asset.id, _esh("http://ep.test.com/x")),  # :80
+        (asset.id, _esh("https://ep.test.com/x")),  # :443
+        (asset.id, _esh("https://ep.test.com:8443/x")),  # :8443
+    ]
+    n = _rec(repo, test_tenant, run, m, entries, CoverageStatus.COVERED)
+    assert n == 3  # scheme + effective port are part of the identity → three distinct rows
+    assert db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id).count() == 3
+
+
+def test_endpoint_coverage_path_is_case_sensitive(db_session, test_tenant):
+    from app.models.coverage import CoverageStatus, ScanEndpointCoverage
+
+    repo, m, run, asset = _endpoint_repo_setup(db_session, test_tenant)
+    entries = [(asset.id, _esh("https://ep.test.com/Admin")), (asset.id, _esh("https://ep.test.com/admin"))]
+    n = _rec(repo, test_tenant, run, m, entries, CoverageStatus.COVERED)
+    assert n == 2  # HTTP paths are case-sensitive → /Admin ≠ /admin
+    assert db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id).count() == 2
+
+
+def test_endpoint_coverage_stores_no_raw_value(db_session, test_tenant):
+    from app.models.coverage import CoverageStatus, ScanEndpointCoverage
+
+    repo, m, run, asset = _endpoint_repo_setup(db_session, test_tenant)
+    # a URL carrying a secret token and PII in path + query
+    h = _esh("https://ep.test.com/reset/secret-token-abc123?token=SUPERSECRET&email=mario.rossi@x.com")
+    _rec(repo, test_tenant, run, m, [(asset.id, h)], CoverageStatus.COVERED)
+    row = db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id).one()
+    assert row.endpoint_shape_hash == h  # only the 64-hex hash is stored
+    blob = " ".join(str(v) for v in (row.endpoint_shape_hash,))
+    for leak in ("SUPERSECRET", "secret-token-abc123", "mario.rossi", "reset"):
+        assert leak not in blob
+
+
+def test_endpoint_coverage_rejects_arbitrary_shape_string(db_session, test_tenant):
+    from app.models.coverage import CoverageStatus
+    from app.repositories.coverage_repository import CoverageWriteError
+
+    repo, m, run, asset = _endpoint_repo_setup(db_session, test_tenant)
+    for bad in ("ep.test.com|/admin|", "https://ep.test.com/admin", "NOTAHASH", "A" * 64):
+        with pytest.raises(CoverageWriteError):
+            _rec(repo, test_tenant, run, m, [(asset.id, bad)], CoverageStatus.COVERED)
 
 
 def test_endpoint_coverage_foreign_asset_refused(db_session, test_tenant):
@@ -631,7 +681,7 @@ def test_endpoint_coverage_foreign_asset_refused(db_session, test_tenant):
     other = _second_tenant(db_session)
     foreign = _asset(db_session, other, "foreign.test.com")
     with pytest.raises(CoverageWriteError):
-        _rec(repo, test_tenant, run, m, [(foreign.id, "foreign.test.com|/x|")], CoverageStatus.COVERED)
+        _rec(repo, test_tenant, run, m, [(foreign.id, _esh("https://foreign.test.com/x"))], CoverageStatus.COVERED)
 
 
 def test_endpoint_coverage_unknown_policy_refused(db_session, test_tenant):
@@ -648,6 +698,70 @@ def test_endpoint_coverage_unknown_policy_refused(db_session, test_tenant):
             phase="9",
             pass_name="http_stock",
             policy_hash="deadbeef" * 8,
-            entries=[(asset.id, "ep2.test.com|/x|")],
+            entries=[(asset.id, _esh("https://ep2.test.com/x"))],
             status=CoverageStatus.COVERED,
         )
+
+
+def test_endpoint_coverage_atomic_guard_rejects_concurrent_different_policy(db_session, test_tenant):
+    # Endpoint mirror of the pass-coverage TOCTOU guard: a row already present under M1, the upsert
+    # statement worker B runs under M2 is skipped by DO UPDATE ... WHERE policy_hash = excluded →
+    # rowcount shortfall → fail-closed, original row untouched.
+    from app.models.coverage import CoverageStatus, ScanEndpointCoverage
+    from app.repositories.coverage_repository import CoverageWriteError
+
+    repo, m1, run, asset = _endpoint_repo_setup(db_session, test_tenant)
+    m2 = build_nuclei_policy_manifest(
+        nuclei_version="3.3.1",
+        template_revision="DIFFERENT-rev",
+        pass_name="http_stock",
+        tier=1,
+        severity=["critical", "high"],
+        template_roots=["http/cves"],
+        exclude_tags=["fuzz"],
+    )
+    repo.persist_policy(m2)
+    h = _esh("https://ep.test.com/x")
+    _rec(repo, test_tenant, run, m1, [(asset.id, h)], CoverageStatus.COVERED)  # worker A committed M1
+
+    now = datetime.now(timezone.utc)
+    m2_rows = [
+        {
+            "tenant_id": test_tenant.id,
+            "scan_run_id": run.id,
+            "asset_id": asset.id,
+            "phase": "9",
+            "pass_name": "http_stock",
+            "policy_hash": m2.policy_hash,
+            "endpoint_shape_hash": h,
+            "status": CoverageStatus.PARTIAL,
+            "created_at": now,
+            "updated_at": now,
+        }
+    ]
+    with pytest.raises(CoverageWriteError):
+        repo._upsert_endpoint_coverage_rows(m2_rows)
+    row = db_session.query(ScanEndpointCoverage).filter_by(scan_run_id=run.id).one()
+    assert row.policy_hash == m1.policy_hash and row.status == CoverageStatus.COVERED  # original intact
+
+
+def test_finding_provenance_policy_fk_is_enforced(db_session, test_tenant):
+    # origin_policy_hash is FK-constrained to scan_policy — a finding can never name a policy that
+    # does not exist (incoherent provenance is a DB-level IntegrityError, not a silent write).
+    from app.models.database import Finding
+
+    asset = _asset(db_session, test_tenant, "prov.test.com")
+    f = Finding(
+        asset_id=asset.id,
+        source="nuclei",
+        template_id="CVE-Z",
+        name="z",
+        severity="high",
+        status="open",
+        endpoint_shape_hash=_esh("https://prov.test.com/x"),
+        origin_policy_hash="deadbeef" * 8,  # no such policy
+    )
+    db_session.add(f)
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
