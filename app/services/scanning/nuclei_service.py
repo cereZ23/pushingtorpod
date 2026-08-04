@@ -492,9 +492,14 @@ class NucleiService:
         if effective_exclude:
             args.extend(["-exclude-tags", effective_exclude])
 
-        # Interactsh OOB callback support (Tier 3 aggressive scans)
+        # Interactsh OOB callback control. A configured server enables OAST (Tier 3). When NONE is
+        # configured we must EXPLICITLY disable it with -ni: otherwise nuclei silently falls back to
+        # its default PUBLIC server (oast.me) and sends out-of-band callbacks to a third party — i.e.
+        # the app's interactsh_enabled=False did NOT actually turn OAST off. Fail-closed to off.
         if interactsh_server:
             args.extend(["-iserver", interactsh_server, "-itoken", ""])
+        else:
+            args.append("-ni")  # -no-interactsh: no OOB, no default oast.me callbacks
 
         return args
 
