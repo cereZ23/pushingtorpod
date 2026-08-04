@@ -54,10 +54,12 @@ from app.services.scanning.endpoint_pass import (
     stage_selected_templates,
     validate_endpoint_pass_config,
 )
+from app.services.scanning.base_urls import build_base_urls
 from app.services.scanning.http_endpoint_runner import (
     BatchExecutionEvidence,
     EndpointNucleiRunner,
     EndpointRunnerTimeout,
+    NucleiEndpointRunner,
 )
 
 logger = logging.getLogger(__name__)
@@ -687,3 +689,100 @@ def _skipped_evidence() -> BatchExecutionEvidence:
 
 def _staging_failed_evidence() -> BatchExecutionEvidence:
     return BatchExecutionEvidence(launched=False, exit_code=None, parse_incomplete=True)
+
+
+# ==================================================================================================
+# Phase-9 adapter (Sprint 3, step 3b-2b). Keeps the phase-9 border SMALL + testable: a real no-op
+# when the feature is OFF (no DB / runner / snapshot), and fail-CLOSED on any unexpected error when
+# ON. Never logs str(exc) — an unexpected exception could carry a URL/path; only the reason code.
+# ==================================================================================================
+
+
+def _feature_disabled_stats() -> dict:
+    return {
+        "enabled": False,
+        "pass_name": PASS_HTTP_ENDPOINT,
+        "skip_reason": "feature_disabled",
+        "coverage_complete": False,
+        "coverage_authorizing": False,
+        "phase_non_degrading": True,  # a disabled feature must NOT degrade the existing phase
+    }
+
+
+def _endpoint_error_stats(reason_code: str) -> dict:
+    return {
+        "enabled": True,
+        "pass_name": PASS_HTTP_ENDPOINT,
+        "coverage_complete": False,
+        "coverage_authorizing": False,
+        "phase_non_degrading": False,  # an unexpected error DEGRADES the phase (fail-closed)
+        "error": reason_code,
+    }
+
+
+def phase_degraded_by_endpoint(stats: dict) -> bool:
+    """Whether the endpoint pass's outcome must mark phase 9 truncated. Driven by
+    ``phase_non_degrading`` (NOT status): feature_disabled / no_targets / completed → False;
+    insufficient_phase_budget / partial / failed / error → True."""
+    return not bool(stats.get("phase_non_degrading", False))
+
+
+def run_endpoint_pass_in_phase9(
+    db,
+    *,
+    tenant_id: int,
+    scan_run_id: int,
+    scan_tier: int,
+    direct_assets: Sequence[Asset],
+    phase_9_deadline: datetime,
+    custom_policy_hash: Optional[str],
+    interactsh_server: Optional[str],
+    severity: Sequence[str],
+    exclude_tags,
+    rate_limit: int,
+    concurrency: int,
+    request_timeout: int,
+    max_host_errors: int,
+    now_fn: Callable[[], datetime],
+    log=None,
+) -> dict:
+    """Run the endpoint pass from phase 9 and return its stats dict. FEATURE-GATED FIRST: when
+    disabled, returns immediately with NO service query / snapshot / runner. When enabled, any
+    unexpected error is fail-CLOSED (degrading, non-authorizing stats) — never fail-open."""
+    if not is_endpoint_pass_enabled(tenant_id):
+        return _feature_disabled_stats()
+    try:
+        endpoint_exclude = [t.strip() for t in str(exclude_tags).split(",") if t.strip()]
+        runner = NucleiEndpointRunner(
+            severity=list(severity),
+            exclude_tags=endpoint_exclude,
+            rate_limit=rate_limit,
+            concurrency=concurrency,
+            request_timeout=request_timeout,
+            max_host_errors=max_host_errors,
+        )
+        result = run_http_endpoint_pass(
+            db=db,
+            tenant_id=tenant_id,
+            scan_run_id=scan_run_id,
+            scan_tier=scan_tier,
+            assets=direct_assets,
+            base_urls=build_base_urls(db, direct_assets),
+            phase_9_deadline=phase_9_deadline,
+            custom_policy_hash=custom_policy_hash,
+            interactsh_server=interactsh_server,
+            runner=runner,
+            now_fn=now_fn,
+        )
+        if log is not None:
+            log.info(
+                "http_endpoint pass: status=%s selected=%s batches=%s",
+                result.status,
+                result.stats.get("selected_count"),
+                result.stats.get("batch_count"),
+            )
+        return result.stats
+    except Exception as exc:  # fail-CLOSED — never leak str(exc) (may carry a URL/path)
+        if log is not None:
+            log.error("http_endpoint pass wiring error: reason=%s", type(exc).__name__)
+        return _endpoint_error_stats(type(exc).__name__)

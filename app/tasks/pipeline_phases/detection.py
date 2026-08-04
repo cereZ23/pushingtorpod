@@ -633,50 +633,35 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
                 )
 
     # --- http_endpoint pass (Sprint 3, step 3b-2b): SEQUENTIAL, after the parallel base passes so it
-    # doesn't compete for CPU/RAM/net and its cost is measurable. Behind the per-tenant feature flag
-    # (OFF by default) → a no-op returning feature_disabled when disabled, so phase 9 is unchanged.
-    endpoint_stats = None
-    try:
-        from app.services.scanning.base_urls import build_base_urls
-        from app.services.scanning.http_endpoint_orchestrator import run_http_endpoint_pass
-        from app.services.scanning.http_endpoint_runner import NucleiEndpointRunner
+    # doesn't compete for CPU/RAM/net and its cost is measurable. The adapter feature-gates FIRST (a
+    # true no-op — no service query / snapshot / runner — when OFF) and is fail-CLOSED when ON.
+    from app.services.scanning.http_endpoint_orchestrator import (
+        phase_degraded_by_endpoint,
+        run_endpoint_pass_in_phase9,
+    )
 
-        endpoint_exclude = [t.strip() for t in str(exclude_tags).split(",") if t.strip()]
-        endpoint_runner = NucleiEndpointRunner(
-            severity=list(severity),
-            exclude_tags=endpoint_exclude,
-            rate_limit=rate_limit,
-            concurrency=concurrency,
-            request_timeout=req_timeout,
-            max_host_errors=mhe_cap,
-        )
-        ep_result = run_http_endpoint_pass(
-            db=db,
-            tenant_id=tenant_id,
-            scan_run_id=scan_run_id,
-            scan_tier=scan_tier,
-            assets=direct_assets,
-            base_urls=build_base_urls(db, direct_assets),
-            phase_9_deadline=_phase9_deadline,
-            custom_policy_hash=custom_policy_hash,
-            interactsh_server=(interactsh_server if (use_interactsh and interactsh_server) else None),
-            runner=endpoint_runner,
-            now_fn=lambda: datetime.now(timezone.utc),
-        )
-        endpoint_stats = ep_result.stats
-        # partial/failed degrades the phase (truncated); completed and the innocuous skips
-        # (feature_disabled / no_targets) do NOT — an endpoint skip must never break host-level
-        # coverage while the endpoint consumer is not yet active.
-        if ep_result.status in ("partial", "failed"):
-            truncated_passes.append(PASS_HTTP_ENDPOINT)
-        tenant_logger.info(
-            "http_endpoint pass: status=%s selected=%s batches=%s",
-            ep_result.status,
-            endpoint_stats.get("selected_count"),
-            endpoint_stats.get("batch_count"),
-        )
-    except Exception as exc:  # fail-open: the endpoint pass must never break phase 9
-        tenant_logger.error(f"http_endpoint pass wiring error: {exc}")
+    endpoint_stats = run_endpoint_pass_in_phase9(
+        db,
+        tenant_id=tenant_id,
+        scan_run_id=scan_run_id,
+        scan_tier=scan_tier,
+        direct_assets=direct_assets,
+        phase_9_deadline=_phase9_deadline,
+        custom_policy_hash=custom_policy_hash,
+        interactsh_server=(interactsh_server if (use_interactsh and interactsh_server) else None),
+        severity=severity,
+        exclude_tags=exclude_tags,
+        rate_limit=rate_limit,
+        concurrency=concurrency,
+        request_timeout=req_timeout,
+        max_host_errors=mhe_cap,
+        now_fn=lambda: datetime.now(timezone.utc),
+        log=tenant_logger,
+    )
+    # Rollup driven by phase_non_degrading (NOT status): insufficient_phase_budget / partial / failed
+    # / error degrade the phase; feature_disabled / no_targets / completed do not.
+    if phase_degraded_by_endpoint(endpoint_stats):
+        truncated_passes.append(PASS_HTTP_ENDPOINT)
 
     if truncated_passes:
         tenant_logger.warning(
