@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from itertools import groupby
 from typing import Optional, Sequence
 
 from app.models.coverage import CoverageStatus
@@ -58,25 +59,25 @@ class EndpointBatch:
         return f"EndpointBatch(index={self.index}, n={len(self.targets)}, shapes=[{shapes}])"
 
 
-def _stable_key(t: SelectedEndpoint) -> tuple:
-    # Same total order Step 1 uses, recomputed here so batching is order-independent of the caller.
-    return (t.priority, t.shape_hash, t.url, t.asset_id, t.endpoint_type or "")
-
-
 def plan_batches(selected: Sequence[SelectedEndpoint], *, batch_size: int, policy_hash: str) -> list[EndpointBatch]:
-    """Split the selection into stable, deterministic batches of at most ``batch_size`` targets.
+    """Split the selection into deterministic, HOST-HOMOGENEOUS batches of at most ``batch_size``.
 
-    Deterministic regardless of the input order (a stable total order is applied first), so the same
-    selection always yields the same batches — a precondition for reproducible coverage.
+    Grouped PER ASSET (host): a batch never contains more than one ``asset_id``, so when Nuclei
+    declares a host unresponsive only THAT host's endpoints go PARTIAL — endpoints of other hosts in
+    other batches stay COVERED. (A flat chunk let one dead host contaminate up to ``batch_size``
+    endpoints across DIFFERENT hosts.) Deterministic total order ``(asset_id, shape_hash, url)`` so
+    the same selection always yields the same batches — a precondition for reproducible coverage.
     """
     if batch_size <= 0:
         raise ValueError(f"batch_size must be positive, got {batch_size}")
-    ordered = sorted(selected, key=_stable_key)
+    ordered = sorted(selected, key=lambda t: (t.asset_id, t.shape_hash, t.url))
     batches: list[EndpointBatch] = []
-    for i in range(0, len(ordered), batch_size):
-        batches.append(
-            EndpointBatch(index=len(batches), targets=tuple(ordered[i : i + batch_size]), policy_hash=policy_hash)
-        )
+    for _asset_id, group in groupby(ordered, key=lambda t: t.asset_id):
+        eps = list(group)
+        for i in range(0, len(eps), batch_size):
+            batches.append(
+                EndpointBatch(index=len(batches), targets=tuple(eps[i : i + batch_size]), policy_hash=policy_hash)
+            )
     return batches
 
 

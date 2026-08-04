@@ -78,6 +78,59 @@ def test_plan_batches_rejects_nonpositive_size():
         plan_batches([_sel(1)], batch_size=0, policy_hash=PH)
 
 
+# --- host-homogeneous batching (an unresponsive host contaminates only its own endpoints) ---------
+
+
+def test_plan_batches_never_mixes_assets_in_one_batch():
+    # Two hosts interleaved in the input; no batch may contain more than one asset_id.
+    sel = [_sel(i, asset_id=(i % 2 + 1)) for i in range(8)]  # assets 1 and 2, 4 endpoints each
+    batches = plan_batches(sel, batch_size=5, policy_hash=PH)
+    for b in batches:
+        assert len({t.asset_id for t in b.targets}) == 1, "a batch spans more than one host"
+
+
+def test_plan_batches_respects_cap_per_host():
+    # 7 endpoints on one host, cap 5 → that host chunks into [5, 2]; a second host stays separate.
+    sel = [_sel(i, asset_id=1) for i in range(7)] + [_sel(100, asset_id=2)]
+    batches = plan_batches(sel, batch_size=5, policy_hash=PH)
+    assert all(len(b.targets) <= 5 for b in batches)
+    per_asset = {}
+    for b in batches:
+        per_asset.setdefault(b.targets[0].asset_id, []).append(len(b.targets))
+    assert per_asset[1] == [5, 2]
+    assert per_asset[2] == [1]
+
+
+def test_plan_batches_is_deterministic_across_asset_order():
+    sel = [_sel(i, asset_id=(i % 3 + 1)) for i in range(9)]
+    a = plan_batches(sel, batch_size=2, policy_hash=PH)
+    b = plan_batches(list(reversed(sel)), batch_size=2, policy_hash=PH)
+    shape = lambda bs: [[(t.asset_id, t.shape_hash) for t in x.targets] for x in bs]  # noqa: E731
+    assert shape(a) == shape(b)
+
+
+def test_unresponsive_host_does_not_contaminate_other_assets():
+    # Model the prod cause: one host (asset 2) is unresponsive; assert its endpoints never share a
+    # batch with a healthy host, so PARTIAL on asset 2 cannot force asset 1/3 endpoints to PARTIAL.
+    sel = [_sel(i, asset_id=1) for i in range(3)]
+    sel += [_sel(50 + i, asset_id=2) for i in range(3)]  # the "dead" host
+    sel += [_sel(90 + i, asset_id=3) for i in range(3)]
+    batches = plan_batches(sel, batch_size=5, policy_hash=PH)
+    dead_batches = [b for b in batches if any(t.asset_id == 2 for t in b.targets)]
+    assert dead_batches, "expected at least one batch for the unresponsive host"
+    for b in dead_batches:
+        assert all(t.asset_id == 2 for t in b.targets), "dead host shares a batch with a healthy host"
+
+
+def test_plan_batches_coverage_is_per_endpoint():
+    # Every selected endpoint appears exactly once across all batches, one coverage row each.
+    sel = [_sel(i, asset_id=(i % 2 + 1)) for i in range(8)]
+    batches = plan_batches(sel, batch_size=3, policy_hash=PH)
+    entries = [e for b in batches for e in b.entries()]
+    assert len(entries) == len(sel)
+    assert sorted(entries) == sorted((t.asset_id, t.shape_hash) for t in sel)
+
+
 # --- verdict --------------------------------------------------------------------------------------
 
 
