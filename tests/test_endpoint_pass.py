@@ -26,6 +26,7 @@ from app.services.scanning.endpoint_pass import (
     plan_batches,
     remaining_budget_seconds,
     stage_selected_templates,
+    validate_endpoint_pass_config,
 )
 
 PH = "p" * 64
@@ -80,8 +81,23 @@ def test_plan_batches_rejects_nonpositive_size():
 # --- verdict --------------------------------------------------------------------------------------
 
 
-def test_clean_batch_is_covered():
-    assert batch_verdict() == CoverageStatus.COVERED
+# A fully-proven clean run — the ONLY shape that yields COVERED.
+_PROVEN = dict(launched=True, exit_code=0, output_complete=True, catalog_verified=True, targets_completed=True)
+
+
+def test_covered_requires_positive_proof():
+    assert batch_verdict(**_PROVEN) == CoverageStatus.COVERED
+
+
+def test_no_args_raises():
+    # positive-proof kwargs are required → a caller that forgets everything cannot get COVERED
+    with pytest.raises(TypeError):
+        batch_verdict()
+
+
+def test_unlaunched_is_caller_error():
+    with pytest.raises(ValueError):
+        batch_verdict(**{**_PROVEN, "launched": False})
 
 
 @pytest.mark.parametrize(
@@ -93,20 +109,23 @@ def test_clean_batch_is_covered():
         {"drift": True},
         {"unresponsive": True},
         {"parse_incomplete": True},
+        {"output_complete": False},  # missing positive proof → not COVERED
+        {"catalog_verified": False},
+        {"targets_completed": False},
     ],
 )
-def test_uncertain_signals_are_partial(kw):
-    assert batch_verdict(**kw) == CoverageStatus.PARTIAL
+def test_uncertain_or_unproven_is_partial(kw):
+    assert batch_verdict(**{**_PROVEN, **kw}) == CoverageStatus.PARTIAL
 
 
-@pytest.mark.parametrize("kw", [{"process_error": True}, {"exit_error": True}])
-def test_structural_signals_are_failed(kw):
-    assert batch_verdict(**kw) == CoverageStatus.FAILED
+@pytest.mark.parametrize("exit_code", [None, 1, 2, -1])
+def test_invalid_exit_code_is_failed(exit_code):
+    assert batch_verdict(**{**_PROVEN, "exit_code": exit_code}) == CoverageStatus.FAILED
 
 
 def test_failed_wins_over_partial():
-    # a structural failure dominates even if uncertainty signals are also set
-    assert batch_verdict(exit_error=True, timed_out=True) == CoverageStatus.FAILED
+    # a structural failure (bad exit) dominates even if uncertainty signals are also set
+    assert batch_verdict(**{**_PROVEN, "exit_code": 1, "timed_out": True}) == CoverageStatus.FAILED
 
 
 # --- pass status aggregation ----------------------------------------------------------------------
@@ -148,6 +167,43 @@ def test_structural_error_but_some_covered_is_partial():
     assert st == PASS_PARTIAL  # a completed batch is not thrown away
 
 
+def test_all_batches_skipped_for_budget_is_insufficient_phase_budget():
+    # targets were selected but NOT ONE batch launched (budget already spent) → not a generic PARTIAL
+    st, reason = aggregate_pass_status(
+        [CoverageStatus.SKIPPED, CoverageStatus.SKIPPED], flag_enabled=True, selected_count=50
+    )
+    assert st == PASS_SKIPPED and reason == "insufficient_phase_budget"
+
+
+def test_some_covered_then_skipped_is_partial():
+    st, _ = aggregate_pass_status(
+        [CoverageStatus.COVERED, CoverageStatus.SKIPPED], flag_enabled=True, selected_count=50
+    )
+    assert st == PASS_PARTIAL  # ran out of budget partway → not COMPLETED
+
+
+# --- config validation ----------------------------------------------------------------------------
+
+
+def test_valid_config_passes():
+    validate_endpoint_pass_config(batch_size=25, batch_timeout_seconds=180, budget_seconds=600, max_per_host=40)
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"batch_size": 0},
+        {"batch_timeout_seconds": 0},
+        {"budget_seconds": -1},
+        {"max_per_host": 0},
+    ],
+)
+def test_invalid_config_rejected(kw):
+    base = dict(batch_size=25, batch_timeout_seconds=180, budget_seconds=600, max_per_host=40)
+    with pytest.raises(ValueError):
+        validate_endpoint_pass_config(**{**base, **kw})
+
+
 # --- budget / deadline ----------------------------------------------------------------------------
 
 _T0 = datetime(2026, 8, 4, 12, 0, 0, tzinfo=timezone.utc)
@@ -171,6 +227,21 @@ def test_remaining_budget_never_negative():
     past = _T0 - timedelta(seconds=5)
     assert remaining_budget_seconds(now=_T0, effective_deadline=past) == 0.0
     assert remaining_budget_seconds(now=_T0, effective_deadline=_T0 + timedelta(seconds=30)) == 30.0
+
+
+def test_effective_deadline_rejects_naive_datetime():
+    naive = datetime(2026, 8, 4, 12, 0, 0)  # no tzinfo
+    with pytest.raises(ValueError):
+        compute_effective_deadline(phase_9_deadline=_T0, started_at=naive, endpoint_budget_seconds=120)
+    with pytest.raises(ValueError):
+        compute_effective_deadline(phase_9_deadline=naive, started_at=_T0, endpoint_budget_seconds=120)
+
+
+def test_effective_deadline_rejects_nonpositive_budget():
+    with pytest.raises(ValueError):
+        compute_effective_deadline(
+            phase_9_deadline=_T0 + timedelta(seconds=600), started_at=_T0, endpoint_budget_seconds=0
+        )
 
 
 # --- staging --------------------------------------------------------------------------------------
