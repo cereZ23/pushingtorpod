@@ -39,8 +39,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from typing import Optional
+
+_HEX64_RE = re.compile(r"[0-9a-f]{64}")
 
 SCHEMA_VERSION = "1"
 
@@ -154,6 +157,13 @@ class ScanPolicyManifest:
     exclude_tags: tuple[str, ...] = ()
     relevant_flags: tuple[tuple[str, str], ...] = ()
     schema_version: str = SCHEMA_VERSION
+    # Optional identity refinements (Sprint 3): when the applicable set is NOT fully determined by
+    # roots+severity+tags+revision — e.g. the http_endpoint pass, whose catalog is a CLASSIFIED
+    # subset — the derived catalog digest AND the classifier version must participate in policy_hash,
+    # else a classifier change could yield a different catalog under the same identity. They are
+    # included in ``canonical()`` ONLY when set, so every existing pass hashes exactly as before.
+    catalog_digest: Optional[str] = None
+    classifier_version: Optional[int] = None
 
     def __post_init__(self) -> None:
         # --- required scalars (reject half-defined identities) ---------------
@@ -203,9 +213,30 @@ class ScanPolicyManifest:
                 if getattr(self, fld):
                     raise ValueError(f"scan policy: {engine_name} carries no {fld} filter (got {getattr(self, fld)})")
 
+        # --- optional identity refinements (validate shape if present) -------
+        if self.catalog_digest is not None:
+            cd = str(self.catalog_digest).strip().lower()
+            if not _HEX64_RE.fullmatch(cd):
+                raise ValueError(f"scan policy: catalog_digest must be 64-hex, got {self.catalog_digest!r}")
+            object.__setattr__(self, "catalog_digest", cd)
+        if self.classifier_version is not None:
+            try:
+                cv = int(self.classifier_version)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"scan policy: classifier_version must be an int (got {self.classifier_version!r})"
+                ) from None
+            if cv < 0:
+                raise ValueError(f"scan policy: classifier_version must be >= 0 (got {cv})")
+            object.__setattr__(self, "classifier_version", cv)
+
     def canonical(self) -> dict:
-        """The exact, normalised structure the hash is taken over (already canonical)."""
-        return {
+        """The exact, normalised structure the hash is taken over (already canonical).
+
+        ``catalog_digest`` / ``classifier_version`` are added ONLY when set, so a pass that doesn't
+        use them hashes byte-for-byte as it did before they existed.
+        """
+        canon = {
             "schema_version": self.schema_version,
             "engine_name": self.engine_name,
             "engine_version": self.engine_version,
@@ -218,6 +249,11 @@ class ScanPolicyManifest:
             "exclude_tags": list(self.exclude_tags),
             "relevant_flags": dict(self.relevant_flags),
         }
+        if self.catalog_digest is not None:
+            canon["catalog_digest"] = self.catalog_digest
+        if self.classifier_version is not None:
+            canon["classifier_version"] = self.classifier_version
+        return canon
 
     @property
     def policy_hash(self) -> str:
@@ -239,6 +275,8 @@ def build_scan_policy_manifest(
     exclude_tags=None,
     relevant_flags: Optional[dict] = None,
     schema_version: str = SCHEMA_VERSION,
+    catalog_digest: Optional[str] = None,
+    classifier_version: Optional[int] = None,
 ) -> ScanPolicyManifest:
     """Generic, engine-agnostic builder (pure).
 
@@ -259,6 +297,8 @@ def build_scan_policy_manifest(
         exclude_tags=exclude_tags or (),
         relevant_flags=relevant_flags or (),
         schema_version=schema_version,
+        catalog_digest=catalog_digest,
+        classifier_version=classifier_version,
     )
 
 
@@ -274,6 +314,8 @@ def build_nuclei_policy_manifest(
     exclude_tags=None,
     relevant_flags: Optional[dict] = None,
     schema_version: str = SCHEMA_VERSION,
+    catalog_digest: Optional[str] = None,
+    classifier_version: Optional[int] = None,
 ) -> ScanPolicyManifest:
     """Nuclei pass identity: engine=nuclei, engine_version=nuclei_version,
     rule_revision=template_revision, rule_roots=template roots."""
@@ -289,6 +331,8 @@ def build_nuclei_policy_manifest(
         exclude_tags=exclude_tags,
         relevant_flags=relevant_flags,
         schema_version=schema_version,
+        catalog_digest=catalog_digest,
+        classifier_version=classifier_version,
     )
 
 

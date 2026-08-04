@@ -34,6 +34,12 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+# Version of the classification LOGIC. It participates in the http_endpoint policy_hash (see
+# app/services/endpoint_policy.py), so a change to how templates are classified yields a NEW policy
+# identity instead of silently altering an existing catalog. BUMP THIS whenever the decision logic
+# in classify_nuclei_template changes in a way that can move a template between categories.
+CLASSIFIER_VERSION = 1
+
 HOST_ONLY = "host_only"
 ENDPOINT_SENSITIVE = "endpoint_sensitive"
 UNKNOWN = "unknown"
