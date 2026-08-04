@@ -748,7 +748,7 @@ def test_endpoint_coverage_atomic_guard_rejects_concurrent_different_policy(db_s
 def test_finding_provenance_policy_fk_is_enforced(db_session, test_tenant):
     # origin_policy_hash is FK-constrained to scan_policy — a finding can never name a policy that
     # does not exist (incoherent provenance is a DB-level IntegrityError, not a silent write).
-    from app.models.database import Finding
+    from app.models.database import Finding, FindingSeverity
 
     asset = _asset(db_session, test_tenant, "prov.test.com")
     f = Finding(
@@ -756,7 +756,7 @@ def test_finding_provenance_policy_fk_is_enforced(db_session, test_tenant):
         source="nuclei",
         template_id="CVE-Z",
         name="z",
-        severity="high",
+        severity=FindingSeverity.HIGH,
         status="open",
         endpoint_shape_hash=_esh("https://prov.test.com/x"),
         origin_policy_hash="deadbeef" * 8,  # no such policy
