@@ -169,6 +169,26 @@ def test_missing_id_is_fail_closed():
         enumerate_nuclei_applicable_rules(manifest, files, parse_yaml=json.loads)
 
 
+def test_known_non_template_data_file_is_skipped_not_fail_closed():
+    # A broad root (e.g. http/technologies/) ships nuclei DATA files with no `id`. The known one is
+    # skipped so enumeration doesn't fail-close, while real templates alongside it are still included.
+    files = [
+        ("http/technologies/wappalyzer-mapping.yml", _tpl("ignored", "high", "cve", with_id=False)),
+        ("http/technologies/apache.yaml", _tpl("apache-detect", "high", "tech")),
+    ]
+    rs = _enum(files)
+    assert rs.contains("apache-detect")
+    assert len(rs.rules) == 1  # the data file produced no detector
+
+
+def test_other_idless_file_still_fail_closed():
+    # Only the explicit denylist is skipped — any OTHER id-less file still raises (reviewable).
+    files = [("http/cves/mystery.yaml", _tpl("ignored", "high", "cve", with_id=False))]
+    manifest = _nuclei_manifest(files)
+    with pytest.raises(RuleCatalogError):
+        enumerate_nuclei_applicable_rules(manifest, files, parse_yaml=json.loads)
+
+
 def test_duplicate_detector_id_is_fail_closed():
     files = [
         ("http/cves/a.yaml", _tpl("DUP", "high", "cve")),

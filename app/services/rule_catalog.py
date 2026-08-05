@@ -118,6 +118,12 @@ CAP_SELF_CONTAINED = "self_contained"
 CAP_INTERACTSH = "interactsh"
 NUCLEI_CAPABILITIES = (CAP_CODE, CAP_HEADLESS, CAP_DAST, CAP_SELF_CONTAINED, CAP_INTERACTSH)
 
+# Known nuclei-templates DATA files that ship UNDER scanned roots but are NOT detection templates
+# (they carry no `id`). A broad root such as `http/technologies/` includes them, so enumeration must
+# skip them explicitly — while ANY OTHER id-less file still raises (fail-closed + reviewable, so a
+# genuinely malformed template is never silently dropped). Matched by basename (globally unique).
+_NON_TEMPLATE_DATA_FILES = frozenset({"wappalyzer-mapping.yml"})
+
 
 def nuclei_required_capabilities(doc: Mapping, raw: bytes | bytearray) -> frozenset:
     """The nuclei capabilities a template REQUIRES to actually execute/match. A policy that does not
@@ -207,6 +213,8 @@ def enumerate_nuclei_applicable_rules(
     rules: list[ApplicableRule] = []
     id_to_path: dict[str, str] = {}
     for rel in sorted(docs):
+        if rel.rsplit("/", 1)[-1] in _NON_TEMPLATE_DATA_FILES:
+            continue  # known nuclei data file (no detector) — skip, don't fail-close
         digest, doc, data = docs[rel]
         raw_id = doc.get("id")
         if not isinstance(raw_id, str) or not raw_id.strip():  # must be a real string id
