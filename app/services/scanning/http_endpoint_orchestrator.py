@@ -9,9 +9,8 @@ Fail-closed contract (see the step-3b spec):
 - bad config / missing-or-incoherent custom catalog / bundle mismatch / staging error → FAILED;
 - COVERED only from positive proof (via ``batch_verdict``); any uncertainty → PARTIAL;
 - coverage is written PER BATCH, immediately, so a later crash never loses earlier batches;
-- findings go through the existing writer with NULL provenance (endpoint_shape_hash /
-  origin_policy_hash stay NULL → ineligible); asset attribution comes from the batch target, never a
-  tenant-wide hostname search;
+- findings go through the existing writer with endpoint shape + origin policy provenance; asset and
+  shape attribution come from the batch target, never a tenant-wide hostname search;
 - NO auto-close, no miss-streak change. No URL / path / query / target file / command / JSONL /
   finding body in any log, repr, or persisted stat.
 """
@@ -648,7 +647,8 @@ def _attribute_findings(findings, batch) -> tuple[list[dict], bool]:
                 "severity": f.get("severity") or "info",
                 "matcher_name": f.get("matcher_name") or f.get("matcher-name"),
                 "source": "nuclei",
-                # provenance stays NULL (endpoint_shape_hash / origin_policy_hash) → ineligible.
+                "endpoint_shape_hash": tgt.shape_hash,
+                "origin_policy_hash": batch.policy_hash,
             }
         )
     return records, ok

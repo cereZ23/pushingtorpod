@@ -22,6 +22,7 @@ import json
 
 from app.models.database import Finding, FindingSeverity, FindingStatus, Asset
 from app.services.dedup import compute_finding_fingerprint
+from app.services.endpoint_identity import is_shape_hash
 
 
 class FindingRepository:
@@ -130,6 +131,8 @@ class FindingRepository:
                 - host: str (optional)
                 - matcher_name: str (optional)
                 - source: str (optional, default: 'nuclei')
+                - endpoint_shape_hash + origin_policy_hash: optional paired endpoint provenance;
+                  requires an owned scan run and a phase-9 http_endpoint policy
             tenant_id: Tenant ID for validation
 
         Returns:
@@ -192,6 +195,25 @@ class FindingRepository:
 
                 severity_enum = FindingSeverity[severity_str.upper()]
 
+                shape_hash = finding.get("endpoint_shape_hash")
+                policy_hash = finding.get("origin_policy_hash")
+                if (shape_hash is None) != (policy_hash is None):
+                    errors.append(f"Finding {idx}: endpoint provenance must contain both shape and policy")
+                    continue
+                if shape_hash is not None:
+                    if scan_run_id is None:
+                        errors.append(f"Finding {idx}: endpoint provenance requires an owned scan_run_id")
+                        continue
+                    if not is_shape_hash(shape_hash):
+                        errors.append(f"Finding {idx}: invalid endpoint_shape_hash")
+                        continue
+                    from app.models.coverage import ScanPolicy
+
+                    policy = self.db.query(ScanPolicy).filter(ScanPolicy.policy_hash == policy_hash).first()
+                    if policy is None or policy.phase != "9" or policy.pass_name != "http_endpoint":
+                        errors.append(f"Finding {idx}: origin policy is not an http_endpoint phase-9 policy")
+                        continue
+
                 # Process evidence. Finding.evidence is a JSON column: pass a dict/list
                 # straight to SQLAlchemy — do NOT json.dumps a dict (that stored a
                 # double-encoded JSON *string*, which then broke every reader that calls
@@ -207,6 +229,7 @@ class FindingRepository:
                     template_id=finding["template_id"],
                     matcher_name=finding.get("matcher_name"),
                     source=finding.get("source", "nuclei"),
+                    endpoint_shape_hash=shape_hash,
                 )
 
                 # Build record
@@ -224,6 +247,8 @@ class FindingRepository:
                     "matcher_name": finding.get("matcher_name"),
                     "fingerprint": fp,
                     "occurrence_count": 1,
+                    "endpoint_shape_hash": shape_hash,
+                    "origin_policy_hash": policy_hash,
                     "first_seen": current_time,
                     "last_seen": current_time,
                     "status": FindingStatus.OPEN,
@@ -272,6 +297,10 @@ class FindingRepository:
         if scan_run_id is not None:
             update_dict["last_detected_scan_run_id"] = stmt.excluded.last_detected_scan_run_id
             update_dict["eligible_miss_streak"] = stmt.excluded.eligible_miss_streak
+        # Endpoint fingerprint identity already pins the shape. On re-detection, move provenance to
+        # the current applicable policy atomically with last_detected_scan_run_id.
+        update_dict["endpoint_shape_hash"] = stmt.excluded.endpoint_shape_hash
+        update_dict["origin_policy_hash"] = stmt.excluded.origin_policy_hash
 
         stmt = stmt.on_conflict_do_update(index_elements=["fingerprint"], set_=update_dict).returning(
             Finding.id, Finding.first_seen

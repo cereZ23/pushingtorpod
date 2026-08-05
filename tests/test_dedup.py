@@ -99,3 +99,10 @@ class TestComputeFindingFingerprint:
         fp_default = compute_finding_fingerprint(1, "example.com", "template-1")
         fp_explicit = compute_finding_fingerprint(1, "example.com", "template-1", source="nuclei")
         assert fp_default == fp_explicit
+
+    def test_endpoint_shape_changes_identity_without_changing_legacy_formula(self):
+        legacy = compute_finding_fingerprint(1, "example.com", "template-1")
+        a = compute_finding_fingerprint(1, "example.com", "template-1", endpoint_shape_hash="a" * 64)
+        b = compute_finding_fingerprint(1, "example.com", "template-1", endpoint_shape_hash="b" * 64)
+        assert a != b and a != legacy and b != legacy
+        assert legacy == hashlib.sha256(b"1|example.com|template-1||nuclei").hexdigest()
