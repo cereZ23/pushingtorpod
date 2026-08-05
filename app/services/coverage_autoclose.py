@@ -140,11 +140,18 @@ def shadow_auto_close(
     project_id: Optional[int],
     scan_run_id: int,
     close_threshold: int = DEFAULT_CLOSE_THRESHOLD,
+    commit_real: bool = False,
 ) -> dict:
-    """Shadow the coverage-aware auto-close for a run: PERSIST each finding's miss-streak
-    and run attribution, but NEVER change ``Finding.status``. This lets two live runs
-    actually advance a streak to WOULD_CLOSE — so the decisions can be compared against
-    reality — without ever closing a finding.
+    """Run the coverage-aware auto-close for a run: PERSIST each finding's miss-streak and run
+    attribution. By default (``commit_real=False``) it is a pure SHADOW — it NEVER changes
+    ``Finding.status``, so two live runs can advance a streak to WOULD_CLOSE and the decisions can
+    be compared against reality without ever closing a finding.
+
+    When ``commit_real=True`` (the caller gates this on the per-tenant real-auto-close flag), a
+    finding that reaches a WOULD_CLOSE decision this run is ALSO transitioned OPEN→FIXED, in the
+    SAME row-locked transaction — with a durable audit line (run, finding, asset, shape, policy).
+    Every other decision (ineligible / detected_reset / eligible_miss below threshold) still only
+    updates the streak, so a real close happens ONLY on a positively-decided WOULD_CLOSE.
 
     Fail-closed per finding: the detector must be applicable in a COVERED pass whose
     ``ScanPolicy.engine_name`` matches the finding's source (so a misconfig control id can
@@ -235,6 +242,7 @@ def shadow_auto_close(
 
     decisions = {d.value: 0 for d in AutoCloseDecision}
     stale_skipped = 0
+    closed = 0
     would_close_ids: list[int] = []
 
     this_key = (run.started_at, scan_run_id)
@@ -339,6 +347,22 @@ def shadow_auto_close(
         decisions[verdict.decision.value] += 1
         if verdict.would_close:
             would_close_ids.append(f.id)
+            # REAL close only when the caller enabled it for this tenant AND the run positively
+            # decided WOULD_CLOSE. The row is already locked and the out-of-order guard has skipped
+            # any stale run, so this transition is concurrency-safe. Audit is a durable, URL-free
+            # log line (run, finding, asset, shape-hash, origin-policy-hash).
+            if commit_real and f.status == FindingStatus.OPEN:
+                f.status = FindingStatus.FIXED
+                closed += 1
+                logger.info(
+                    "coverage auto-close REAL: run=%s finding=%s asset=%s source=%s shape=%s origin_policy=%s",
+                    scan_run_id,
+                    f.id,
+                    f.asset_id,
+                    f.source,
+                    f.endpoint_shape_hash or "-",
+                    f.origin_policy_hash or "-",
+                )
 
     db.commit()
 
@@ -349,14 +373,18 @@ def shadow_auto_close(
         "decisions": decisions,
         "stale_skipped": stale_skipped,
         "would_close_ids": would_close_ids,
+        "real_close_enabled": bool(commit_real),
+        "closed": closed,
     }
     logger.info(
-        "coverage auto-close SHADOW: run %s allowed=%s decisions=%s stale=%d would_close=%d",
+        "coverage auto-close %s: run %s allowed=%s decisions=%s stale=%d would_close=%d closed=%d",
+        "REAL" if commit_real else "SHADOW",
         scan_run_id,
         auto_close_allowed,
         decisions,
         stale_skipped,
         len(would_close_ids),
+        closed,
     )
     return result
 

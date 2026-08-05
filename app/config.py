@@ -217,6 +217,14 @@ class Settings(BaseSettings):
     nuclei_http_endpoint_budget_seconds: int = 600
     nuclei_http_endpoint_max_per_host: int = 40
 
+    # Real coverage-aware auto-close (Traccia B cutover) — SEPARATE from the pass flag, default OFF.
+    # The coverage-aware consumer runs in SHADOW for every tenant (persists streaks, closes nothing).
+    # A tenant's findings are REALLY closed (OPEN→FIXED) on a WOULD_CLOSE decision iff
+    # (nuclei_endpoint_autoclose_enabled AND tenant_id in this list). An EMPTY list means NO tenant
+    # (never "all") — enabling closes must always be an explicit per-tenant decision, never a wildcard.
+    nuclei_endpoint_autoclose_enabled: bool = False
+    nuclei_endpoint_autoclose_tenant_ids: list[int] = []
+
     # New tool timeouts
     alterx_timeout: int = 300  # 5 min
     puredns_timeout: int = 1800  # 30 min (174k+ candidates at 200/s)
