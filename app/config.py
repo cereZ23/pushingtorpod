@@ -216,6 +216,12 @@ class Settings(BaseSettings):
     nuclei_http_endpoint_batch_timeout_seconds: int = 180
     nuclei_http_endpoint_budget_seconds: int = 600
     nuclei_http_endpoint_max_per_host: int = 40
+    # Tier-2 endpoint knobs (Sprint T2). Resolved per-tier by resolve_endpoint_knobs(); tier 2 uses
+    # these, every other tier keeps the globals above unchanged. Prudent initial T2 values.
+    nuclei_http_endpoint_batch_size_t2: int = 3
+    nuclei_http_endpoint_batch_timeout_seconds_t2: int = 180
+    nuclei_http_endpoint_budget_seconds_t2: int = 900
+    nuclei_http_endpoint_max_per_host_t2: int = 10
 
     # Real coverage-aware auto-close (Traccia B cutover) — SEPARATE from the pass flag, default OFF.
     # The coverage-aware consumer runs in SHADOW for every tenant (persists streaks, closes nothing).

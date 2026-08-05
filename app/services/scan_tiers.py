@@ -83,6 +83,28 @@ def tier_severity(tier: int) -> list[str]:
     return list(TIER_SEVERITY.get(tier, TIER_SEVERITY[1]))
 
 
+def resolve_endpoint_knobs(settings, tier: int) -> dict[str, int]:
+    """Per-tier http_endpoint knobs (Sprint T2). PURE — reads only the given ``settings``.
+
+    Tier 2 uses the dedicated ``*_t2`` settings; EVERY other tier keeps the global knobs unchanged,
+    so T1's validated baseline is untouched. Returns the dict shape ``run_http_endpoint_pass`` expects
+    (batch_size / batch_timeout_seconds / budget_seconds / max_per_host).
+    """
+    if tier == 2:
+        return dict(
+            batch_size=settings.nuclei_http_endpoint_batch_size_t2,
+            batch_timeout_seconds=settings.nuclei_http_endpoint_batch_timeout_seconds_t2,
+            budget_seconds=settings.nuclei_http_endpoint_budget_seconds_t2,
+            max_per_host=settings.nuclei_http_endpoint_max_per_host_t2,
+        )
+    return dict(
+        batch_size=settings.nuclei_http_endpoint_batch_size,
+        batch_timeout_seconds=settings.nuclei_http_endpoint_batch_timeout_seconds,
+        budget_seconds=settings.nuclei_http_endpoint_budget_seconds,
+        max_per_host=settings.nuclei_http_endpoint_max_per_host,
+    )
+
+
 def nuclei_relevant_flags(*, interactsh_enabled: bool) -> dict[str, str]:
     """The nuclei runtime capabilities a pass ENABLES, mirroring the ACTUAL nuclei CLI flags — NOT
     inferred from template roots (selecting ``dast/`` does NOT enable DAST; nuclei needs ``-dast``).

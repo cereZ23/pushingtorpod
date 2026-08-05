@@ -38,7 +38,7 @@ from app.services.endpoint_policy import build_http_endpoint_policy_bundle, pers
 from app.services.endpoint_selection import AuthorizedAsset, CandidateEndpoint, normalize_host, select_endpoint_targets
 from app.services.rule_revision import resolve_nuclei_rule_snapshot
 from app.services.scan_policy import PASS_HTTP_ENDPOINT
-from app.services.scan_tiers import http_stock_roots, nuclei_relevant_flags, tier_severity
+from app.services.scan_tiers import http_stock_roots, nuclei_relevant_flags, resolve_endpoint_knobs, tier_severity
 from app.services.scanning.endpoint_pass import (
     PASS_COMPLETED,
     PASS_FAILED,
@@ -206,12 +206,8 @@ def run_http_endpoint_pass(
     if not is_endpoint_pass_enabled(tenant_id):
         return _skipped("feature_disabled")
 
-    cfg = dict(
-        batch_size=settings.nuclei_http_endpoint_batch_size,
-        batch_timeout_seconds=settings.nuclei_http_endpoint_batch_timeout_seconds,
-        budget_seconds=settings.nuclei_http_endpoint_budget_seconds,
-        max_per_host=settings.nuclei_http_endpoint_max_per_host,
-    )
+    # Per-tier knobs: tier 2 uses its own budget/cap/batch, every other tier keeps T1's baseline.
+    cfg = resolve_endpoint_knobs(settings, scan_tier)
     repo = CoverageRepository(db)
     try:
         validate_endpoint_pass_config(**cfg)  # ValueError on a bad knob → FAILED (caught below)

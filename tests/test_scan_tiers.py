@@ -2,13 +2,51 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from app.services.scan_tiers import (
     TIER_HTTP_STOCK_ROOTS,
     TIER_SEVERITY,
     http_stock_roots,
     nuclei_relevant_flags,
+    resolve_endpoint_knobs,
     tier_severity,
 )
+
+
+_KNOB_SETTINGS = SimpleNamespace(
+    nuclei_http_endpoint_batch_size=25,
+    nuclei_http_endpoint_batch_timeout_seconds=180,
+    nuclei_http_endpoint_budget_seconds=600,
+    nuclei_http_endpoint_max_per_host=40,
+    nuclei_http_endpoint_batch_size_t2=3,
+    nuclei_http_endpoint_batch_timeout_seconds_t2=181,
+    nuclei_http_endpoint_budget_seconds_t2=900,
+    nuclei_http_endpoint_max_per_host_t2=10,
+)
+
+
+def test_resolve_endpoint_knobs_tier2_uses_t2_values():
+    assert resolve_endpoint_knobs(_KNOB_SETTINGS, 2) == {
+        "batch_size": 3,
+        "batch_timeout_seconds": 181,
+        "budget_seconds": 900,
+        "max_per_host": 10,
+    }
+
+
+def test_resolve_endpoint_knobs_tier1_uses_global_values():
+    assert resolve_endpoint_knobs(_KNOB_SETTINGS, 1) == {
+        "batch_size": 25,
+        "batch_timeout_seconds": 180,
+        "budget_seconds": 600,
+        "max_per_host": 40,
+    }
+
+
+def test_resolve_endpoint_knobs_other_tiers_fall_back_to_global():
+    # Only tier 2 is special; every other tier keeps T1's baseline unchanged.
+    assert resolve_endpoint_knobs(_KNOB_SETTINGS, 3) == resolve_endpoint_knobs(_KNOB_SETTINGS, 1)
 
 
 def test_nuclei_relevant_flags_all_off_by_default():
