@@ -140,11 +140,18 @@ def shadow_auto_close(
     project_id: Optional[int],
     scan_run_id: int,
     close_threshold: int = DEFAULT_CLOSE_THRESHOLD,
+    commit_real: bool = False,
 ) -> dict:
-    """Shadow the coverage-aware auto-close for a run: PERSIST each finding's miss-streak
-    and run attribution, but NEVER change ``Finding.status``. This lets two live runs
-    actually advance a streak to WOULD_CLOSE — so the decisions can be compared against
-    reality — without ever closing a finding.
+    """Run the coverage-aware auto-close for a run: PERSIST each finding's miss-streak and run
+    attribution. By default (``commit_real=False``) it is a pure SHADOW — it NEVER changes
+    ``Finding.status``, so two live runs can advance a streak to WOULD_CLOSE and the decisions can
+    be compared against reality without ever closing a finding.
+
+    When ``commit_real=True`` (the caller gates this on the per-tenant real-auto-close flag), a
+    finding that reaches a WOULD_CLOSE decision this run is ALSO transitioned OPEN→FIXED, in the
+    SAME row-locked transaction — with a durable audit line (run, finding, asset, shape, policy).
+    Every other decision (ineligible / detected_reset / eligible_miss below threshold) still only
+    updates the streak, so a real close happens ONLY on a positively-decided WOULD_CLOSE.
 
     Fail-closed per finding: the detector must be applicable in a COVERED pass whose
     ``ScanPolicy.engine_name`` matches the finding's source (so a misconfig control id can
@@ -235,6 +242,8 @@ def shadow_auto_close(
 
     decisions = {d.value: 0 for d in AutoCloseDecision}
     stale_skipped = 0
+    closed = 0
+    to_audit: list[tuple] = []
     would_close_ids: list[int] = []
 
     this_key = (run.started_at, scan_run_id)
@@ -339,8 +348,37 @@ def shadow_auto_close(
         decisions[verdict.decision.value] += 1
         if verdict.would_close:
             would_close_ids.append(f.id)
+            # REAL close only when the caller enabled it for this tenant AND the run positively
+            # decided WOULD_CLOSE. Belt-and-suspenders on top of the row lock + out-of-order guard: a
+            # CONDITIONAL update guarded by status='open' with a rowcount check, so the close is
+            # idempotent (a re-run of the same run finds the finding already FIXED and updates 0 rows)
+            # and can never re-close what another path already closed. Audit is deferred to AFTER the
+            # commit and only for rows that actually changed, so a rolled-back transaction can never
+            # leave a false audit line and a re-run can never double-audit.
+            if commit_real:
+                updated = (
+                    db.query(Finding)
+                    .filter(Finding.id == f.id, Finding.status == FindingStatus.OPEN)
+                    .update({Finding.status: FindingStatus.FIXED}, synchronize_session=False)
+                )
+                if updated == 1:
+                    closed += 1
+                    to_audit.append((f.id, f.asset_id, f.source, f.endpoint_shape_hash, f.origin_policy_hash))
 
     db.commit()
+
+    # Durable, URL-free audit — emitted AFTER commit so it reflects ONLY findings actually closed in
+    # this (now-committed) transaction: run, finding, asset, endpoint shape-hash, origin policy-hash.
+    for fid, aid, src, shape, origin_policy in to_audit:
+        logger.info(
+            "coverage auto-close REAL: run=%s finding=%s asset=%s source=%s shape=%s origin_policy=%s",
+            scan_run_id,
+            fid,
+            aid,
+            src,
+            shape or "-",
+            origin_policy or "-",
+        )
 
     result = {
         "scan_run_id": scan_run_id,
@@ -349,14 +387,18 @@ def shadow_auto_close(
         "decisions": decisions,
         "stale_skipped": stale_skipped,
         "would_close_ids": would_close_ids,
+        "real_close_enabled": bool(commit_real),
+        "closed": closed,
     }
     logger.info(
-        "coverage auto-close SHADOW: run %s allowed=%s decisions=%s stale=%d would_close=%d",
+        "coverage auto-close %s: run %s allowed=%s decisions=%s stale=%d would_close=%d closed=%d",
+        "REAL" if commit_real else "SHADOW",
         scan_run_id,
         auto_close_allowed,
         decisions,
         stale_skipped,
         len(would_close_ids),
+        closed,
     )
     return result
 

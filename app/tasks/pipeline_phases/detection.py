@@ -737,16 +737,30 @@ def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
     # FULL open set. Persists each finding's miss-streak + run attribution; it NEVER changes
     # finding status (no real close). Fail-open WITH rollback so a shadow error can't leave a
     # partially-written transaction to corrupt the rest of the phase.
+    coverage_auto_closed = 0
     try:
+        from app.config import settings as _settings
         from app.services.coverage_autoclose import shadow_auto_close
 
-        shadow = shadow_auto_close(db, tenant_id=tenant_id, project_id=project_id, scan_run_id=scan_run_id)
+        # Real coverage-aware close is gated by a SEPARATE per-tenant flag (default OFF). The empty
+        # allowlist means NO tenant → pure shadow everywhere until an explicit per-tenant decision.
+        _real_close = bool(getattr(_settings, "nuclei_endpoint_autoclose_enabled", False)) and tenant_id in set(
+            getattr(_settings, "nuclei_endpoint_autoclose_tenant_ids", None) or []
+        )
+        shadow = shadow_auto_close(
+            db, tenant_id=tenant_id, project_id=project_id, scan_run_id=scan_run_id, commit_real=_real_close
+        )
+        coverage_auto_closed = shadow.get("closed", 0)
         tenant_logger.info(
-            f"Coverage auto-close shadow: {shadow.get('decisions')} would_close={len(shadow.get('would_close_ids', []))}"
+            "Coverage auto-close %s: %s would_close=%d closed=%d",
+            "REAL" if _real_close else "shadow",
+            shadow.get("decisions"),
+            len(shadow.get("would_close_ids", [])),
+            coverage_auto_closed,
         )
     except Exception:
         db.rollback()
-        tenant_logger.warning("Coverage auto-close shadow failed (non-fatal)", exc_info=True)
+        tenant_logger.warning("Coverage auto-close failed (non-fatal)", exc_info=True)
 
     # Legacy tenant-wide auto-close DISABLED (2026-08-03). Both old closers FIXED any
     # nuclei/misconfig finding merely absent for 48h / 5min — tenant-wide, NOT coverage- or
@@ -780,6 +794,8 @@ def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
             # Legacy closers disabled → always 0 (kept for the response contract).
             "nuclei_auto_closed": auto_closed,
             "misconfig_auto_closed": misconfig_closed,
+            # Coverage-aware consumer: real OPEN→FIXED closes this run (0 while shadow-only).
+            "coverage_auto_closed": coverage_auto_closed,
         }
     return {"issues_created": 0}
 

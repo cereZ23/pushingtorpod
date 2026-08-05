@@ -674,3 +674,130 @@ def test_attribution_rejects_foreign_tenant_run(db_session, test_tenant):
     f = db_session.query(Finding).filter(Finding.asset_id == asset.id).first()
     assert f is not None
     assert f.last_detected_scan_run_id is None  # foreign run dropped → no attribution
+
+
+# --- real coverage-aware close (commit_real gate) -------------------------------------------------
+
+
+def test_real_close_fixes_a_would_close_endpoint_finding(db_session, test_tenant, monkeypatch):
+    from app.models.coverage import CoverageStatus
+    from app.models.database import FindingStatus
+    from app.services.coverage_autoclose import shadow_auto_close
+    from app.services.endpoint_identity import endpoint_shape_hash
+
+    _allow_discovery(monkeypatch, True)
+    m = _endpoint_policy_catalog(db_session)
+    run = _new_run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "ep-realclose.test.com")
+    shape = endpoint_shape_hash("https://ep-realclose.test.com/admin")
+    _cover_endpoint(db_session, test_tenant, m, run, asset, shape, CoverageStatus.COVERED)
+    finding = _open_finding(
+        db_session, asset, template_id="EP-X", streak=1, endpoint_shape_hash=shape, origin_policy_hash=m.policy_hash
+    )
+    result = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id, commit_real=True)
+    assert result["would_close_ids"] == [finding.id]
+    assert result["closed"] == 1
+    assert result["real_close_enabled"] is True
+    db_session.refresh(finding)
+    assert finding.status == FindingStatus.FIXED  # real OPEN → FIXED
+    assert finding.eligible_miss_streak == 2
+
+
+def test_default_is_shadow_no_real_close(db_session, test_tenant, monkeypatch):
+    from app.models.coverage import CoverageStatus
+    from app.models.database import FindingStatus
+    from app.services.coverage_autoclose import shadow_auto_close
+    from app.services.endpoint_identity import endpoint_shape_hash
+
+    _allow_discovery(monkeypatch, True)
+    m = _endpoint_policy_catalog(db_session)
+    run = _new_run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "ep-shadowdefault.test.com")
+    shape = endpoint_shape_hash("https://ep-shadowdefault.test.com/admin")
+    _cover_endpoint(db_session, test_tenant, m, run, asset, shape, CoverageStatus.COVERED)
+    finding = _open_finding(
+        db_session, asset, template_id="EP-X", streak=1, endpoint_shape_hash=shape, origin_policy_hash=m.policy_hash
+    )
+    result = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id)
+    assert result["would_close_ids"] == [finding.id]  # WOULD close…
+    assert result["closed"] == 0  # …but shadow closes nothing
+    assert result["real_close_enabled"] is False
+    db_session.refresh(finding)
+    assert finding.status == FindingStatus.OPEN
+
+
+def test_real_close_never_closes_an_ineligible_finding(db_session, test_tenant, monkeypatch):
+    # PARTIAL coverage → ineligible → even with commit_real=True the finding is NOT closed.
+    from app.models.coverage import CoverageStatus
+    from app.models.database import FindingStatus
+    from app.services.coverage_autoclose import shadow_auto_close
+    from app.services.endpoint_identity import endpoint_shape_hash
+
+    _allow_discovery(monkeypatch, True)
+    m = _endpoint_policy_catalog(db_session)
+    run = _new_run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "ep-ineligible-real.test.com")
+    shape = endpoint_shape_hash("https://ep-ineligible-real.test.com/admin")
+    _cover_endpoint(db_session, test_tenant, m, run, asset, shape, CoverageStatus.PARTIAL)
+    finding = _open_finding(
+        db_session, asset, template_id="EP-X", streak=1, endpoint_shape_hash=shape, origin_policy_hash=m.policy_hash
+    )
+    result = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id, commit_real=True)
+    assert finding.id not in result["would_close_ids"]
+    assert result["closed"] == 0
+    db_session.refresh(finding)
+    assert finding.status == FindingStatus.OPEN
+    assert finding.eligible_miss_streak == 0  # reset, fail-closed
+
+
+def test_real_close_redetected_finding_resets_streak_and_stays_open(db_session, test_tenant, monkeypatch):
+    # A finding re-detected THIS run must reset its streak and stay OPEN, even with real close ON.
+    from app.models.coverage import CoverageStatus
+    from app.models.database import FindingStatus
+    from app.services.coverage_autoclose import shadow_auto_close
+    from app.services.endpoint_identity import endpoint_shape_hash
+
+    _allow_discovery(monkeypatch, True)
+    m = _endpoint_policy_catalog(db_session)
+    run = _new_run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "ep-redetected-real.test.com")
+    shape = endpoint_shape_hash("https://ep-redetected-real.test.com/admin")
+    _cover_endpoint(db_session, test_tenant, m, run, asset, shape, CoverageStatus.COVERED)
+    finding = _open_finding(
+        db_session, asset, template_id="EP-X", streak=1, endpoint_shape_hash=shape, origin_policy_hash=m.policy_hash
+    )
+    finding.last_detected_scan_run_id = run.id  # detected THIS run
+    db_session.commit()
+    result = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id, commit_real=True)
+    assert finding.id not in result["would_close_ids"]
+    assert result["closed"] == 0
+    db_session.refresh(finding)
+    assert finding.status == FindingStatus.OPEN
+    assert finding.eligible_miss_streak == 0
+
+
+def test_real_close_is_idempotent_across_reruns(db_session, test_tenant, monkeypatch):
+    # Re-running the SAME run must not double-close or double-audit: once FIXED, the finding is no
+    # longer in the OPEN working set and the conditional update touches 0 rows.
+    from app.models.coverage import CoverageStatus
+    from app.models.database import FindingStatus
+    from app.services.coverage_autoclose import shadow_auto_close
+    from app.services.endpoint_identity import endpoint_shape_hash
+
+    _allow_discovery(monkeypatch, True)
+    m = _endpoint_policy_catalog(db_session)
+    run = _new_run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "ep-idem-real.test.com")
+    shape = endpoint_shape_hash("https://ep-idem-real.test.com/admin")
+    _cover_endpoint(db_session, test_tenant, m, run, asset, shape, CoverageStatus.COVERED)
+    finding = _open_finding(
+        db_session, asset, template_id="EP-X", streak=1, endpoint_shape_hash=shape, origin_policy_hash=m.policy_hash
+    )
+    r1 = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id, commit_real=True)
+    assert r1["closed"] == 1
+    db_session.refresh(finding)
+    assert finding.status == FindingStatus.FIXED
+
+    r2 = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id, commit_real=True)
+    assert r2["closed"] == 0
+    assert finding.id not in r2["would_close_ids"]
