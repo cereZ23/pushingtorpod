@@ -308,13 +308,17 @@ def parse_nuclei_batch_output(
         err, expected_authority
     )
 
-    # A scan is fully complete ONLY at 100% AND with every request accounted for (a/b at 100% but
-    # a != b — e.g. a dropped request — is NOT complete).
+    # A scan is fully complete at 100% AND with every request accounted for. Nuclei's -stats `total`
+    # is an ESTIMATE and the actual `requests` count can slightly EXCEED it (observed at T2: a few
+    # extra per target from redirects/probes, requests_done = total + n_targets). So the guard is
+    # `done >= total`, not `== total`: an overshoot at 100% is still complete, while `done < total`
+    # (fewer requests than expected — a dropped/skipped request) is correctly NOT complete.
     fully_complete = (
         completion_percent == 100
         and requests_done is not None
         and requests_total is not None
-        and requests_done == requests_total
+        and requests_total > 0
+        and requests_done >= requests_total
     )
 
     catalog_verified = (

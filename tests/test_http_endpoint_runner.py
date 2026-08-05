@@ -27,6 +27,11 @@ _REAL_STATS_99 = '{"duration":"0:01:12","hosts":"21","percent":"99","requests":"
 _REAL_STATS_100 = (
     '{"duration":"0:01:20","hosts":"21","percent":"100","requests":"8904","templates":"284","total":"8904"}'
 )
+# Observed at T2: nuclei's `total` is an estimate; the actual `requests` count overshoots it slightly
+# (here requests 8907 > total 8904) while percent is 100. That is still a COMPLETE run.
+_REAL_STATS_100_OVERSHOOT = (
+    '{"duration":"0:01:20","hosts":"21","percent":"100","requests":"8907","templates":"284","total":"8904"}'
+)
 
 
 def _args(**over):
@@ -197,6 +202,48 @@ def test_real_json_stats_extracted_and_not_a_finding():
     assert ev.templates_loaded == 284 and ev.targets_loaded == 21 and ev.completion_percent == 100
     assert ev.requests_done == 8904 and ev.requests_total == 8904  # exposed for the per-batch diagnostic
     assert ev.catalog_verified and ev.targets_completed and ev.output_complete
+
+
+# --- completion: nuclei may overshoot the estimated `total` (observed at T2) --------------------
+
+
+def test_overshoot_at_100_is_complete():
+    # 8907/8904 at 100% (like T2's 1497/1494) — an overshoot is still a COMPLETE run.
+    ev = parse_nuclei_batch_output(0, _REAL_STATS_100_OVERSHOOT + "\n", "", expected_targets=21, expected_templates=284)
+    assert ev.completion_percent == 100 and ev.requests_done == 8907 and ev.requests_total == 8904
+    assert ev.targets_completed and ev.catalog_verified and ev.output_complete
+
+
+def test_done_equals_total_still_complete():
+    # T1 format (done == total) is unchanged by the >= relaxation.
+    ev = parse_nuclei_batch_output(0, _REAL_STATS_100 + "\n", "", expected_targets=21, expected_templates=284)
+    assert ev.targets_completed
+
+
+def test_requests_below_total_is_incomplete_even_at_100():
+    short = '{"hosts":"21","percent":"100","requests":"8903","templates":"284","total":"8904"}'
+    ev = parse_nuclei_batch_output(0, short + "\n", "", expected_targets=21, expected_templates=284)
+    assert ev.targets_completed is False  # done < total ⇒ a dropped request ⇒ NOT complete
+
+
+def test_total_zero_or_absent_is_incomplete():
+    zero = '{"hosts":"21","percent":"100","requests":"0","templates":"284","total":"0"}'
+    ev = parse_nuclei_batch_output(0, zero + "\n", "", expected_targets=21, expected_templates=284)
+    assert ev.targets_completed is False  # total 0 ⇒ requests_total > 0 fails ⇒ NOT complete
+
+
+def test_overshoot_with_catalog_mismatch_is_not_covered():
+    # Completion side is fine, but the catalog proof fails ⇒ can never be COVERED.
+    ev = parse_nuclei_batch_output(0, _REAL_STATS_100_OVERSHOOT + "\n", "", expected_targets=21, expected_templates=999)
+    assert ev.catalog_verified is False
+    assert ev.targets_completed  # only the templates-loaded proof is missing
+
+
+def test_overshoot_with_unresponsive_is_partial():
+    err = _REAL_STATS_100_OVERSHOOT + "\nSkipped h.example.it:443 from target list as found unresponsive permanently\n"
+    ev = parse_nuclei_batch_output(0, "", err, expected_targets=21, expected_templates=284)
+    assert ev.unresponsive_targets >= 1
+    assert ev.targets_completed is False  # any unresponsive origin ⇒ PARTIAL despite the overshoot
 
 
 def test_real_json_stats_on_stderr_also_parsed():
