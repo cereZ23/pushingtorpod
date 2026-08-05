@@ -694,9 +694,7 @@ def test_real_close_fixes_a_would_close_endpoint_finding(db_session, test_tenant
     finding = _open_finding(
         db_session, asset, template_id="EP-X", streak=1, endpoint_shape_hash=shape, origin_policy_hash=m.policy_hash
     )
-    result = shadow_auto_close(
-        db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id, commit_real=True
-    )
+    result = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id, commit_real=True)
     assert result["would_close_ids"] == [finding.id]
     assert result["closed"] == 1
     assert result["real_close_enabled"] is True
@@ -744,9 +742,7 @@ def test_real_close_never_closes_an_ineligible_finding(db_session, test_tenant, 
     finding = _open_finding(
         db_session, asset, template_id="EP-X", streak=1, endpoint_shape_hash=shape, origin_policy_hash=m.policy_hash
     )
-    result = shadow_auto_close(
-        db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id, commit_real=True
-    )
+    result = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id, commit_real=True)
     assert finding.id not in result["would_close_ids"]
     assert result["closed"] == 0
     db_session.refresh(finding)
