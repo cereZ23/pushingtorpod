@@ -241,8 +241,10 @@ def test_overshoot_with_catalog_mismatch_is_not_covered():
 
 def test_overshoot_with_unresponsive_is_partial():
     err = _REAL_STATS_100_OVERSHOOT + "\nSkipped h.example.it:443 from target list as found unresponsive permanently\n"
-    ev = parse_nuclei_batch_output(0, "", err, expected_targets=21, expected_templates=284)
-    assert ev.unresponsive_targets >= 1
+    ev = parse_nuclei_batch_output(
+        0, "", err, expected_targets=21, expected_templates=284, expected_authority=("h.example.it", 443)
+    )
+    assert ev.unresponsive_targets >= 1  # attributed to the batch origin
     assert ev.targets_completed is False  # any unresponsive origin ⇒ PARTIAL despite the overshoot
 
 
