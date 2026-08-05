@@ -145,11 +145,23 @@ def _to_int(v) -> Optional[int]:
 
 
 def _finding_from_result(obj: dict) -> dict:
-    """Normalise one JSONL finding, KEEPING the ORIGINAL input target so the orchestrator can
-    attribute by target shape. Order matters: ``input``/``host`` are the -l target we submitted;
-    ``url``/``matched-at`` may be a template-CONSTRUCTED URL that would break the shape."""
+    """Normalise one JSONL finding with an attributable absolute HTTP(S) target.
+
+    Real Nuclei output does not always include ``input`` and may expose ``host`` as a bare
+    hostname.  For endpoint-sensitive templates ``matched-at`` is the submitted BaseURL and is
+    therefore the strongest fallback.  Invalid/bare candidates are ignored rather than allowed to
+    produce a misleading shape; a missing target later makes attribution fail closed.
+    """
     info = obj.get("info") if isinstance(obj.get("info"), dict) else {}
-    target = obj.get("input") or obj.get("host") or obj.get("url") or obj.get("matched-at")
+    target = None
+    for candidate in (obj.get("input"), obj.get("matched-at"), obj.get("url"), obj.get("host")):
+        if not isinstance(candidate, str):
+            continue
+        candidate = candidate.strip()
+        parsed = urlparse(candidate)
+        if parsed.scheme.lower() in {"http", "https"} and parsed.hostname:
+            target = candidate
+            break
     return {
         "target": target,
         "template_id": obj.get("template-id"),

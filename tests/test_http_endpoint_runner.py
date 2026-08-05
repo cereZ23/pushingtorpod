@@ -265,6 +265,23 @@ def test_input_target_wins_over_constructed_url():
     assert ev.findings[0]["target"] == "https://h/admin"  # original input, not the template URL
 
 
+def test_real_nuclei_result_prefers_matched_at_over_bare_host_and_malformed_url():
+    stdout = (
+        '{"template-id":"easm-probe","host":"easm-probe","url":"/http://easm-probe/probe",'
+        '"matched-at":"http://easm-probe/probe","info":{"severity":"high"}}\n'
+    )
+    ev = parse_nuclei_batch_output(0, stdout, _REAL_STATS_100, expected_targets=21, expected_templates=284)
+    assert ev.findings[0]["target"] == "http://easm-probe/probe"
+
+
+def test_finding_without_absolute_http_target_fails_closed():
+    stdout = (
+        '{"template-id":"easm-probe","host":"easm-probe","url":"/http://easm-probe/probe","info":{"severity":"high"}}\n'
+    )
+    ev = parse_nuclei_batch_output(0, stdout, _REAL_STATS_100, expected_targets=21, expected_templates=284)
+    assert ev.findings[0]["target"] is None
+
+
 def test_unknown_json_object_sets_parse_incomplete():
     # a JSON object with no template-id and not a stats record → unknown → parse incomplete, not a finding
     stdout = '{"foo":"bar","baz":1}\n'
