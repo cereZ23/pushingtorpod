@@ -36,12 +36,16 @@ jobs:
       - uses: dorny/paths-filter@v3
         id: filter
         with:
+          # 'every' = a changed file matches `code` only if it satisfies ALL patterns
+          # (matches '**' AND is not docs/md/.gitignore). Without it, dorny's default OR
+          # semantics let '**' match everything, so `code` was always true (docs never skipped).
+          predicate-quantifier: "every"
           filters: |
             code:
-              - '**'
-              - '!docs/**'
-              - '!**/*.md'
-              - '!.gitignore'
+              - "**"
+              - "!docs/**"
+              - "!**/*.md"
+              - "!.gitignore"
 
   # ─── Lint ─────────────────────────────────────────────────────
   lint:
