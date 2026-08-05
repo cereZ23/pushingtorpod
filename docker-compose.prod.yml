@@ -277,6 +277,13 @@ services:
       NUCLEI_HTTP_ENDPOINT_BATCH_SIZE: "5"
       NUCLEI_HTTP_ENDPOINT_BATCH_TIMEOUT_SECONDS: "120"
       NUCLEI_HTTP_ENDPOINT_BUDGET_SECONDS: "600"
+      # CUTOVER: enable REAL coverage-aware auto-close (OPEN→FIXED on a WOULD_CLOSE decision) for
+      # Curci (tenant 3) ONLY. Validated end-to-end on the isolated probe (create→miss→would_close→
+      # real close, + negatives) and confirmed by 3 clean Curci SHADOW runs (would_close=0, no spurious
+      # candidates). ROLLBACK: set NUCLEI_ENDPOINT_AUTOCLOSE_ENABLED to "false" (or empty the allowlist)
+      # + deploy → the consumer instantly reverts to pure shadow (closes nothing). Empty list = NO tenant.
+      NUCLEI_ENDPOINT_AUTOCLOSE_ENABLED: "true"
+      NUCLEI_ENDPOINT_AUTOCLOSE_TENANT_IDS: "[3]"
     volumes:
       - ./data:/app/data:ro
       - ./app:/app/app
