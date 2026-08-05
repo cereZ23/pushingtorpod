@@ -214,9 +214,7 @@ class FindingRepository:
                         errors.append(f"Finding {idx}: origin policy is not an http_endpoint phase-9 policy")
                         continue
                     catalog = (
-                        self.db.query(ScanPolicyCatalog)
-                        .filter(ScanPolicyCatalog.policy_hash == policy_hash)
-                        .first()
+                        self.db.query(ScanPolicyCatalog).filter(ScanPolicyCatalog.policy_hash == policy_hash).first()
                     )
                     applicable = (
                         self.db.query(ScanPolicyTemplate.id)
