@@ -207,11 +207,27 @@ class FindingRepository:
                     if not is_shape_hash(shape_hash):
                         errors.append(f"Finding {idx}: invalid endpoint_shape_hash")
                         continue
-                    from app.models.coverage import ScanPolicy
+                    from app.models.coverage import ScanPolicy, ScanPolicyCatalog, ScanPolicyTemplate
 
                     policy = self.db.query(ScanPolicy).filter(ScanPolicy.policy_hash == policy_hash).first()
                     if policy is None or policy.phase != "9" or policy.pass_name != "http_endpoint":
                         errors.append(f"Finding {idx}: origin policy is not an http_endpoint phase-9 policy")
+                        continue
+                    catalog = (
+                        self.db.query(ScanPolicyCatalog)
+                        .filter(ScanPolicyCatalog.policy_hash == policy_hash)
+                        .first()
+                    )
+                    applicable = (
+                        self.db.query(ScanPolicyTemplate.id)
+                        .filter(
+                            ScanPolicyTemplate.policy_hash == policy_hash,
+                            ScanPolicyTemplate.detector_id == finding["template_id"],
+                        )
+                        .first()
+                    )
+                    if catalog is None or applicable is None:
+                        errors.append(f"Finding {idx}: detector is not applicable to the endpoint policy")
                         continue
 
                 # Process evidence. Finding.evidence is a JSON column: pass a dict/list
