@@ -152,7 +152,7 @@ def shadow_auto_close(
     discovery must authorise closing. Concurrency-safe: open findings are row-locked, and an
     out-of-order (older) run that reaches a finding after a newer one is a no-op.
     """
-    from app.models.coverage import CoverageStatus, ScanCoverage, ScanPolicy
+    from app.models.coverage import CoverageStatus, ScanCoverage, ScanEndpointCoverage, ScanPolicy
     from app.models.database import Asset, Finding, FindingStatus
     from app.models.scanning import ScanRun
     from app.repositories.coverage_repository import CoverageRepository
@@ -161,6 +161,7 @@ def shadow_auto_close(
         ENGINE_BUILTIN_MISCONFIG,
         ENGINE_NUCLEI,
         PASS_CUSTOM_HTTP,
+        PASS_HTTP_ENDPOINT,
         PASS_HTTP_STOCK,
     )
 
@@ -197,9 +198,14 @@ def shadow_auto_close(
     coverage_by_asset: dict[int, list] = {}
     for c in db.query(ScanCoverage).filter(ScanCoverage.scan_run_id == scan_run_id).all():
         coverage_by_asset.setdefault(c.asset_id, []).append(c)
+    endpoint_coverage = {
+        (c.asset_id, c.endpoint_shape_hash, c.policy_hash): c
+        for c in db.query(ScanEndpointCoverage).filter(ScanEndpointCoverage.scan_run_id == scan_run_id).all()
+    }
     policy_engine: dict[str, str] = {}
     policy_pass: dict[str, str] = {}
     hashes = {c.policy_hash for rows in coverage_by_asset.values() for c in rows}
+    hashes.update(c.policy_hash for c in endpoint_coverage.values())
     if hashes:
         for ph, eng, pass_name in db.query(ScanPolicy.policy_hash, ScanPolicy.engine_name, ScanPolicy.pass_name).filter(
             ScanPolicy.policy_hash.in_(hashes)
@@ -266,7 +272,25 @@ def shadow_auto_close(
         covered = False
         applicable = False
         covering_pass = None
-        if want_engine is not None and f.template_id:
+        has_shape = f.endpoint_shape_hash is not None
+        has_origin_policy = f.origin_policy_hash is not None
+        endpoint_provenance = has_shape or has_origin_policy
+        if endpoint_provenance:
+            # Endpoint findings NEVER fall back to asset-level coverage. Provenance must be complete,
+            # the current run must contain the exact (asset, shape, origin-policy) ledger row, and
+            # that immutable policy must still have an intact catalog containing this detector.
+            if has_shape and has_origin_policy and want_engine is not None and f.template_id:
+                c = endpoint_coverage.get((f.asset_id, f.endpoint_shape_hash, f.origin_policy_hash))
+                if (
+                    c is not None
+                    and policy_engine.get(c.policy_hash) == want_engine
+                    and policy_pass.get(c.policy_hash) == PASS_HTTP_ENDPOINT
+                    and f.template_id in _applicable(c.policy_hash)
+                ):
+                    applicable = True
+                    covered = c.status == CoverageStatus.COVERED
+                    covering_pass = policy_pass.get(c.policy_hash)
+        elif want_engine is not None and f.template_id:
             for c in coverage_by_asset.get(f.asset_id, ()):
                 if policy_engine.get(c.policy_hash) != want_engine:
                     continue  # only the finding's own engine can authorise it
@@ -283,7 +307,11 @@ def shadow_auto_close(
         # per-endpoint coverage exists (Traccia B). dns/network, misconfig and cdn/ssl detectors are
         # host-level: applying the HTTP path/query classification there would wrongly reset their
         # legitimate streaks, so they are left as base_target=True (unaffected by this gate).
-        if covering_pass in http_endpoint_gated_passes:
+        if endpoint_provenance:
+            # Exact endpoint coverage replaces the temporary matched_at classifier. Complete or
+            # incomplete provenance is handled above; never route it through the host-level gate.
+            base_target = True
+        elif covering_pass in http_endpoint_gated_passes:
             base_target = classify_matched_at(f.matched_at) == TARGET_BASE
         else:
             base_target = True

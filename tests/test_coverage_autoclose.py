@@ -10,6 +10,8 @@ from __future__ import annotations
 import types
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.services.coverage_autoclose import (
     AutoCloseDecision,
     classify_matched_at,
@@ -193,6 +195,28 @@ def _misconfig_policy_catalog(db_session, *, detector="MC-X"):
     return m
 
 
+def _endpoint_policy_catalog(db_session, *, detector="EP-X", revision="rev-ep"):
+    from app.repositories.coverage_repository import CoverageRepository
+    from app.services.rule_catalog import ApplicableRule, ApplicableRuleSet, catalog_digest_for_rules
+    from app.services.scan_policy import PASS_HTTP_ENDPOINT, build_nuclei_policy_manifest
+
+    rule = ApplicableRule("nuclei", detector, "http/ep.yaml", "e" * 64, "high", ("cve",))
+    digest = catalog_digest_for_rules([rule])
+    m = build_nuclei_policy_manifest(
+        nuclei_version="3.3.1",
+        template_revision=revision,
+        pass_name=PASS_HTTP_ENDPOINT,
+        tier=1,
+        severity=["high"],
+        catalog_digest=digest,
+        classifier_version=1,
+    )
+    repo = CoverageRepository(db_session)
+    repo.persist_policy(m)
+    repo.persist_catalog(ApplicableRuleSet(policy_hash=m.policy_hash, rules=(rule,)))
+    return m
+
+
 def _cover(db_session, test_tenant, manifest, run, asset, *, pass_name="http_stock"):
     from app.repositories.coverage_repository import CoverageRepository, CoverageStatus
 
@@ -207,11 +231,35 @@ def _cover(db_session, test_tenant, manifest, run, asset, *, pass_name="http_sto
     )
 
 
+def _cover_endpoint(db_session, test_tenant, manifest, run, asset, shape, status):
+    from app.repositories.coverage_repository import CoverageRepository
+    from app.services.scan_policy import PASS_HTTP_ENDPOINT
+
+    CoverageRepository(db_session).record_endpoint_coverage(
+        tenant_id=test_tenant.id,
+        scan_run_id=run.id,
+        phase=manifest.phase,
+        pass_name=PASS_HTTP_ENDPOINT,
+        policy_hash=manifest.policy_hash,
+        entries=[(asset.id, shape)],
+        status=status,
+    )
+
+
 _UNSET = object()
 
 
 def _open_finding(
-    db_session, asset, *, source="nuclei", template_id="CVE-X", streak=0, last_eligible_run_id=None, matched_at=_UNSET
+    db_session,
+    asset,
+    *,
+    source="nuclei",
+    template_id="CVE-X",
+    streak=0,
+    last_eligible_run_id=None,
+    matched_at=_UNSET,
+    endpoint_shape_hash=None,
+    origin_policy_hash=None,
 ):
     from app.models.database import Finding, FindingSeverity, FindingStatus
 
@@ -228,10 +276,181 @@ def _open_finding(
         last_seen=datetime.now(timezone.utc) - timedelta(days=1),  # NOT seen this run
         eligible_miss_streak=streak,
         last_eligible_run_id=last_eligible_run_id,
+        endpoint_shape_hash=endpoint_shape_hash,
+        origin_policy_hash=origin_policy_hash,
     )
     db_session.add(f)
     db_session.commit()
     return f
+
+
+def test_shadow_endpoint_exact_covered_shape_and_policy_advances(db_session, test_tenant, monkeypatch):
+    from app.models.coverage import CoverageStatus
+    from app.services.coverage_autoclose import shadow_auto_close
+    from app.services.endpoint_identity import endpoint_shape_hash
+
+    _allow_discovery(monkeypatch, True)
+    m = _endpoint_policy_catalog(db_session)
+    run = _new_run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "ep-shadow.test.com")
+    shape = endpoint_shape_hash("https://ep-shadow.test.com/admin")
+    _cover_endpoint(db_session, test_tenant, m, run, asset, shape, CoverageStatus.COVERED)
+    finding = _open_finding(
+        db_session,
+        asset,
+        template_id="EP-X",
+        streak=1,
+        endpoint_shape_hash=shape,
+        origin_policy_hash=m.policy_hash,
+        matched_at="https://ep-shadow.test.com/admin",
+    )
+
+    result = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id)
+    assert result["would_close_ids"] == [finding.id]
+    db_session.refresh(finding)
+    assert finding.eligible_miss_streak == 2  # shadow only; status remains OPEN
+
+
+@pytest.mark.parametrize(
+    "non_authorizing_status",
+    ["partial", "failed", "skipped"],
+)
+def test_shadow_endpoint_non_covered_status_is_ineligible(db_session, test_tenant, monkeypatch, non_authorizing_status):
+    from app.models.coverage import CoverageStatus
+    from app.services.coverage_autoclose import shadow_auto_close
+    from app.services.endpoint_identity import endpoint_shape_hash
+
+    _allow_discovery(monkeypatch, True)
+    m = _endpoint_policy_catalog(db_session)
+    run = _new_run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "ep-partial.test.com")
+    shape = endpoint_shape_hash("https://ep-partial.test.com/admin")
+    _cover_endpoint(
+        db_session,
+        test_tenant,
+        m,
+        run,
+        asset,
+        shape,
+        CoverageStatus(non_authorizing_status),
+    )
+    finding = _open_finding(
+        db_session,
+        asset,
+        template_id="EP-X",
+        streak=1,
+        endpoint_shape_hash=shape,
+        origin_policy_hash=m.policy_hash,
+    )
+    result = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id)
+    assert finding.id not in result["would_close_ids"]
+    db_session.refresh(finding)
+    assert finding.eligible_miss_streak == 0
+
+
+def test_shadow_endpoint_never_falls_back_to_asset_coverage(db_session, test_tenant, monkeypatch):
+    from app.services.coverage_autoclose import shadow_auto_close
+    from app.services.endpoint_identity import endpoint_shape_hash
+
+    _allow_discovery(monkeypatch, True)
+    endpoint_policy = _endpoint_policy_catalog(db_session)
+    host_policy = _nuclei_policy_catalog(db_session, detector="EP-X")
+    run = _new_run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "ep-nofallback.test.com")
+    _cover(db_session, test_tenant, host_policy, run, asset)
+    finding = _open_finding(
+        db_session,
+        asset,
+        template_id="EP-X",
+        streak=1,
+        endpoint_shape_hash=endpoint_shape_hash("https://ep-nofallback.test.com/admin"),
+        origin_policy_hash=endpoint_policy.policy_hash,
+    )
+    result = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id)
+    assert finding.id not in result["would_close_ids"]
+    db_session.refresh(finding)
+    assert finding.eligible_miss_streak == 0
+
+
+def test_shadow_endpoint_policy_drift_is_ineligible(db_session, test_tenant, monkeypatch):
+    from app.models.coverage import CoverageStatus
+    from app.services.coverage_autoclose import shadow_auto_close
+    from app.services.endpoint_identity import endpoint_shape_hash
+
+    _allow_discovery(monkeypatch, True)
+    old = _endpoint_policy_catalog(db_session, revision="old")
+    current = _endpoint_policy_catalog(db_session, revision="new")
+    run = _new_run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "ep-drift.test.com")
+    shape = endpoint_shape_hash("https://ep-drift.test.com/admin")
+    _cover_endpoint(db_session, test_tenant, current, run, asset, shape, CoverageStatus.COVERED)
+    finding = _open_finding(
+        db_session,
+        asset,
+        template_id="EP-X",
+        streak=1,
+        endpoint_shape_hash=shape,
+        origin_policy_hash=old.policy_hash,
+    )
+    result = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id)
+    assert finding.id not in result["would_close_ids"]
+    db_session.refresh(finding)
+    assert finding.eligible_miss_streak == 0
+
+
+def test_shadow_incomplete_endpoint_provenance_is_ineligible_no_fallback(db_session, test_tenant, monkeypatch):
+    from app.services.coverage_autoclose import shadow_auto_close
+    from app.services.endpoint_identity import endpoint_shape_hash
+
+    _allow_discovery(monkeypatch, True)
+    host_policy = _nuclei_policy_catalog(db_session, detector="EP-X")
+    endpoint_policy = _endpoint_policy_catalog(db_session)
+    run = _new_run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "ep-incomplete.test.com")
+    _cover(db_session, test_tenant, host_policy, run, asset)
+    shape_only = _open_finding(
+        db_session,
+        asset,
+        template_id="EP-X",
+        streak=1,
+        endpoint_shape_hash=endpoint_shape_hash("https://ep-incomplete.test.com/a"),
+    )
+    policy_only = _open_finding(
+        db_session,
+        asset,
+        template_id="EP-X-2",
+        streak=1,
+        origin_policy_hash=endpoint_policy.policy_hash,
+    )
+    result = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id)
+    assert not ({shape_only.id, policy_only.id} & set(result["would_close_ids"]))
+    db_session.refresh(shape_only)
+    db_session.refresh(policy_only)
+    assert shape_only.eligible_miss_streak == policy_only.eligible_miss_streak == 0
+
+
+def test_shadow_endpoint_detected_this_run_resets_even_without_covered_row(db_session, test_tenant, monkeypatch):
+    from app.services.coverage_autoclose import AutoCloseDecision, shadow_auto_close
+    from app.services.endpoint_identity import endpoint_shape_hash
+
+    _allow_discovery(monkeypatch, True)
+    policy = _endpoint_policy_catalog(db_session)
+    run = _new_run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "ep-detected.test.com")
+    finding = _open_finding(
+        db_session,
+        asset,
+        template_id="EP-X",
+        streak=1,
+        endpoint_shape_hash=endpoint_shape_hash("https://ep-detected.test.com/a"),
+        origin_policy_hash=policy.policy_hash,
+    )
+    finding.last_detected_scan_run_id = run.id
+    db_session.commit()
+    result = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id)
+    assert result["decisions"][AutoCloseDecision.DETECTED_RESET.value] == 1
+    db_session.refresh(finding)
+    assert finding.eligible_miss_streak == 0
 
 
 def _asset(db_session, test_tenant, ident):
