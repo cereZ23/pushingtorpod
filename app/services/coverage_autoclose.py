@@ -243,6 +243,7 @@ def shadow_auto_close(
     decisions = {d.value: 0 for d in AutoCloseDecision}
     stale_skipped = 0
     closed = 0
+    to_audit: list[tuple] = []
     would_close_ids: list[int] = []
 
     this_key = (run.started_at, scan_run_id)
@@ -348,23 +349,36 @@ def shadow_auto_close(
         if verdict.would_close:
             would_close_ids.append(f.id)
             # REAL close only when the caller enabled it for this tenant AND the run positively
-            # decided WOULD_CLOSE. The row is already locked and the out-of-order guard has skipped
-            # any stale run, so this transition is concurrency-safe. Audit is a durable, URL-free
-            # log line (run, finding, asset, shape-hash, origin-policy-hash).
-            if commit_real and f.status == FindingStatus.OPEN:
-                f.status = FindingStatus.FIXED
-                closed += 1
-                logger.info(
-                    "coverage auto-close REAL: run=%s finding=%s asset=%s source=%s shape=%s origin_policy=%s",
-                    scan_run_id,
-                    f.id,
-                    f.asset_id,
-                    f.source,
-                    f.endpoint_shape_hash or "-",
-                    f.origin_policy_hash or "-",
+            # decided WOULD_CLOSE. Belt-and-suspenders on top of the row lock + out-of-order guard: a
+            # CONDITIONAL update guarded by status='open' with a rowcount check, so the close is
+            # idempotent (a re-run of the same run finds the finding already FIXED and updates 0 rows)
+            # and can never re-close what another path already closed. Audit is deferred to AFTER the
+            # commit and only for rows that actually changed, so a rolled-back transaction can never
+            # leave a false audit line and a re-run can never double-audit.
+            if commit_real:
+                updated = (
+                    db.query(Finding)
+                    .filter(Finding.id == f.id, Finding.status == FindingStatus.OPEN)
+                    .update({Finding.status: FindingStatus.FIXED}, synchronize_session=False)
                 )
+                if updated == 1:
+                    closed += 1
+                    to_audit.append((f.id, f.asset_id, f.source, f.endpoint_shape_hash, f.origin_policy_hash))
 
     db.commit()
+
+    # Durable, URL-free audit — emitted AFTER commit so it reflects ONLY findings actually closed in
+    # this (now-committed) transaction: run, finding, asset, endpoint shape-hash, origin policy-hash.
+    for fid, aid, src, shape, origin_policy in to_audit:
+        logger.info(
+            "coverage auto-close REAL: run=%s finding=%s asset=%s source=%s shape=%s origin_policy=%s",
+            scan_run_id,
+            fid,
+            aid,
+            src,
+            shape or "-",
+            origin_policy or "-",
+        )
 
     result = {
         "scan_run_id": scan_run_id,
