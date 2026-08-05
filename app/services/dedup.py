@@ -26,6 +26,7 @@ def compute_finding_fingerprint(
     template_id: Optional[str],
     matcher_name: Optional[str] = None,
     source: str = "nuclei",
+    endpoint_shape_hash: Optional[str] = None,
 ) -> str:
     """
     Compute a SHA-256 fingerprint for a finding.
@@ -40,5 +41,9 @@ def compute_finding_fingerprint(
         (matcher_name or "").strip().lower(),
         source.strip().lower(),
     ]
+    # Preserve the historic formula byte-for-byte when provenance is absent. Endpoint findings add
+    # the opaque shape identity so the same detector/matcher on two paths cannot collapse.
+    if endpoint_shape_hash is not None:
+        parts.append(endpoint_shape_hash.strip().lower())
     payload = "|".join(parts)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()

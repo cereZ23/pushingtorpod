@@ -444,6 +444,61 @@ def test_multi_batch_error_then_covered_is_partial(db_session, _enabled, monkeyp
     assert statuses == {CoverageStatus.FAILED, CoverageStatus.COVERED}
 
 
+def test_endpoint_findings_use_shape_identity_and_persist_provenance(db_session, _enabled):
+    from app.models.database import Finding
+
+    tenant = _enabled
+    a = _asset(db_session, tenant)
+    urls = ["https://app.curci.it/admin", "https://app.curci.it/api"]
+    for url in urls:
+        _endpoint(db_session, a, url)
+    custom = _custom_policy(db_session)
+
+    def two_findings(n_targets, n_templates):
+        return _proven(
+            n_targets,
+            n_templates,
+            findings=[
+                {"target": url, "template_id": "ep-a", "matcher_name": "m", "name": "x", "severity": "high"}
+                for url in urls
+            ],
+        )
+
+    res, run = _call(db_session, tenant, assets=[a], runner=_FakeRunner(two_findings), custom_policy_hash=custom)
+    findings = db_session.query(Finding).filter(Finding.asset_id == a.id, Finding.template_id == "ep-a").all()
+    assert res.status == "completed" and len(findings) == 2
+    assert len({f.fingerprint for f in findings}) == 2
+    assert {f.endpoint_shape_hash for f in findings} == {endpoint_shape_hash(url) for url in urls}
+    assert {f.origin_policy_hash for f in findings} == {res.policy_hash}
+    assert {f.last_detected_scan_run_id for f in findings} == {run.id}
+
+
+def test_same_endpoint_redetection_updates_same_finding_and_current_policy(db_session, _enabled):
+    from app.models.database import Finding
+
+    tenant = _enabled
+    a = _asset(db_session, tenant)
+    url = "https://app.curci.it/admin"
+    _endpoint(db_session, a, url)
+    custom = _custom_policy(db_session)
+
+    def finding(n_targets, n_templates):
+        return _proven(
+            n_targets,
+            n_templates,
+            findings=[{"target": url, "template_id": "ep-a", "name": "x", "severity": "high"}],
+        )
+
+    first, _ = _call(db_session, tenant, assets=[a], runner=_FakeRunner(finding), custom_policy_hash=custom)
+    second, second_run = _call(db_session, tenant, assets=[a], runner=_FakeRunner(finding), custom_policy_hash=custom)
+    findings = db_session.query(Finding).filter(Finding.asset_id == a.id, Finding.template_id == "ep-a").all()
+    assert first.policy_hash == second.policy_hash
+    assert len(findings) == 1 and findings[0].occurrence_count == 2
+    assert findings[0].endpoint_shape_hash == endpoint_shape_hash(url)
+    assert findings[0].origin_policy_hash == second.policy_hash
+    assert findings[0].last_detected_scan_run_id == second_run.id
+
+
 def test_writer_errors_downgrade_to_partial(db_session, _enabled, monkeypatch):
     tenant = _enabled
     a = _asset(db_session, tenant)
