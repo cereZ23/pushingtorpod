@@ -102,3 +102,59 @@ def test_tier_check_rejects_out_of_range(db_session, test_tenant):
     with pytest.raises(IntegrityError):
         db_session.commit()
     db_session.rollback()
+
+
+# --- _resolve_scan_tier: snapshot is source of truth for EXECUTION too --------
+def _db_with_profile(tier):
+    from types import SimpleNamespace as NS
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = NS(scan_tier=tier) if tier is not None else None
+    return db
+
+
+def test_execution_uses_snapshot_not_edited_profile():
+    # Blocker fix: profile edited T2->T3 after creation → pipeline must still run the snapshot (T2).
+    from types import SimpleNamespace as NS
+
+    from app.tasks.pipeline import _resolve_scan_tier
+
+    run = NS(scan_tier=2, profile_id=5, stats=None)
+    assert _resolve_scan_tier(run, _db_with_profile(3)) == 2
+
+
+def test_execution_snapshot_over_stats_config():
+    from types import SimpleNamespace as NS
+
+    from app.tasks.pipeline import _resolve_scan_tier
+
+    run = NS(scan_tier=2, profile_id=None, stats={"config": {"tier": 3}})
+    assert _resolve_scan_tier(run, MagicMock()) == 2
+
+
+def test_execution_legacy_null_resolves_from_profile():
+    from types import SimpleNamespace as NS
+
+    from app.tasks.pipeline import _resolve_scan_tier
+
+    run = NS(scan_tier=None, profile_id=5, stats=None)
+    assert _resolve_scan_tier(run, _db_with_profile(3)) == 3
+
+
+def test_execution_legacy_null_stats_config_overrides_profile():
+    # Historical fallback order preserved: profile → stats.config.tier.
+    from types import SimpleNamespace as NS
+
+    from app.tasks.pipeline import _resolve_scan_tier
+
+    run = NS(scan_tier=None, profile_id=5, stats={"config": {"tier": 2}})
+    assert _resolve_scan_tier(run, _db_with_profile(3)) == 2
+
+
+def test_execution_legacy_null_defaults_to_1():
+    from types import SimpleNamespace as NS
+
+    from app.tasks.pipeline import _resolve_scan_tier
+
+    run = NS(scan_tier=None, profile_id=None, stats=None)
+    assert _resolve_scan_tier(run, MagicMock()) == 1
