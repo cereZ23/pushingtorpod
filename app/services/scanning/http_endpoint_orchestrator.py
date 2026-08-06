@@ -550,7 +550,11 @@ def _run_one_batch(
         and evidence.completion_percent is not None
         and evidence.requests_done is not None
         and evidence.requests_total is not None
-        and 0 <= evidence.requests_done <= evidence.requests_total
+        # requests_done may be BELOW total (the unresponsive origin's requests were skipped) OR ABOVE
+        # it (nuclei overshoots the estimated total — see the runner's fully_complete). Only sanity is
+        # required here; the unresponsive-attribution + no-timeout/truncation conditions above prove it.
+        and evidence.requests_total > 0
+        and evidence.requests_done >= 0
         and attribution_ok
         and writer_ok
         and not cleanup_failed

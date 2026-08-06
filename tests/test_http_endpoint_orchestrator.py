@@ -121,6 +121,26 @@ def _unresponsive(n_targets, n_templates):
     )
 
 
+def _unresponsive_overshoot(n_targets, n_templates):
+    # An unresponsive origin AND a nuclei requests overshoot (done > total, observed at T2). Must
+    # still be operationally_complete — the overshoot must not drop it out of the unresponsive-only case.
+    return BatchExecutionEvidence(
+        launched=True,
+        exit_code=0,
+        unresponsive_events=1,
+        unresponsive_targets=1,
+        unresponsive_attribution_complete=True,
+        targets_loaded=n_targets,
+        templates_loaded=n_templates,
+        completion_percent=100,
+        requests_done=326,
+        requests_total=323,
+        output_complete=True,
+        catalog_verified=True,
+        targets_completed=False,
+    )
+
+
 # --- fixtures / helpers ---------------------------------------------------------------------------
 
 
@@ -294,6 +314,22 @@ def test_attributed_unresponsive_is_partial_coverage_but_operationally_complete(
     assert res.stats["phase_non_degrading"] is True
     assert res.stats["batches_unresponsive"] == 1
     assert res.stats["endpoints_unresponsive"] == 1
+
+
+def test_unresponsive_with_requests_overshoot_is_still_operationally_complete(db_session, _enabled):
+    # requests_done > requests_total (overshoot) must NOT drop an unresponsive-only batch out of
+    # operational completeness — otherwise a single T2 overshoot batch degrades the whole phase.
+    tenant = _enabled
+    a = _asset(db_session, tenant)
+    _endpoint(db_session, a, "https://app.curci.it/admin")
+    custom = _custom_policy(db_session)
+    res, run = _call(
+        db_session, tenant, assets=[a], runner=_FakeRunner(_unresponsive_overshoot), custom_policy_hash=custom
+    )
+    assert res.stats["execution_complete"] is True
+    assert res.stats["completed_with_limitations"] is True
+    assert res.stats["coverage_limitation"] == "unresponsive_origins"
+    assert res.stats["phase_non_degrading"] is True
 
 
 def test_unattributed_unresponsive_still_degrades_phase(db_session, _enabled):
