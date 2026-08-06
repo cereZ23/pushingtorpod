@@ -297,6 +297,37 @@ class Event(Base):
         return f"<Event(id={self.id}, kind={self.kind.value}, created_at={self.created_at})>"
 
 
+class FindingLifecycleEvent(Base):
+    """Durable, queryable auto-close lifecycle for a finding (UI-2). One row per transition —
+    detected / eligible_miss / miss_reset / would_close / auto_closed / reopened — so the UI can prove
+    WHY a finding is open/ineligible/closed. No URL and no full coverage/policy hash is stored;
+    ``detail`` carries only small non-sensitive context (streak, threshold, scope, tier, shape prefix).
+    """
+
+    __tablename__ = "finding_lifecycle_events"
+
+    id = Column(Integer, primary_key=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    finding_id = Column(Integer, ForeignKey("findings.id", ondelete="CASCADE"), nullable=False)
+    scan_run_id = Column(Integer, ForeignKey("scan_runs.id", ondelete="SET NULL"), nullable=True)
+    event_type = Column(String(24), nullable=False)
+    detail = Column(JSON)  # small, URL-free context only (never a full hash)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('detected', 'eligible_miss', 'miss_reset', 'would_close', 'auto_closed', 'reopened')",
+            name="ck_finding_lifecycle_event_type",
+        ),
+        Index("idx_finding_lifecycle_finding_created", "finding_id", "created_at"),
+        Index("idx_finding_lifecycle_tenant", "tenant_id"),
+        Index("idx_finding_lifecycle_run", "scan_run_id"),
+    )
+
+    def __repr__(self):
+        return f"<FindingLifecycleEvent(id={self.id}, finding_id={self.finding_id}, type={self.event_type!r})>"
+
+
 class Seed(Base):
     __tablename__ = "seeds"
 
