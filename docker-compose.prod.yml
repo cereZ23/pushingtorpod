@@ -279,15 +279,17 @@ services:
       # REAL coverage-aware auto-close for Curci (tenant 3). A finding closes (OPEN→FIXED on a
       # WOULD_CLOSE decision) iff enabled AND its tenant is here AND the TIER of the covering policy
       # is in _TIERS. T1 validated end-to-end (probe) + live.
-      # T2 TEMPORARILY back in SHADOW ("[1]") while the finding-lifecycle audit (UI-2) lands: the
-      # persistent lifecycle events (detected/eligible_miss/would_close/auto_closed/reopened) must be
-      # writing BEFORE T2 can produce its first real close, or that close would exist only in a log
-      # line (timeline gap). Re-cutover to "[1,2]" is a separate config-only PR AFTER the audit is
-      # deployed & smoke-validated. The FIRST T2 candidate still needs a manual audit review (as T1).
+      # T2 re-cutover: TIERS back to "[1,2]" now that the persistent finding-lifecycle audit (UI-2,
+      # #143/#144) is deployed and validated — the events (detected/eligible_miss/would_close/
+      # auto_closed/reopened) now write in the SAME transaction as the close, so a T2 close can no
+      # longer be log-only. Sequence honoured: audit shipped first (T2 in shadow), validated on a
+      # real T1 scan (run 588: decisions↔events coherent, 0 dup, closed==auto_closed, no coverage
+      # regression) + prod lifecycle smoke, THEN this re-enable. FIRST T2 candidate still needs a
+      # manual audit review (as T1).
       # ROLLBACK a tier: drop it from _TIERS (e.g. back to "[1]") or set ENABLED "false" + deploy → shadow.
       NUCLEI_ENDPOINT_AUTOCLOSE_ENABLED: "true"
       NUCLEI_ENDPOINT_AUTOCLOSE_TENANT_IDS: "[3]"
-      NUCLEI_ENDPOINT_AUTOCLOSE_TIERS: "[1]"
+      NUCLEI_ENDPOINT_AUTOCLOSE_TIERS: "[1,2]"
     volumes:
       - ./data:/app/data:ro
       - ./app:/app/app
