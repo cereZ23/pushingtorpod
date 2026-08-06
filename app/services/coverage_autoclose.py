@@ -140,16 +140,22 @@ def shadow_auto_close(
     project_id: Optional[int],
     scan_run_id: int,
     close_threshold: int = DEFAULT_CLOSE_THRESHOLD,
-    commit_real: bool = False,
+    real_close_enabled: bool = False,
+    tenant_allowed: bool = False,
+    allowed_tiers: frozenset = frozenset(),
 ) -> dict:
     """Run the coverage-aware auto-close for a run: PERSIST each finding's miss-streak and run
-    attribution. By default (``commit_real=False``) it is a pure SHADOW — it NEVER changes
+    attribution. By default (``real_close_enabled=False``) it is a pure SHADOW — it NEVER changes
     ``Finding.status``, so two live runs can advance a streak to WOULD_CLOSE and the decisions can
     be compared against reality without ever closing a finding.
 
-    When ``commit_real=True`` (the caller gates this on the per-tenant real-auto-close flag), a
-    finding that reaches a WOULD_CLOSE decision this run is ALSO transitioned OPEN→FIXED, in the
-    SAME row-locked transaction — with a durable audit line (run, finding, asset, shape, policy).
+    A finding that reaches a WOULD_CLOSE decision is REALLY closed (OPEN→FIXED, same row-locked
+    transaction, durable audit line) ONLY when ALL of: ``real_close_enabled`` (global flag),
+    ``tenant_allowed`` (this run's tenant is allow-listed), AND the TIER of the exact ScanPolicy that
+    covers/authorises the finding is in ``allowed_tiers``. The tier is taken from the covering policy,
+    NOT the run parameter, so a T1 policy can never authorise a T2 close (and vice versa); an unknown
+    tier / non-canonical config is fail-closed. The two gate rejections are counted separately
+    (``gate_blocked.tenant_not_allowed`` / ``gate_blocked.tier_not_allowed``).
     Every other decision (ineligible / detected_reset / eligible_miss below threshold) still only
     updates the streak, so a real close happens ONLY on a positively-decided WOULD_CLOSE.
 
@@ -211,14 +217,16 @@ def shadow_auto_close(
     }
     policy_engine: dict[str, str] = {}
     policy_pass: dict[str, str] = {}
+    policy_tier: dict[str, int] = {}  # covering policy's tier — authorises the real close per-tier
     hashes = {c.policy_hash for rows in coverage_by_asset.values() for c in rows}
     hashes.update(c.policy_hash for c in endpoint_coverage.values())
     if hashes:
-        for ph, eng, pass_name in db.query(ScanPolicy.policy_hash, ScanPolicy.engine_name, ScanPolicy.pass_name).filter(
-            ScanPolicy.policy_hash.in_(hashes)
-        ):
+        for ph, eng, pass_name, tier in db.query(
+            ScanPolicy.policy_hash, ScanPolicy.engine_name, ScanPolicy.pass_name, ScanPolicy.tier
+        ).filter(ScanPolicy.policy_hash.in_(hashes)):
             policy_engine[ph] = eng
             policy_pass[ph] = pass_name
+            policy_tier[ph] = tier
 
     # Row-lock the open findings so two concurrent shadow runners can't both advance a streak.
     findings = (
@@ -243,6 +251,7 @@ def shadow_auto_close(
     decisions = {d.value: 0 for d in AutoCloseDecision}
     stale_skipped = 0
     closed = 0
+    gate_blocked = {"tenant_not_allowed": 0, "tier_not_allowed": 0}
     to_audit: list[tuple] = []
     would_close_ids: list[int] = []
 
@@ -281,6 +290,7 @@ def shadow_auto_close(
         covered = False
         applicable = False
         covering_pass = None
+        covering_policy_hash = None  # the exact policy that authorises this finding (drives the tier gate)
         has_shape = f.endpoint_shape_hash is not None
         has_origin_policy = f.origin_policy_hash is not None
         endpoint_provenance = has_shape or has_origin_policy
@@ -299,6 +309,7 @@ def shadow_auto_close(
                     applicable = True
                     covered = c.status == CoverageStatus.COVERED
                     covering_pass = policy_pass.get(c.policy_hash)
+                    covering_policy_hash = c.policy_hash
         elif want_engine is not None and f.template_id:
             for c in coverage_by_asset.get(f.asset_id, ()):
                 if policy_engine.get(c.policy_hash) != want_engine:
@@ -308,6 +319,7 @@ def shadow_auto_close(
                     if c.status == CoverageStatus.COVERED:
                         covered = True
                         covering_pass = policy_pass.get(c.policy_hash)
+                        covering_policy_hash = c.policy_hash
                         break
 
         # TEMPORARY endpoint-safety gate — ONLY for the HTTP nuclei passes (http_stock, custom_http),
@@ -348,22 +360,27 @@ def shadow_auto_close(
         decisions[verdict.decision.value] += 1
         if verdict.would_close:
             would_close_ids.append(f.id)
-            # REAL close only when the caller enabled it for this tenant AND the run positively
-            # decided WOULD_CLOSE. Belt-and-suspenders on top of the row lock + out-of-order guard: a
-            # CONDITIONAL update guarded by status='open' with a rowcount check, so the close is
-            # idempotent (a re-run of the same run finds the finding already FIXED and updates 0 rows)
-            # and can never re-close what another path already closed. Audit is deferred to AFTER the
-            # commit and only for rows that actually changed, so a rolled-back transaction can never
-            # leave a false audit line and a re-run can never double-audit.
-            if commit_real:
-                updated = (
-                    db.query(Finding)
-                    .filter(Finding.id == f.id, Finding.status == FindingStatus.OPEN)
-                    .update({Finding.status: FindingStatus.FIXED}, synchronize_session=False)
-                )
-                if updated == 1:
-                    closed += 1
-                    to_audit.append((f.id, f.asset_id, f.source, f.endpoint_shape_hash, f.origin_policy_hash))
+            # REAL close requires ALL: the global flag, the tenant allow-listed, AND the TIER of the
+            # exact covering policy allow-listed. The tier comes from that policy (never the run
+            # parameter), so a T1 policy can't authorise a T2 close; an unknown tier is fail-closed.
+            # The two rejections are counted separately for observability. The close itself is a
+            # CONDITIONAL update guarded by status='open' with a rowcount check (idempotent, never a
+            # double close); the audit is deferred to AFTER commit for rows that actually changed.
+            if real_close_enabled:
+                covering_tier = policy_tier.get(covering_policy_hash) if covering_policy_hash else None
+                if not tenant_allowed:
+                    gate_blocked["tenant_not_allowed"] += 1
+                elif covering_tier is None or covering_tier not in allowed_tiers:
+                    gate_blocked["tier_not_allowed"] += 1
+                else:
+                    updated = (
+                        db.query(Finding)
+                        .filter(Finding.id == f.id, Finding.status == FindingStatus.OPEN)
+                        .update({Finding.status: FindingStatus.FIXED}, synchronize_session=False)
+                    )
+                    if updated == 1:
+                        closed += 1
+                        to_audit.append((f.id, f.asset_id, f.source, f.endpoint_shape_hash, f.origin_policy_hash))
 
     db.commit()
 
@@ -387,18 +404,20 @@ def shadow_auto_close(
         "decisions": decisions,
         "stale_skipped": stale_skipped,
         "would_close_ids": would_close_ids,
-        "real_close_enabled": bool(commit_real),
+        "real_close_enabled": bool(real_close_enabled),
         "closed": closed,
+        "gate_blocked": gate_blocked,
     }
     logger.info(
-        "coverage auto-close %s: run %s allowed=%s decisions=%s stale=%d would_close=%d closed=%d",
-        "REAL" if commit_real else "SHADOW",
+        "coverage auto-close %s: run %s allowed=%s decisions=%s stale=%d would_close=%d closed=%d gate_blocked=%s",
+        "REAL" if real_close_enabled else "SHADOW",
         scan_run_id,
         auto_close_allowed,
         decisions,
         stale_skipped,
         len(would_close_ids),
         closed,
+        gate_blocked,
     )
     return result
 
