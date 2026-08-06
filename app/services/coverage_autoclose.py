@@ -170,6 +170,7 @@ def shadow_auto_close(
     from app.models.scanning import ScanRun
     from app.repositories.coverage_repository import CoverageRepository
     from app.services.discovery_health import evaluate_and_persist_discovery_health
+    from app.services.lifecycle_events import record_lifecycle_event
     from app.services.scan_policy import (
         ENGINE_BUILTIN_MISCONFIG,
         ENGINE_NUCLEI,
@@ -337,6 +338,7 @@ def shadow_auto_close(
         else:
             base_target = True
 
+        prev_streak = f.eligible_miss_streak or 0
         verdict = decide_finding_auto_close(
             this_run_id=scan_run_id,
             detected_this_run=detected,
@@ -344,7 +346,7 @@ def shadow_auto_close(
             coverage_covered=covered,
             catalog_intact=applicable,
             detector_applicable=applicable,
-            current_streak=f.eligible_miss_streak or 0,
+            current_streak=prev_streak,
             last_eligible_run_id=f.last_eligible_run_id,
             base_target=base_target,
             close_threshold=close_threshold,
@@ -358,6 +360,58 @@ def shadow_auto_close(
             f.last_detected_scan_run_id = verdict.set_last_detected_run_id
 
         decisions[verdict.decision.value] += 1
+
+        # Durable, queryable lifecycle events — written in THIS transaction (committed together
+        # with the streak/close at db.commit() below), so the UI can prove WHY a finding is
+        # open/ineligible/closed instead of scraping a log line. Closed-schema detail only:
+        # streak/threshold/scope/tier/reason — never a URL, never a hash. Idempotent per run.
+        covering_tier = policy_tier.get(covering_policy_hash) if covering_policy_hash else None
+        scope = "endpoint" if endpoint_provenance else ("base" if base_target else "asset")
+        _base_detail = {
+            "streak": verdict.new_streak,
+            "threshold": close_threshold,
+            "scope": scope,
+            "tier": covering_tier,
+        }
+        d = verdict.decision
+        if d is AutoCloseDecision.DETECTED_RESET:
+            record_lifecycle_event(
+                db,
+                tenant_id=tenant_id,
+                finding_id=f.id,
+                scan_run_id=scan_run_id,
+                event_type="detected",
+                detail={"scope": scope, "tier": covering_tier},
+            )
+        elif d is AutoCloseDecision.ELIGIBLE_MISS:
+            record_lifecycle_event(
+                db,
+                tenant_id=tenant_id,
+                finding_id=f.id,
+                scan_run_id=scan_run_id,
+                event_type="eligible_miss",
+                detail=_base_detail,
+            )
+        elif d is AutoCloseDecision.WOULD_CLOSE:
+            record_lifecycle_event(
+                db,
+                tenant_id=tenant_id,
+                finding_id=f.id,
+                scan_run_id=scan_run_id,
+                event_type="would_close",
+                detail=_base_detail,
+            )
+        elif d is AutoCloseDecision.INELIGIBLE and prev_streak > 0:
+            # Only record a reset when a streak was actually lost (not every non-eligible run).
+            record_lifecycle_event(
+                db,
+                tenant_id=tenant_id,
+                finding_id=f.id,
+                scan_run_id=scan_run_id,
+                event_type="miss_reset",
+                detail={"from_streak": prev_streak, "scope": scope, "tier": covering_tier},
+            )
+
         if verdict.would_close:
             would_close_ids.append(f.id)
             # REAL close requires ALL: the global flag, the tenant allow-listed, AND the TIER of the
@@ -367,7 +421,6 @@ def shadow_auto_close(
             # CONDITIONAL update guarded by status='open' with a rowcount check (idempotent, never a
             # double close); the audit is deferred to AFTER commit for rows that actually changed.
             if real_close_enabled:
-                covering_tier = policy_tier.get(covering_policy_hash) if covering_policy_hash else None
                 if not tenant_allowed:
                     gate_blocked["tenant_not_allowed"] += 1
                 elif covering_tier is None or covering_tier not in allowed_tiers:
@@ -381,6 +434,18 @@ def shadow_auto_close(
                     if updated == 1:
                         closed += 1
                         to_audit.append((f.id, f.asset_id, f.source, f.endpoint_shape_hash, f.origin_policy_hash))
+                        # ATOMIC with the OPEN→FIXED above: the auto_closed event is written in the
+                        # SAME transaction. record_lifecycle_event flushes, so if it cannot be
+                        # persisted the exception propagates and the close is rolled back with it —
+                        # never a real close without its durable audit row.
+                        record_lifecycle_event(
+                            db,
+                            tenant_id=tenant_id,
+                            finding_id=f.id,
+                            scan_run_id=scan_run_id,
+                            event_type="auto_closed",
+                            detail={**_base_detail, "reason": "coverage_miss_streak"},
+                        )
 
     db.commit()
 

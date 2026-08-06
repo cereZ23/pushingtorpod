@@ -966,3 +966,133 @@ def test_tenant_not_allowed_is_blocked_before_tier(db_session, test_tenant, monk
     assert res["gate_blocked"] == {"tenant_not_allowed": 1, "tier_not_allowed": 0}
     db_session.refresh(finding)
     assert finding.status == FindingStatus.OPEN
+
+
+# ---------------------------------------------------------------------------
+# UI-2 backend, step 2: durable lifecycle events written by the consumer.
+# ---------------------------------------------------------------------------
+def _events(db_session, finding_id, event_type=None):
+    from app.models.database import FindingLifecycleEvent
+
+    q = db_session.query(FindingLifecycleEvent).filter_by(finding_id=finding_id)
+    if event_type is not None:
+        q = q.filter_by(event_type=event_type)
+    return q.order_by(FindingLifecycleEvent.id).all()
+
+
+def test_lifecycle_eligible_miss_then_would_close_events(db_session, test_tenant, monkeypatch):
+    from app.services.coverage_autoclose import shadow_auto_close
+
+    _allow_discovery(monkeypatch, True)
+    m = _nuclei_policy_catalog(db_session)
+    asset = _asset(db_session, test_tenant, "ev1.test.com")
+    finding = _open_finding(db_session, asset, streak=0)
+
+    run1 = _new_run(db_session, test_tenant, started=datetime.now(timezone.utc) - timedelta(hours=1))
+    _cover(db_session, test_tenant, m, run1, asset)
+    shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run1.id)
+
+    run2 = _new_run(db_session, test_tenant, started=datetime.now(timezone.utc))
+    _cover(db_session, test_tenant, m, run2, asset)
+    shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run2.id)
+
+    types = [e.event_type for e in _events(db_session, finding.id)]
+    assert types == ["eligible_miss", "would_close"]
+    em = _events(db_session, finding.id, "eligible_miss")[0]
+    assert em.scan_run_id == run1.id and em.detail["streak"] == 1 and em.detail["threshold"] == 2
+    wc = _events(db_session, finding.id, "would_close")[0]
+    assert wc.scan_run_id == run2.id and wc.detail["streak"] == 2
+
+
+def test_lifecycle_events_idempotent_on_rerun(db_session, test_tenant, monkeypatch):
+    # Re-running the SAME run must not duplicate the event (writer re-check + UNIQUE backstop).
+    from app.services.coverage_autoclose import shadow_auto_close
+
+    _allow_discovery(monkeypatch, True)
+    m = _nuclei_policy_catalog(db_session)
+    run = _new_run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "ev-idem.test.com")
+    _cover(db_session, test_tenant, m, run, asset)
+    finding = _open_finding(db_session, asset, streak=0)
+
+    shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id)
+    shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id)
+
+    assert len(_events(db_session, finding.id, "eligible_miss")) == 1
+
+
+def test_lifecycle_auto_closed_event_atomic_with_close(db_session, test_tenant, monkeypatch):
+    from app.models.database import FindingStatus
+
+    run, finding = _covered_wouldclose_endpoint(db_session, test_tenant, monkeypatch, tier=1, host="ev-close")
+    res = shadow_auto_close(
+        db_session,
+        tenant_id=test_tenant.id,
+        project_id=1,
+        scan_run_id=run.id,
+        real_close_enabled=True,
+        tenant_allowed=True,
+        allowed_tiers=frozenset({1}),
+    )
+    assert res["closed"] == 1
+    db_session.refresh(finding)
+    assert finding.status == FindingStatus.FIXED
+    ac = _events(db_session, finding.id, "auto_closed")
+    assert len(ac) == 1
+    assert ac[0].scan_run_id == run.id
+    assert ac[0].detail["reason"] == "coverage_miss_streak"
+    assert ac[0].detail["tier"] == 1
+
+
+def test_lifecycle_no_auto_closed_event_when_gate_blocks(db_session, test_tenant, monkeypatch):
+    # Tier not allowed → no real close AND no auto_closed event (only would_close is recorded).
+    run, finding = _covered_wouldclose_endpoint(db_session, test_tenant, monkeypatch, tier=2, host="ev-gate")
+    shadow_auto_close(
+        db_session,
+        tenant_id=test_tenant.id,
+        project_id=1,
+        scan_run_id=run.id,
+        real_close_enabled=True,
+        tenant_allowed=True,
+        allowed_tiers=frozenset({1}),  # tier 2 blocked
+    )
+    assert _events(db_session, finding.id, "auto_closed") == []
+    assert len(_events(db_session, finding.id, "would_close")) == 1
+
+
+def test_lifecycle_miss_reset_event_only_when_streak_lost(db_session, test_tenant, monkeypatch):
+    # A prior streak lost to an INELIGIBLE run emits miss_reset; an already-zero streak emits nothing.
+    from app.services.coverage_autoclose import shadow_auto_close
+
+    _allow_discovery(monkeypatch, True)
+    m = _nuclei_policy_catalog(db_session)
+    run = _new_run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, "ev-reset.test.com")
+    _cover(db_session, test_tenant, m, run, asset)
+    # endpoint location under a base-only pass → INELIGIBLE, and streak=1 → a real reset
+    finding = _open_finding(db_session, asset, streak=1, matched_at="https://ev-reset.test.com/deep?x=1")
+
+    shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id)
+
+    mr = _events(db_session, finding.id, "miss_reset")
+    assert len(mr) == 1 and mr[0].detail["from_streak"] == 1
+
+
+def test_lifecycle_detail_carries_no_url_or_hash(db_session, test_tenant, monkeypatch):
+    # Confidentiality-at-rest: no event detail may contain a URL or a hash-looking value.
+    run, finding = _covered_wouldclose_endpoint(db_session, test_tenant, monkeypatch, tier=1, host="ev-clean")
+    shadow_auto_close(
+        db_session,
+        tenant_id=test_tenant.id,
+        project_id=1,
+        scan_run_id=run.id,
+        real_close_enabled=True,
+        tenant_allowed=True,
+        allowed_tiers=frozenset({1}),
+    )
+    for e in _events(db_session, finding.id):
+        blob = repr(e.detail or {})
+        assert "://" not in blob
+        assert "ep-ev-clean" not in blob  # no host/URL fragment
+        for v in (e.detail or {}).values():
+            assert not (isinstance(v, str) and len(v) >= 32)  # no hash-length strings

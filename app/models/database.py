@@ -11,6 +11,7 @@ from sqlalchemy import (
     Index,
     JSON,
     CheckConstraint,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship, validates, declarative_base
 from datetime import datetime, timezone
@@ -300,8 +301,9 @@ class Event(Base):
 class FindingLifecycleEvent(Base):
     """Durable, queryable auto-close lifecycle for a finding (UI-2). One row per transition —
     detected / eligible_miss / miss_reset / would_close / auto_closed / reopened — so the UI can prove
-    WHY a finding is open/ineligible/closed. No URL and no full coverage/policy hash is stored;
-    ``detail`` carries only small non-sensitive context (streak, threshold, scope, tier, shape prefix).
+    WHY a finding is open/ineligible/closed. No URL and no hash is stored; ``detail`` carries only a
+    small closed-schema context (streak, threshold, coverage scope, origin policy tier, reason code).
+    ``(finding_id, event_type, scan_run_id)`` is unique so re-running the same run is idempotent.
     """
 
     __tablename__ = "finding_lifecycle_events"
@@ -322,6 +324,9 @@ class FindingLifecycleEvent(Base):
         Index("idx_finding_lifecycle_finding_created", "finding_id", "created_at"),
         Index("idx_finding_lifecycle_tenant", "tenant_id"),
         Index("idx_finding_lifecycle_run", "scan_run_id"),
+        # Idempotency backstop: one row per (finding, transition, run). A retried run's
+        # writer re-check catches it first; this constraint enforces it under any race.
+        UniqueConstraint("finding_id", "event_type", "scan_run_id", name="uq_finding_lifecycle_finding_type_run"),
     )
 
     def __repr__(self):

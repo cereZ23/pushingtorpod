@@ -145,7 +145,7 @@ class FindingRepository:
             }
         """
         if not findings:
-            return {"created": 0, "updated": 0, "total_processed": 0, "errors": []}
+            return {"created": 0, "updated": 0, "reopened": 0, "total_processed": 0, "errors": []}
 
         # Never attribute detection to a run that isn't this tenant's: validate ownership and
         # drop a foreign/unknown scan_run_id to None (so it degrades to "no attribution").
@@ -282,7 +282,7 @@ class FindingRepository:
                 continue
 
         if not records:
-            return {"created": 0, "updated": 0, "total_processed": 0, "errors": errors}
+            return {"created": 0, "updated": 0, "reopened": 0, "total_processed": 0, "errors": errors}
 
         # Deduplicate within the batch: PostgreSQL ON CONFLICT cannot
         # update the same row twice in a single INSERT statement.
@@ -324,6 +324,41 @@ class FindingRepository:
         result = self.db.execute(stmt)
         returned_rows = result.fetchall()
 
+        # Re-detection reopen (P-C counterpart): the ON CONFLICT update above refreshes last_seen /
+        # last_detected / streak but deliberately never touches status, so a finding the coverage-aware
+        # consumer closed (OPEN→FIXED) would otherwise stay FIXED-forever even after nuclei sees it
+        # again. On a real scan run, flip any re-detected FIXED finding back to OPEN and write the
+        # `reopened` lifecycle event ATOMICALLY (same transaction as this upsert's commit). This mirrors
+        # the misconfig / cloud / sensitive-paths sources, which already reopen on re-detection.
+        reopened = 0
+        if scan_run_id is not None and records:
+            from app.services.lifecycle_events import record_lifecycle_event
+
+            fps = [r["fingerprint"] for r in records]
+            # fingerprint is tenant-scoped (it hashes tenant_id), so this set is already this tenant's.
+            fixed_ids = [
+                fid
+                for (fid,) in self.db.query(Finding.id)
+                .filter(Finding.fingerprint.in_(fps), Finding.status == FindingStatus.FIXED)
+                .all()
+            ]
+            for fid in fixed_ids:
+                updated = (
+                    self.db.query(Finding)
+                    .filter(Finding.id == fid, Finding.status == FindingStatus.FIXED)
+                    .update({Finding.status: FindingStatus.OPEN}, synchronize_session=False)
+                )
+                if updated == 1:
+                    reopened += 1
+                    record_lifecycle_event(
+                        self.db,
+                        tenant_id=tenant_id,
+                        finding_id=fid,
+                        scan_run_id=scan_run_id,
+                        event_type="reopened",
+                        detail={"reason": "re_detected"},
+                    )
+
         self.db.commit()
 
         # Count created vs updated
@@ -340,6 +375,7 @@ class FindingRepository:
         return {
             "created": created,
             "updated": len(returned_rows) - created,
+            "reopened": reopened,
             "total_processed": len(records),
             "errors": errors,
         }
