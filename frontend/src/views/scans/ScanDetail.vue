@@ -254,6 +254,10 @@ const PHASE_LABELS: Record<string, { name: string; description: string }> = {
     name: "HTTP Probing",
     description: "Probing live web servers with HTTPX",
   },
+  "4b": {
+    name: "TLS Certificates",
+    description: "Collecting TLS certificates, SANs and issuers via TLSX",
+  },
   "5": {
     name: "Port Scanning",
     description: "Discovering open ports via Naabu",
@@ -284,14 +288,26 @@ const PHASE_LABELS: Record<string, { name: string; description: string }> = {
     name: "Misconfig Detection",
     description: "Checking for security misconfigurations",
   },
+  "8c": {
+    name: "WAF Origin Discovery",
+    description: "Finding origin servers reachable directly, bypassing the WAF/CDN",
+  },
   "9": {
     name: "Vuln Scanning",
     description: "Running Nuclei vulnerability templates",
+  },
+  "9b": {
+    name: "Typosquatting",
+    description: "Detecting look-alike / phishing domains via DNSTwist",
   },
   "9d": {
     name: "Active DAST",
     description:
       "Fuzzing crawled parameters (nuclei -dast) — Tier 3 + authorization only",
+  },
+  "9e": {
+    name: "Version → CVE",
+    description: "Inferring known CVEs from detected product versions",
   },
   "10": { name: "Correlation", description: "Grouping findings into issues" },
   "11": {
