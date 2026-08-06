@@ -267,23 +267,23 @@ services:
       MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: json
-      # Sprint 3 http_endpoint pass — SHADOW on Curci (tenant 3) ONLY. Auto-close stays OFF (the
-      # endpoint consumer doesn't exist yet); this only writes scan_endpoint_coverage + findings with
-      # NULL provenance. SHADOW RUN 2 = INTERMEDIATE knobs: cap 10→20 and budget 180→600 (more room
-      # to complete), batch_size + batch_timeout UNCHANGED so a PARTIAL can be attributed to one knob.
+      # http_endpoint pass — ENABLED on Curci (tenant 3) only. Writes per-endpoint coverage +
+      # findings WITH provenance (endpoint_shape_hash + origin_policy_hash). T1 knobs below; T2 uses
+      # its own *_t2 defaults via the per-tier resolver. It runs at whatever tier the scan uses.
       NUCLEI_HTTP_ENDPOINT_ENABLED: "true"
       NUCLEI_HTTP_ENDPOINT_TENANT_IDS: "[3]"
       NUCLEI_HTTP_ENDPOINT_MAX_PER_HOST: "20"
       NUCLEI_HTTP_ENDPOINT_BATCH_SIZE: "5"
       NUCLEI_HTTP_ENDPOINT_BATCH_TIMEOUT_SECONDS: "120"
       NUCLEI_HTTP_ENDPOINT_BUDGET_SECONDS: "600"
-      # CUTOVER: enable REAL coverage-aware auto-close (OPEN→FIXED on a WOULD_CLOSE decision) for
-      # Curci (tenant 3) ONLY. Validated end-to-end on the isolated probe (create→miss→would_close→
-      # real close, + negatives) and confirmed by 3 clean Curci SHADOW runs (would_close=0, no spurious
-      # candidates). ROLLBACK: set NUCLEI_ENDPOINT_AUTOCLOSE_ENABLED to "false" (or empty the allowlist)
-      # + deploy → the consumer instantly reverts to pure shadow (closes nothing). Empty list = NO tenant.
+      # REAL coverage-aware auto-close — VALIDATED & LIVE for Curci (tenant 3), TIER 1 ONLY. A finding
+      # closes (OPEN→FIXED on a WOULD_CLOSE decision) iff enabled AND its tenant is here AND the TIER of
+      # the covering policy is in _TIERS. T1 was validated end-to-end (probe) + 4 clean live scans; T2
+      # is shadow-validated but NOT yet cut over → _TIERS stays "[1]" (add 2 only for the T2 cutover).
+      # ROLLBACK any tier: drop it from _TIERS (or set ENABLED "false") + deploy → instant shadow.
       NUCLEI_ENDPOINT_AUTOCLOSE_ENABLED: "true"
       NUCLEI_ENDPOINT_AUTOCLOSE_TENANT_IDS: "[3]"
+      NUCLEI_ENDPOINT_AUTOCLOSE_TIERS: "[1]"
     volumes:
       - ./data:/app/data:ro
       - ./app:/app/app
