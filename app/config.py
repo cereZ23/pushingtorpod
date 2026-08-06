@@ -230,6 +230,12 @@ class Settings(BaseSettings):
     # (never "all") — enabling closes must always be an explicit per-tenant decision, never a wildcard.
     nuclei_endpoint_autoclose_enabled: bool = False
     nuclei_endpoint_autoclose_tenant_ids: list[int] = []
+    # A finding is really closed only if BOTH its tenant (above) AND the TIER of the ScanPolicy that
+    # authorises the close are allow-listed. The tier comes from the exact covering policy, not the
+    # run parameter, so a T1 policy can never authorise a T2 close (and vice versa). Default [1] keeps
+    # the already-approved T1 behaviour; an EMPTY list authorises NO tier (fail-closed). Add 2 only
+    # after T2 is shadow-validated.
+    nuclei_endpoint_autoclose_tiers: list[int] = [1]
 
     # New tool timeouts
     alterx_timeout: int = 300  # 5 min

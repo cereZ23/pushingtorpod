@@ -742,21 +742,30 @@ def _phase_10_correlation(tenant_id, project_id, scan_run_id, db, tenant_logger)
         from app.config import settings as _settings
         from app.services.coverage_autoclose import shadow_auto_close
 
-        # Real coverage-aware close is gated by a SEPARATE per-tenant flag (default OFF). The empty
-        # allowlist means NO tenant → pure shadow everywhere until an explicit per-tenant decision.
-        _real_close = bool(getattr(_settings, "nuclei_endpoint_autoclose_enabled", False)) and tenant_id in set(
-            getattr(_settings, "nuclei_endpoint_autoclose_tenant_ids", None) or []
-        )
+        # Real coverage-aware close is gated by a SEPARATE flag (default OFF) + a per-tenant allowlist
+        # + a per-tier allowlist (default [1]). A finding closes only if the flag is on, its tenant is
+        # allow-listed, AND the tier of the exact covering policy is allow-listed (checked per-finding
+        # inside the consumer). Empty lists = nothing closes → pure shadow.
+        _ac_enabled = bool(getattr(_settings, "nuclei_endpoint_autoclose_enabled", False))
+        _tenant_allowed = tenant_id in set(getattr(_settings, "nuclei_endpoint_autoclose_tenant_ids", None) or [])
+        _allowed_tiers = frozenset(getattr(_settings, "nuclei_endpoint_autoclose_tiers", None) or [])
         shadow = shadow_auto_close(
-            db, tenant_id=tenant_id, project_id=project_id, scan_run_id=scan_run_id, commit_real=_real_close
+            db,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            scan_run_id=scan_run_id,
+            real_close_enabled=_ac_enabled,
+            tenant_allowed=_tenant_allowed,
+            allowed_tiers=_allowed_tiers,
         )
         coverage_auto_closed = shadow.get("closed", 0)
         tenant_logger.info(
-            "Coverage auto-close %s: %s would_close=%d closed=%d",
-            "REAL" if _real_close else "shadow",
+            "Coverage auto-close %s: %s would_close=%d closed=%d gate_blocked=%s",
+            "REAL" if _ac_enabled else "shadow",
             shadow.get("decisions"),
             len(shadow.get("would_close_ids", [])),
             coverage_auto_closed,
+            shadow.get("gate_blocked"),
         )
     except Exception:
         db.rollback()

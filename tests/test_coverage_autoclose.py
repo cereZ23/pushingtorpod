@@ -16,6 +16,7 @@ from app.services.coverage_autoclose import (
     AutoCloseDecision,
     classify_matched_at,
     decide_finding_auto_close,
+    shadow_auto_close,
 )
 
 
@@ -195,7 +196,7 @@ def _misconfig_policy_catalog(db_session, *, detector="MC-X"):
     return m
 
 
-def _endpoint_policy_catalog(db_session, *, detector="EP-X", revision="rev-ep"):
+def _endpoint_policy_catalog(db_session, *, detector="EP-X", revision="rev-ep", tier=1):
     from app.repositories.coverage_repository import CoverageRepository
     from app.services.rule_catalog import ApplicableRule, ApplicableRuleSet, catalog_digest_for_rules
     from app.services.scan_policy import PASS_HTTP_ENDPOINT, build_nuclei_policy_manifest
@@ -206,7 +207,7 @@ def _endpoint_policy_catalog(db_session, *, detector="EP-X", revision="rev-ep"):
         nuclei_version="3.3.1",
         template_revision=revision,
         pass_name=PASS_HTTP_ENDPOINT,
-        tier=1,
+        tier=tier,
         severity=["high"],
         catalog_digest=digest,
         classifier_version=1,
@@ -694,7 +695,15 @@ def test_real_close_fixes_a_would_close_endpoint_finding(db_session, test_tenant
     finding = _open_finding(
         db_session, asset, template_id="EP-X", streak=1, endpoint_shape_hash=shape, origin_policy_hash=m.policy_hash
     )
-    result = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id, commit_real=True)
+    result = shadow_auto_close(
+        db_session,
+        tenant_id=test_tenant.id,
+        project_id=1,
+        scan_run_id=run.id,
+        real_close_enabled=True,
+        tenant_allowed=True,
+        allowed_tiers=frozenset({1}),
+    )
     assert result["would_close_ids"] == [finding.id]
     assert result["closed"] == 1
     assert result["real_close_enabled"] is True
@@ -742,7 +751,15 @@ def test_real_close_never_closes_an_ineligible_finding(db_session, test_tenant, 
     finding = _open_finding(
         db_session, asset, template_id="EP-X", streak=1, endpoint_shape_hash=shape, origin_policy_hash=m.policy_hash
     )
-    result = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id, commit_real=True)
+    result = shadow_auto_close(
+        db_session,
+        tenant_id=test_tenant.id,
+        project_id=1,
+        scan_run_id=run.id,
+        real_close_enabled=True,
+        tenant_allowed=True,
+        allowed_tiers=frozenset({1}),
+    )
     assert finding.id not in result["would_close_ids"]
     assert result["closed"] == 0
     db_session.refresh(finding)
@@ -768,7 +785,15 @@ def test_real_close_redetected_finding_resets_streak_and_stays_open(db_session, 
     )
     finding.last_detected_scan_run_id = run.id  # detected THIS run
     db_session.commit()
-    result = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id, commit_real=True)
+    result = shadow_auto_close(
+        db_session,
+        tenant_id=test_tenant.id,
+        project_id=1,
+        scan_run_id=run.id,
+        real_close_enabled=True,
+        tenant_allowed=True,
+        allowed_tiers=frozenset({1}),
+    )
     assert finding.id not in result["would_close_ids"]
     assert result["closed"] == 0
     db_session.refresh(finding)
@@ -793,11 +818,151 @@ def test_real_close_is_idempotent_across_reruns(db_session, test_tenant, monkeyp
     finding = _open_finding(
         db_session, asset, template_id="EP-X", streak=1, endpoint_shape_hash=shape, origin_policy_hash=m.policy_hash
     )
-    r1 = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id, commit_real=True)
+    r1 = shadow_auto_close(
+        db_session,
+        tenant_id=test_tenant.id,
+        project_id=1,
+        scan_run_id=run.id,
+        real_close_enabled=True,
+        tenant_allowed=True,
+        allowed_tiers=frozenset({1}),
+    )
     assert r1["closed"] == 1
     db_session.refresh(finding)
     assert finding.status == FindingStatus.FIXED
 
-    r2 = shadow_auto_close(db_session, tenant_id=test_tenant.id, project_id=1, scan_run_id=run.id, commit_real=True)
+    r2 = shadow_auto_close(
+        db_session,
+        tenant_id=test_tenant.id,
+        project_id=1,
+        scan_run_id=run.id,
+        real_close_enabled=True,
+        tenant_allowed=True,
+        allowed_tiers=frozenset({1}),
+    )
     assert r2["closed"] == 0
     assert finding.id not in r2["would_close_ids"]
+
+
+# --- per-tier gate (real close needs tenant AND the covering policy's tier both allow-listed) ------
+
+
+def _covered_wouldclose_endpoint(db_session, test_tenant, monkeypatch, *, tier, host):
+    from app.models.coverage import CoverageStatus
+    from app.services.endpoint_identity import endpoint_shape_hash
+
+    _allow_discovery(monkeypatch, True)
+    m = _endpoint_policy_catalog(db_session, tier=tier, revision=f"rev-t{tier}")
+    run = _new_run(db_session, test_tenant)
+    asset = _asset(db_session, test_tenant, f"ep-{host}.test.com")
+    shape = endpoint_shape_hash(f"https://ep-{host}.test.com/admin")
+    _cover_endpoint(db_session, test_tenant, m, run, asset, shape, CoverageStatus.COVERED)
+    finding = _open_finding(
+        db_session, asset, template_id="EP-X", streak=1, endpoint_shape_hash=shape, origin_policy_hash=m.policy_hash
+    )
+    return run, finding
+
+
+def test_tier_allowed_closes(db_session, test_tenant, monkeypatch):
+    from app.models.database import FindingStatus
+
+    run, finding = _covered_wouldclose_endpoint(db_session, test_tenant, monkeypatch, tier=1, host="t1ok")
+    res = shadow_auto_close(
+        db_session,
+        tenant_id=test_tenant.id,
+        project_id=1,
+        scan_run_id=run.id,
+        real_close_enabled=True,
+        tenant_allowed=True,
+        allowed_tiers=frozenset({1}),
+    )
+    assert res["closed"] == 1 and res["gate_blocked"] == {"tenant_not_allowed": 0, "tier_not_allowed": 0}
+    db_session.refresh(finding)
+    assert finding.status == FindingStatus.FIXED
+
+
+def test_t1_policy_denied_when_only_t2_allowed(db_session, test_tenant, monkeypatch):
+    from app.models.database import FindingStatus
+
+    run, finding = _covered_wouldclose_endpoint(db_session, test_tenant, monkeypatch, tier=1, host="t1denied")
+    res = shadow_auto_close(
+        db_session,
+        tenant_id=test_tenant.id,
+        project_id=1,
+        scan_run_id=run.id,
+        real_close_enabled=True,
+        tenant_allowed=True,
+        allowed_tiers=frozenset({2}),
+    )
+    assert res["closed"] == 0 and res["gate_blocked"]["tier_not_allowed"] == 1
+    db_session.refresh(finding)
+    assert finding.status == FindingStatus.OPEN
+
+
+def test_t2_policy_denied_when_only_t1_allowed(db_session, test_tenant, monkeypatch):
+    from app.models.database import FindingStatus
+
+    run, finding = _covered_wouldclose_endpoint(db_session, test_tenant, monkeypatch, tier=2, host="t2denied")
+    res = shadow_auto_close(
+        db_session,
+        tenant_id=test_tenant.id,
+        project_id=1,
+        scan_run_id=run.id,
+        real_close_enabled=True,
+        tenant_allowed=True,
+        allowed_tiers=frozenset({1}),
+    )
+    assert res["closed"] == 0 and res["gate_blocked"]["tier_not_allowed"] == 1
+    db_session.refresh(finding)
+    assert finding.status == FindingStatus.OPEN
+
+
+def test_t2_policy_closes_when_t2_allowed(db_session, test_tenant, monkeypatch):
+    from app.models.database import FindingStatus
+
+    run, finding = _covered_wouldclose_endpoint(db_session, test_tenant, monkeypatch, tier=2, host="t2ok")
+    res = shadow_auto_close(
+        db_session,
+        tenant_id=test_tenant.id,
+        project_id=1,
+        scan_run_id=run.id,
+        real_close_enabled=True,
+        tenant_allowed=True,
+        allowed_tiers=frozenset({1, 2}),
+    )
+    assert res["closed"] == 1
+    db_session.refresh(finding)
+    assert finding.status == FindingStatus.FIXED
+
+
+def test_empty_tiers_blocks_everything(db_session, test_tenant, monkeypatch):
+    run, finding = _covered_wouldclose_endpoint(db_session, test_tenant, monkeypatch, tier=1, host="emptytiers")
+    res = shadow_auto_close(
+        db_session,
+        tenant_id=test_tenant.id,
+        project_id=1,
+        scan_run_id=run.id,
+        real_close_enabled=True,
+        tenant_allowed=True,
+        allowed_tiers=frozenset(),
+    )
+    assert res["closed"] == 0 and res["gate_blocked"]["tier_not_allowed"] == 1
+
+
+def test_tenant_not_allowed_is_blocked_before_tier(db_session, test_tenant, monkeypatch):
+    from app.models.database import FindingStatus
+
+    run, finding = _covered_wouldclose_endpoint(db_session, test_tenant, monkeypatch, tier=1, host="notenant")
+    res = shadow_auto_close(
+        db_session,
+        tenant_id=test_tenant.id,
+        project_id=1,
+        scan_run_id=run.id,
+        real_close_enabled=True,
+        tenant_allowed=False,
+        allowed_tiers=frozenset({1}),
+    )
+    assert res["closed"] == 0
+    assert res["gate_blocked"] == {"tenant_not_allowed": 1, "tier_not_allowed": 0}
+    db_session.refresh(finding)
+    assert finding.status == FindingStatus.OPEN
