@@ -548,6 +548,7 @@ def _run_one_batch(
         and evidence.targets_loaded == len(batch.targets)
         and evidence.catalog_verified
         and evidence.completion_percent is not None
+        and 0 <= evidence.completion_percent <= 100
         and evidence.requests_done is not None
         and evidence.requests_total is not None
         # requests_done may be BELOW total (the unresponsive origin's requests were skipped) OR ABOVE
