@@ -52,6 +52,7 @@ export interface ScanRun {
   tenant_id: number;
   status: ScanRunStatus;
   triggered_by: string;
+  scan_tier: number | null; // 1/2/3; null = unknown (legacy) or untiered (retest)
   started_at: string | null;
   completed_at: string | null;
   stats: Record<string, unknown> | null;

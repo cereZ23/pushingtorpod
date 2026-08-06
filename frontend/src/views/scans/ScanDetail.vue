@@ -6,6 +6,7 @@ import { useScanStore } from "@/stores/scans";
 import type { PhaseStatus, ScanHealth } from "@/stores/scans";
 import { useToastStore } from "@/stores/toast";
 import { formatDate, parseApiDate } from "@/utils/formatters";
+import { tierBadge, triggerBadge } from "@/utils/scanBadges";
 
 const route = useRoute();
 const router = useRouter();
@@ -426,12 +427,30 @@ function getStatsEntries(
               <dt
                 class="text-sm font-medium text-gray-500 dark:text-dark-text-secondary"
               >
-                Triggered By
+                Tier
               </dt>
-              <dd
-                class="mt-1 text-sm text-gray-900 dark:text-dark-text-primary"
+              <dd class="mt-1">
+                <span
+                  class="px-2.5 py-0.5 inline-flex items-center text-xs font-semibold rounded-full"
+                  :class="tierBadge(scanStore.currentScanRun.scan_tier).classes"
+                >
+                  {{ tierBadge(scanStore.currentScanRun.scan_tier).label }}
+                </span>
+              </dd>
+            </div>
+            <div>
+              <dt
+                class="text-sm font-medium text-gray-500 dark:text-dark-text-secondary"
               >
-                {{ scanStore.currentScanRun.triggered_by }}
+                Trigger
+              </dt>
+              <dd class="mt-1">
+                <span
+                  class="px-2.5 py-0.5 inline-flex items-center text-xs font-semibold rounded-full"
+                  :class="triggerBadge(scanStore.currentScanRun.triggered_by).classes"
+                >
+                  {{ triggerBadge(scanStore.currentScanRun.triggered_by).label }}
+                </span>
               </dd>
             </div>
             <div>
