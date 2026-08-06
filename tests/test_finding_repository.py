@@ -129,7 +129,7 @@ class TestBulkUpsert:
     def test_empty_input(self):
         repo = FindingRepository(MagicMock())
         result = repo.bulk_upsert_findings([], tenant_id=1)
-        assert result == {"created": 0, "updated": 0, "total_processed": 0, "errors": []}
+        assert result == {"created": 0, "updated": 0, "reopened": 0, "total_processed": 0, "errors": []}
 
     def test_missing_asset_id(self):
         db = MagicMock()
