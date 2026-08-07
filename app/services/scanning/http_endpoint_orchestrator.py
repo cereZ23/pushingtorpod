@@ -108,6 +108,10 @@ class EndpointBatchResult:
     findings_created: int
     findings_updated: int
     operationally_complete: bool = False
+    # Canonical limitation reason for this batch, resolved by precedence across BOTH the execution
+    # evidence AND the out-of-evidence verdict inputs (writer/attribution/cleanup). None for a clean
+    # batch. Used by the rollup so a writer/attribution/cleanup degrade is never lost from the snapshot.
+    limitation_reason: Optional[str] = None
 
 
 @dataclass
@@ -139,11 +143,21 @@ def _skipped(
         "coverage_authorizing": _coverage_authorizing(PASS_SKIPPED, reason),
         "phase_non_degrading": _phase_non_degrading(PASS_SKIPPED, reason),
     }
+    # For no_targets, surface non-sensitive numeric context (why nothing was selected) from the
+    # caller's selection stats — counts only, never a URL/target/hash.
+    _detail = None
+    if reason == "no_targets" and isinstance(stats, dict):
+        _detail = {
+            "candidate_count": stats.get("candidate_count"),
+            "out_of_scope_dropped": stats.get("out_of_scope"),
+            "template_count": stats.get("template_count"),
+        }
     base["endpoint_verification"] = _minimal_endpoint_verification(
         enabled=reason != "feature_disabled",
         no_targets=reason == "no_targets",
         structural_failed=False,
         phase_non_degrading=base["phase_non_degrading"],
+        detail=_detail,
     )
     return EndpointPassResult(
         status=PASS_SKIPPED,
@@ -613,7 +627,15 @@ def _run_one_batch(
         operationally_complete,
         len(evidence.findings),
     )
-    return EndpointBatchResult(batch, evidence, status, created, updated, operationally_complete)
+    # Resolve this batch's canonical limitation by PRECEDENCE across the out-of-evidence verdict
+    # inputs (writer/attribution/cleanup — invisible to batch_limitation_reason) AND the evidence.
+    limitation_reason = _resolve_batch_limitation(
+        writer_ok=writer_ok, attribution_ok=attribution_ok, cleanup_failed=cleanup_failed, evidence=evidence
+    )
+
+    return EndpointBatchResult(
+        batch, evidence, status, created, updated, operationally_complete, limitation_reason=limitation_reason
+    )
 
 
 def _batch_authority(batch: EndpointBatch) -> tuple[str, int]:
@@ -790,7 +812,11 @@ def _rollup_stats(base_stats, batch_results, bundle, pass_status, skip_reason, e
     # for audit only — the builder re-aggregates the authoritative coverage rows). No URL/hash/raw error.
     from app.services.endpoint_verification import batch_limitation_reason, build_snapshot
 
-    batch_reasons = [batch_limitation_reason(br.evidence) for br in batch_results]
+    # Prefer the batch's fully-resolved limitation_reason (covers writer/attribution/cleanup); fall
+    # back to the evidence for batches created without a verdict (budget-SKIPPED / staging-FAILED).
+    batch_reasons = [
+        getattr(br, "limitation_reason", None) or batch_limitation_reason(br.evidence) for br in batch_results
+    ]
     extra_reasons = []
     if pass_status == "failed":
         # a FAILED pass is structural/execution: staging → configuration_error, else execution_error.
@@ -833,8 +859,31 @@ def _write_target_file(path: str, batch: EndpointBatch) -> None:
         fh.write("\n".join(t.url for t in batch.targets))
 
 
+def _resolve_batch_limitation(*, writer_ok, attribution_ok, cleanup_failed, evidence) -> Optional[str]:
+    """Canonical limitation for ONE batch, by PRECEDENCE, folding the out-of-evidence verdict inputs
+    (writer/attribution/cleanup — which ``batch_limitation_reason`` cannot see) together WITH the
+    evidence-derived reason. This is where the #155 regression lived: ``writer_ok`` existed at verdict
+    time but never reached the mapper. Pure + directly testable so every real signal is proven to
+    reach the snapshot."""
+    from app.services.endpoint_verification import batch_limitation_reason, resolve_limitation
+
+    reasons = []
+    if not writer_ok:
+        reasons.append("writer_error")
+    if not attribution_ok:
+        reasons.append("parser_incomplete")
+    if cleanup_failed:
+        reasons.append("execution_error")
+    ev_reason = batch_limitation_reason(evidence)
+    if ev_reason:
+        reasons.append(ev_reason)
+    return resolve_limitation(reasons)
+
+
 def _skipped_evidence() -> BatchExecutionEvidence:
-    return BatchExecutionEvidence(launched=False, exit_code=None)
+    # This evidence is used ONLY on the budget-out path (budget_out / batch_timeout <= 0), so the
+    # canonical reason must be insufficient_budget — otherwise a budget-skipped tail loses its cause.
+    return BatchExecutionEvidence(launched=False, exit_code=None, budget_expired=True)
 
 
 def _staging_failed_evidence() -> BatchExecutionEvidence:
@@ -848,9 +897,13 @@ def _staging_failed_evidence() -> BatchExecutionEvidence:
 # ==================================================================================================
 
 
-def _minimal_endpoint_verification(*, enabled, no_targets, structural_failed, phase_non_degrading, extra_reasons=()):
+def _minimal_endpoint_verification(
+    *, enabled, no_targets, structural_failed, phase_non_degrading, extra_reasons=(), detail=None
+):
     """A no-batch endpoint_verification snapshot for the disabled / no_targets / structural-error /
-    wiring-error paths (state disabled/no_targets/failed). Counts are all zero; no batches ran."""
+    wiring-error paths (state disabled/no_targets/failed). Counts are all zero; no batches ran.
+    ``detail`` carries non-sensitive numeric context (candidate/template/out-of-scope counts) so a
+    no_targets snapshot explains WHY there was nothing to verify."""
     from app.services.endpoint_verification import build_snapshot
 
     return build_snapshot(
@@ -864,6 +917,7 @@ def _minimal_endpoint_verification(*, enabled, no_targets, structural_failed, ph
         counts={"selected": 0, "covered": 0, "partial": 0, "failed": 0, "skipped": 0},
         batch_reasons=[],
         extra_reasons=extra_reasons,
+        detail=detail,
     )
 
 

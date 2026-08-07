@@ -210,6 +210,16 @@ def _update_phase(db, scan_run_id: int, phase_id: str, status: PhaseStatus, stat
     if error:
         phase_result.error_message = error
 
+    # UI-1: a phase result carrying an endpoint_verification snapshot promotes it onto
+    # scan_run.stats.endpoint_verification, replacing ONLY that key so no other stats key is lost.
+    # This rides the SAME transaction as the phase record (no autonomous commit): the snapshot and the
+    # phase it describes commit or roll back together, so the UI can never read a stale snapshot as the
+    # current outcome. Fail-CLOSED for coverage — the snapshot never authorises an auto-close.
+    if stats and isinstance(stats.get("endpoint_verification"), dict):
+        scan_run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
+        if scan_run is not None:
+            scan_run.stats = {**(scan_run.stats or {}), "endpoint_verification": stats["endpoint_verification"]}
+
     db.commit()
     return phase_result
 

@@ -90,6 +90,23 @@ def batch_limitation_reason(evidence) -> Optional[str]:
     return None
 
 
+def _valid_count(v) -> bool:
+    """A count is a non-negative int — and NOT a bool (``True``/``False`` are ``int`` subclasses in
+    Python; accepting them would let a boolean masquerade as a count of 1/0)."""
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
+def _counts_consistent(counts: dict) -> bool:
+    """Counts are coherent iff each is a valid non-negative int AND
+    ``selected == covered + partial + failed + skipped``. Anything else is ``data_inconsistent``."""
+    keys = ("selected", "covered", "partial", "failed", "skipped")
+    vals = [counts.get(k, 0) for k in keys]
+    if not all(_valid_count(v) for v in vals):
+        return False
+    selected, covered, partial, failed, skipped = vals
+    return selected == covered + partial + failed + skipped
+
+
 def _derive_state(*, enabled, no_targets, structural_failed, pass_status, execution_complete, limitation):
     """Map the pass's signals to the operational state, per the fixed rules:
     disabled → feature off; no_targets → nothing to verify; complete → all covered; limited → ran
@@ -139,6 +156,35 @@ def build_snapshot(
         execution_complete=execution_complete,
         limitation=limitation,
     )
+
+    # Hardening: an inconsistent count set (negative / bool / selected != covered+partial+failed+skipped)
+    # can NEVER be reported as complete — the headline problem is the inconsistency itself.
+    if not _counts_consistent(counts):
+        state = STATE_INCOMPLETE
+        limitation = "data_inconsistent"
+        limitations = ["data_inconsistent"] + [r for r in limitations if r != "data_inconsistent"]
+    # A "complete" state with any limitation present is contradictory → downgrade to incomplete.
+    elif state == STATE_COMPLETE and (limitation is not None or limitations):
+        state = STATE_INCOMPLETE
+
+    # Invariant (fail-closed): a non-conclusive state must NEVER be reasonless. An `incomplete` we
+    # cannot attribute is `unknown` (a real uncertainty), a `failed` defaults to `execution_error`.
+    # `complete`/`limited`/`disabled`/`no_targets` reasons are already fixed by the rules above.
+    if limitation is None:
+        if state == STATE_INCOMPLETE:
+            limitation = "unknown"
+        elif state == STATE_FAILED:
+            limitation = "execution_error"
+        if limitation is not None and limitation not in limitations:
+            limitations = limitations + [limitation]
+
+    # Construction-time assertions — the invariant table is executable, not just documented.
+    assert state in VALID_STATES
+    assert limitation is None or limitation in VALID_LIMITATIONS
+    assert all(r in VALID_LIMITATIONS for r in limitations)
+    assert not (state in (STATE_INCOMPLETE, STATE_FAILED) and limitation is None)
+    assert not (state == STATE_COMPLETE and (limitation is not None or limitations))
+
     snapshot = {
         "schema_version": SCHEMA_VERSION,
         "enabled": bool(enabled),

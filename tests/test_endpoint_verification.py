@@ -113,6 +113,86 @@ def test_state_failed_structural():
     assert s["state"] == "failed"
 
 
+def test_batch_precedence_out_of_evidence_wins():
+    # writer/attribution/cleanup are invisible to batch_limitation_reason; they are folded in via
+    # resolve_limitation with the evidence reason. Most-severe wins.
+    assert resolve_limitation(["writer_error", "timeout"]) == "writer_error"
+    assert resolve_limitation(["parser_incomplete", "unresponsive_origins"]) == "parser_incomplete"
+    assert resolve_limitation(["execution_error", "writer_error", "timeout"]) == "execution_error"
+    # a clean batch contributes no reason
+    assert resolve_limitation([]) is None
+
+
+def test_hardening_count_sum_mismatch_is_data_inconsistent():
+    # selected != covered+partial+failed+skipped → never complete; headline = data_inconsistent
+    s = _snap(
+        pass_status="completed",
+        batch_reasons=[],
+        counts={"selected": 60, "covered": 10, "partial": 0, "failed": 0, "skipped": 0},
+    )
+    assert s["state"] == "incomplete"
+    assert s["limitation"] == "data_inconsistent"
+    assert s["limitations"][0] == "data_inconsistent"
+
+
+def test_hardening_negative_count_is_data_inconsistent():
+    s = _snap(
+        pass_status="completed",
+        batch_reasons=[],
+        counts={"selected": 5, "covered": -1, "partial": 0, "failed": 0, "skipped": 0},
+    )
+    assert s["state"] == "incomplete" and s["limitation"] == "data_inconsistent"
+
+
+def test_hardening_bool_count_is_data_inconsistent():
+    # bool is an int subclass — must NOT masquerade as a count of 1/0
+    s = _snap(
+        pass_status="completed",
+        batch_reasons=[],
+        counts={"selected": True, "covered": True, "partial": 0, "failed": 0, "skipped": 0},
+    )
+    assert s["state"] == "incomplete" and s["limitation"] == "data_inconsistent"
+
+
+def test_hardening_complete_with_reasons_downgrades_to_incomplete():
+    # counts coherent but pass claims completed while a real reason is present → incomplete, keep reason
+    s = _snap(
+        pass_status="completed",
+        batch_reasons=["timeout"],
+        counts={"selected": 60, "covered": 60, "partial": 0, "failed": 0, "skipped": 0},
+    )
+    assert s["state"] == "incomplete"
+    assert s["limitation"] == "timeout"
+
+
+def test_reasonless_incomplete_is_unknown_never_null():
+    # partial run, execution not complete, NO attributable batch reason → incomplete must still carry
+    # a reason (unknown), never a null limitation.
+    s = _snap(pass_status="partial", execution_complete=False, batch_reasons=[])
+    assert s["state"] == "incomplete"
+    assert s["limitation"] == "unknown"
+    assert not (s["state"] == "incomplete" and s["limitation"] is None)
+
+
+def test_no_targets_carries_numeric_context():
+    s = build_snapshot(
+        enabled=True,
+        no_targets=True,
+        structural_failed=False,
+        pass_status="skipped",
+        execution_complete=False,
+        phase_non_degrading=True,
+        coverage_authorizing=False,
+        counts={"selected": 0, "covered": 0, "partial": 0, "failed": 0, "skipped": 0},
+        batch_reasons=[],
+        detail={"candidate_count": 12, "out_of_scope_dropped": 12, "template_count": 40},
+    )
+    assert s["state"] == "no_targets"
+    assert s["candidate_count"] == 12
+    assert s["out_of_scope_dropped"] == 12
+    assert s["template_count"] == 40
+
+
 def test_snapshot_shape_and_schema_version():
     s = _snap()
     assert s["schema_version"] == 1
