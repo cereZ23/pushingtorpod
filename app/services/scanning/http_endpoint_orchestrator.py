@@ -108,10 +108,11 @@ class EndpointBatchResult:
     findings_created: int
     findings_updated: int
     operationally_complete: bool = False
-    # Canonical limitation reason for this batch, resolved by precedence across BOTH the execution
-    # evidence AND the out-of-evidence verdict inputs (writer/attribution/cleanup). None for a clean
-    # batch. Used by the rollup so a writer/attribution/cleanup degrade is never lost from the snapshot.
-    limitation_reason: Optional[str] = None
+    # EVERY limitation reason observed for this batch, deduplicated + precedence-ordered, across BOTH
+    # the execution evidence AND the out-of-evidence verdict inputs (writer/attribution/cleanup). Empty
+    # for a clean batch. The rollup flattens these across batches so NO secondary cause (e.g. a timeout
+    # coinciding with a writer_error) is lost from limitations[] — only the headline is collapsed.
+    limitation_reasons: tuple[str, ...] = ()
 
 
 @dataclass
@@ -627,14 +628,15 @@ def _run_one_batch(
         operationally_complete,
         len(evidence.findings),
     )
-    # Resolve this batch's canonical limitation by PRECEDENCE across the out-of-evidence verdict
-    # inputs (writer/attribution/cleanup — invisible to batch_limitation_reason) AND the evidence.
-    limitation_reason = _resolve_batch_limitation(
+    # Collect ALL this batch's limitation reasons by PRECEDENCE across the out-of-evidence verdict
+    # inputs (writer/attribution/cleanup — invisible to batch_limitation_reason) AND the evidence, so a
+    # coinciding cause (e.g. writer_error + timeout) is never lost from the rolled-up limitations[].
+    limitation_reasons = _batch_limitation_reasons(
         writer_ok=writer_ok, attribution_ok=attribution_ok, cleanup_failed=cleanup_failed, evidence=evidence
     )
 
     return EndpointBatchResult(
-        batch, evidence, status, created, updated, operationally_complete, limitation_reason=limitation_reason
+        batch, evidence, status, created, updated, operationally_complete, limitation_reasons=limitation_reasons
     )
 
 
@@ -812,11 +814,18 @@ def _rollup_stats(base_stats, batch_results, bundle, pass_status, skip_reason, e
     # for audit only — the builder re-aggregates the authoritative coverage rows). No URL/hash/raw error.
     from app.services.endpoint_verification import batch_limitation_reason, build_snapshot
 
-    # Prefer the batch's fully-resolved limitation_reason (covers writer/attribution/cleanup); fall
-    # back to the evidence for batches created without a verdict (budget-SKIPPED / staging-FAILED).
-    batch_reasons = [
-        getattr(br, "limitation_reason", None) or batch_limitation_reason(br.evidence) for br in batch_results
-    ]
+    # Flatten EVERY batch's reasons (writer/attribution/cleanup + evidence) so no secondary cause is
+    # lost; build_snapshot dedups/orders them. Batches created without a verdict (budget-SKIPPED /
+    # staging-FAILED) carry no limitation_reasons — fall back to their evidence-derived reason.
+    batch_reasons = []
+    for br in batch_results:
+        reasons = getattr(br, "limitation_reasons", ()) or ()
+        if reasons:
+            batch_reasons.extend(reasons)
+        else:
+            ev_reason = batch_limitation_reason(br.evidence)
+            if ev_reason:
+                batch_reasons.append(ev_reason)
     extra_reasons = []
     if pass_status == "failed":
         # a FAILED pass is structural/execution: staging → configuration_error, else execution_error.
@@ -859,13 +868,13 @@ def _write_target_file(path: str, batch: EndpointBatch) -> None:
         fh.write("\n".join(t.url for t in batch.targets))
 
 
-def _resolve_batch_limitation(*, writer_ok, attribution_ok, cleanup_failed, evidence) -> Optional[str]:
-    """Canonical limitation for ONE batch, by PRECEDENCE, folding the out-of-evidence verdict inputs
-    (writer/attribution/cleanup — which ``batch_limitation_reason`` cannot see) together WITH the
-    evidence-derived reason. This is where the #155 regression lived: ``writer_ok`` existed at verdict
-    time but never reached the mapper. Pure + directly testable so every real signal is proven to
-    reach the snapshot."""
-    from app.services.endpoint_verification import batch_limitation_reason, resolve_limitation
+def _batch_limitation_reasons(*, writer_ok, attribution_ok, cleanup_failed, evidence) -> tuple[str, ...]:
+    """EVERY limitation reason for ONE batch, deduplicated + precedence-ordered, folding the
+    out-of-evidence verdict inputs (writer/attribution/cleanup — which ``batch_limitation_reason``
+    cannot see) together WITH the evidence-derived reason. This is where the #155 regression lived:
+    ``writer_ok`` existed at verdict time but never reached the mapper. Returns ALL reasons (not just
+    the winner) so a coinciding cause is never lost. Pure + directly testable."""
+    from app.services.endpoint_verification import batch_limitation_reason, ranked_limitations
 
     reasons = []
     if not writer_ok:
@@ -877,7 +886,7 @@ def _resolve_batch_limitation(*, writer_ok, attribution_ok, cleanup_failed, evid
     ev_reason = batch_limitation_reason(evidence)
     if ev_reason:
         reasons.append(ev_reason)
-    return resolve_limitation(reasons)
+    return tuple(ranked_limitations(reasons))
 
 
 def _skipped_evidence() -> BatchExecutionEvidence:

@@ -10,9 +10,9 @@ from types import SimpleNamespace
 
 from app.models.coverage import CoverageStatus
 from app.services.scanning.http_endpoint_orchestrator import (
+    _batch_limitation_reasons,
     _endpoint_error_stats,
     _feature_disabled_stats,
-    _resolve_batch_limitation,
     _rollup_stats,
     _skipped,
 )
@@ -58,7 +58,7 @@ def test_wiring_error_path_has_snapshot():
     _assert_clean_snapshot(ev)
 
 
-def _fake_batch(status, *, targets=2, opcomplete=True, limitation_reason=None, **ev_kw):
+def _fake_batch(status, *, targets=2, opcomplete=True, limitation_reasons=(), **ev_kw):
     evidence = SimpleNamespace(
         launched=True,
         exit_code=0,
@@ -78,7 +78,7 @@ def _fake_batch(status, *, targets=2, opcomplete=True, limitation_reason=None, *
         operationally_complete=opcomplete,
         findings_created=0,
         findings_updated=0,
-        limitation_reason=limitation_reason,
+        limitation_reasons=tuple(limitation_reasons),
     )
 
 
@@ -135,7 +135,7 @@ def test_rollup_budget_skipped_tail_snapshot():
         operationally_complete=False,
         findings_created=0,
         findings_updated=0,
-        limitation_reason=None,
+        limitation_reasons=(),
     )
     stats = _rollup_stats(_base_stats(60), [ran, skipped], None, "partial", None, None)
     ev = stats["endpoint_verification"]
@@ -147,10 +147,10 @@ def test_rollup_budget_skipped_tail_snapshot():
 
 def test_rollup_writer_error_from_batch_limitation_reason():
     # Blocker 2: writer/attribution/cleanup are out-of-evidence — they reach the snapshot ONLY via the
-    # batch's resolved limitation_reason. A clean-evidence PARTIAL batch tagged writer_error must win.
+    # batch's resolved limitation_reasons. A clean-evidence PARTIAL batch tagged writer_error must win.
     batches = [
         _fake_batch(CoverageStatus.COVERED, targets=57),
-        _fake_batch(CoverageStatus.PARTIAL, targets=3, opcomplete=False, limitation_reason="writer_error"),
+        _fake_batch(CoverageStatus.PARTIAL, targets=3, opcomplete=False, limitation_reasons=("writer_error",)),
     ]
     stats = _rollup_stats(_base_stats(60), batches, None, "partial", None, None)
     ev = stats["endpoint_verification"]
@@ -173,47 +173,51 @@ def _clean_ev():
     )
 
 
-def test_resolve_batch_limitation_writer_failure_after_clean_run():
+def test_batch_reasons_writer_failure_after_clean_run():
     # THE #155 regression: runner succeeds, but the finding writer fails. writer_ok is an out-of-
-    # evidence signal — it must still reach the reason. (Reasonless before the fix.)
-    assert (
-        _resolve_batch_limitation(writer_ok=False, attribution_ok=True, cleanup_failed=False, evidence=_clean_ev())
-        == "writer_error"
-    )
+    # evidence signal — it must still reach the reasons. (Reasonless before the fix.)
+    assert _batch_limitation_reasons(
+        writer_ok=False, attribution_ok=True, cleanup_failed=False, evidence=_clean_ev()
+    ) == ("writer_error",)
 
 
-def test_resolve_batch_limitation_cleanup_failure_is_execution_error():
-    assert (
-        _resolve_batch_limitation(writer_ok=True, attribution_ok=True, cleanup_failed=True, evidence=_clean_ev())
-        == "execution_error"
-    )
+def test_batch_reasons_cleanup_failure_is_execution_error():
+    assert _batch_limitation_reasons(
+        writer_ok=True, attribution_ok=True, cleanup_failed=True, evidence=_clean_ev()
+    ) == ("execution_error",)
 
 
-def test_resolve_batch_limitation_attribution_failure_is_parser_incomplete():
-    assert (
-        _resolve_batch_limitation(writer_ok=True, attribution_ok=False, cleanup_failed=False, evidence=_clean_ev())
-        == "parser_incomplete"
-    )
+def test_batch_reasons_attribution_failure_is_parser_incomplete():
+    assert _batch_limitation_reasons(
+        writer_ok=True, attribution_ok=False, cleanup_failed=False, evidence=_clean_ev()
+    ) == ("parser_incomplete",)
 
 
-def test_resolve_batch_limitation_writer_outranks_evidence_timeout():
+def test_batch_reasons_writer_plus_timeout_keeps_both_ordered():
+    # writer_error + timeout coincide → BOTH kept, precedence-ordered (headline writer_error first).
     ev = _clean_ev()
     ev.timed_out = True
-    assert (
-        _resolve_batch_limitation(writer_ok=False, attribution_ok=True, cleanup_failed=False, evidence=ev)
-        == "writer_error"
+    assert _batch_limitation_reasons(writer_ok=False, attribution_ok=True, cleanup_failed=False, evidence=ev) == (
+        "writer_error",
+        "timeout",
     )
 
 
-def test_resolve_batch_limitation_clean_batch_is_none():
+def test_batch_reasons_cleanup_writer_attribution_ordered():
+    assert _batch_limitation_reasons(
+        writer_ok=False, attribution_ok=False, cleanup_failed=True, evidence=_clean_ev()
+    ) == ("execution_error", "writer_error", "parser_incomplete")
+
+
+def test_batch_reasons_clean_batch_is_empty():
     assert (
-        _resolve_batch_limitation(writer_ok=True, attribution_ok=True, cleanup_failed=False, evidence=_clean_ev())
-        is None
+        _batch_limitation_reasons(writer_ok=True, attribution_ok=True, cleanup_failed=False, evidence=_clean_ev()) == ()
     )
 
 
-def test_rollup_batch_limitation_reason_takes_precedence_over_evidence():
-    # writer_error (batch-level) outranks a timeout in the same batch's evidence.
+def test_rollup_preserves_secondary_cause_in_limitations():
+    # writer_error + timeout in one batch → headline writer_error, but timeout must survive in
+    # limitations[] (the blocker: the `or` collapse used to drop it).
     batches = [
         _fake_batch(CoverageStatus.COVERED, targets=57),
         _fake_batch(
@@ -221,8 +225,24 @@ def test_rollup_batch_limitation_reason_takes_precedence_over_evidence():
             targets=3,
             opcomplete=False,
             timed_out=True,
-            limitation_reason="writer_error",
+            limitation_reasons=("writer_error", "timeout"),
         ),
     ]
     stats = _rollup_stats(_base_stats(60), batches, None, "partial", None, None)
-    assert stats["endpoint_verification"]["limitation"] == "writer_error"
+    ev = stats["endpoint_verification"]
+    assert ev["limitation"] == "writer_error"
+    assert ev["limitations"] == ["writer_error", "timeout"]
+    _assert_clean_snapshot(ev)
+
+
+def test_rollup_merges_reasons_across_batches():
+    # different batches contribute different causes → limitations[] is the deduped, precedence-ordered
+    # union across ALL batches, not just one batch's winner.
+    batches = [
+        _fake_batch(CoverageStatus.PARTIAL, targets=30, opcomplete=False, limitation_reasons=("timeout",)),
+        _fake_batch(CoverageStatus.PARTIAL, targets=30, opcomplete=False, limitation_reasons=("writer_error",)),
+    ]
+    stats = _rollup_stats(_base_stats(60), batches, None, "partial", None, None)
+    ev = stats["endpoint_verification"]
+    assert ev["limitation"] == "writer_error"
+    assert ev["limitations"] == ["writer_error", "timeout"]
