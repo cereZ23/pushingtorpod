@@ -158,9 +158,55 @@ const scenarios: LifecycleScenario[] = [
   },
 ]
 
+// --- self-contained auth (no backend / auth.setup.ts) so this runs in the mocked-API CI job ---
+const TENANT_ID = 1
+
+const USER = {
+  id: 1,
+  email: 'e2e@lifecycle.test',
+  username: 'e2e',
+  full_name: 'E2E User',
+  is_active: true,
+  is_superuser: false,
+  tenant_roles: { [TENANT_ID]: 'admin' },
+  created_at: '2026-08-01T00:00:00Z',
+}
+
+const TENANT = {
+  id: TENANT_ID,
+  name: 'E2E Tenant',
+  slug: 'e2e-tenant',
+  is_active: true,
+  created_at: '2026-08-01T00:00:00Z',
+}
+
+function fulfillJson(body: unknown) {
+  return { status: 200, contentType: 'application/json', body: JSON.stringify(body) }
+}
+
+// Injects minimal auth state + mocks the layout hydration calls. Registers a catch-all FIRST so the
+// specific routes (auth/tenant here, finding/lifecycle in mockFindingLifecycle) override it; any
+// UNEXPECTED API request is recorded and fails the test. Returns the unexpected-path list.
+async function setupAuth(page: Page): Promise<string[]> {
+  const unexpected: string[] = []
+  await page.addInitScript(() => {
+    localStorage.setItem('accessToken', 'e2e-mock-token')
+    localStorage.setItem('refreshToken', 'e2e-mock-refresh')
+    localStorage.setItem('currentTenantId', '1')
+  })
+  await page.route('**/api/**', (route) => {
+    unexpected.push(new URL(route.request().url()).pathname)
+    route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })
+  })
+  await page.route(/\/api\/v1\/auth\/me$/, (route) => route.fulfill(fulfillJson(USER)))
+  await page.route(/\/api\/v1\/tenants$/, (route) => route.fulfill(fulfillJson([TENANT])))
+  return unexpected
+}
+
 test.describe('Finding lifecycle card', () => {
   for (const scenario of scenarios) {
     test(`renders ${scenario.name}`, async ({ page }) => {
+      const unexpected = await setupAuth(page)
       await mockFindingLifecycle(page, scenario)
       await page.goto(`/findings/${FINDING_ID}`)
 
@@ -175,6 +221,7 @@ test.describe('Finding lifecycle card', () => {
       for (const text of scenario.absent ?? []) {
         await expect(card.getByText(text, { exact: false })).toHaveCount(0)
       }
+      expect(unexpected).toEqual([])
     })
   }
 })
