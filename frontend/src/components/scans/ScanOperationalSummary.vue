@@ -153,7 +153,7 @@ const showAutoClose = computed(
         Auto-close activity
       </h4>
       <dl class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
-        <div v-if="ac.closed > 0">
+        <div v-if="ac.closed > 0" data-testid="auto-close-closed">
           <dt class="text-gray-500 dark:text-dark-text-secondary">
             Automatically fixed
           </dt>
@@ -161,7 +161,7 @@ const showAutoClose = computed(
             {{ ac.closed }}
           </dd>
         </div>
-        <div v-if="ac.would_close > 0">
+        <div v-if="ac.would_close > 0" data-testid="auto-close-would-close">
           <dt class="text-gray-500 dark:text-dark-text-secondary">
             Reached close threshold
           </dt>
@@ -169,7 +169,7 @@ const showAutoClose = computed(
             {{ ac.would_close }}
           </dd>
         </div>
-        <div v-if="ac.eligible_miss > 0">
+        <div v-if="ac.eligible_miss > 0" data-testid="auto-close-eligible-miss">
           <dt class="text-gray-500 dark:text-dark-text-secondary">
             Awaiting confirmation
           </dt>
@@ -177,13 +177,13 @@ const showAutoClose = computed(
             {{ ac.eligible_miss }}
           </dd>
         </div>
-        <div v-if="ac.reopened > 0">
+        <div v-if="ac.reopened > 0" data-testid="auto-close-reopened">
           <dt class="text-gray-500 dark:text-dark-text-secondary">Reopened</dt>
           <dd class="text-gray-900 dark:text-dark-text-primary font-medium">
             {{ ac.reopened }}
           </dd>
         </div>
-        <div v-if="ac.detected > 0">
+        <div v-if="ac.detected > 0" data-testid="auto-close-detected">
           <dt class="text-gray-500 dark:text-dark-text-secondary">Detected</dt>
           <dd class="text-gray-900 dark:text-dark-text-primary font-medium">
             {{ ac.detected }}
