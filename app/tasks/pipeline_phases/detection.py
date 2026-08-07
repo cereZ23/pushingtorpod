@@ -658,6 +658,24 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         now_fn=lambda: datetime.now(timezone.utc),
         log=tenant_logger,
     )
+    # UI-1: persist the canonical endpoint_verification snapshot on scan_run.stats (top-level),
+    # replacing ONLY that key so no other stats key is lost. This is NON-BLOCKING for the pipeline but
+    # fail-CLOSED for coverage: on failure the snapshot is simply absent (the builder then reports
+    # incomplete/data_inconsistent) and auto-close keeps deriving eligibility from the real coverage
+    # rows — nothing is authorised from the snapshot. Re-running the phase overwrites the same key.
+    _ev_snapshot = endpoint_stats.get("endpoint_verification") if isinstance(endpoint_stats, dict) else None
+    if _ev_snapshot is not None:
+        from app.models.scanning import ScanRun
+
+        try:
+            _run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
+            if _run is not None:
+                _run.stats = {**(_run.stats or {}), "endpoint_verification": _ev_snapshot}
+                db.commit()
+        except Exception:
+            db.rollback()
+            tenant_logger.warning("endpoint_verification snapshot persist failed (non-blocking); reason=persist_error")
+
     # Rollup driven by phase_non_degrading (NOT status): insufficient_phase_budget / partial / failed
     # / error degrade the phase; feature_disabled / no_targets / completed do not.
     if phase_degraded_by_endpoint(endpoint_stats):
