@@ -43,12 +43,7 @@ const TRIGGER_BADGES: Record<string, Badge> = {
     short: "Manual",
     classes: "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400",
   },
-  scheduler: {
-    label: "Scheduled",
-    short: "Scheduled",
-    classes: "bg-violet-100 text-violet-800 dark:bg-violet-900/20 dark:text-violet-400",
-  },
-  schedule: {
+  scheduled: {
     label: "Scheduled",
     short: "Scheduled",
     classes: "bg-violet-100 text-violet-800 dark:bg-violet-900/20 dark:text-violet-400",
@@ -65,18 +60,23 @@ const TRIGGER_BADGES: Record<string, Badge> = {
   },
 };
 
-// `triggered_by` is semantically overloaded today (it holds both provenance AND ad-hoc diagnostic
-// labels like "t2-cutover-verify"). Until the backend splits it into trigger_type + trigger_label,
-// map the known provenance values to their badge, and show anything else as "Custom" (with the raw
-// value in the tooltip) — NEVER guess "Manual" from a custom label.
-export function triggerBadge(triggeredBy: string | null | undefined): Badge {
-  if (triggeredBy && TRIGGER_BADGES[triggeredBy]) return TRIGGER_BADGES[triggeredBy];
-  if (triggeredBy) {
+// Data-driven from the server-decided `trigger_type` (manual/scheduled/api/retest). The optional
+// `trigger_label` is descriptive only and shows in the tooltip. A NULL trigger_type is a legacy
+// custom run → "Custom" (label in the tooltip) or "Unknown" — NEVER guessed as "Manual".
+export function triggerBadge(
+  triggerType: string | null | undefined,
+  triggerLabel?: string | null,
+): Badge {
+  if (triggerType && TRIGGER_BADGES[triggerType]) {
+    const badge = TRIGGER_BADGES[triggerType];
+    return triggerLabel ? { ...badge, title: triggerLabel } : badge;
+  }
+  if (triggerLabel) {
     return {
       label: "Custom",
       short: "Custom",
       classes: "bg-gray-100 text-gray-600 dark:bg-gray-700/30 dark:text-gray-400",
-      title: triggeredBy,
+      title: triggerLabel,
     };
   }
   return {

@@ -169,10 +169,13 @@ function formatDuration(run: ScanRun): string {
             <td class="px-4 py-4 whitespace-nowrap">
               <span
                 class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full"
-                :class="triggerBadge(run.triggered_by).classes"
-                :title="triggerBadge(run.triggered_by).title || triggerBadge(run.triggered_by).label"
+                :class="triggerBadge(run.trigger_type, run.trigger_label).classes"
+                :title="
+                  triggerBadge(run.trigger_type, run.trigger_label).title ||
+                  triggerBadge(run.trigger_type, run.trigger_label).label
+                "
               >
-                {{ triggerBadge(run.triggered_by).label }}
+                {{ triggerBadge(run.trigger_type, run.trigger_label).label }}
               </span>
             </td>
             <td

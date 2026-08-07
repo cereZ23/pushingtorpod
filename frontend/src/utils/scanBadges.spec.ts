@@ -26,30 +26,35 @@ describe("tierBadge", () => {
 });
 
 describe("triggerBadge", () => {
-  it("maps known provenance to normalized labels", () => {
+  it("maps the server-set trigger_type to normalized labels", () => {
     expect(triggerBadge("manual").label).toBe("Manual");
-    expect(triggerBadge("scheduler").label).toBe("Scheduled");
-    expect(triggerBadge("schedule").label).toBe("Scheduled");
+    expect(triggerBadge("scheduled").label).toBe("Scheduled");
     expect(triggerBadge("api").label).toBe("API");
     expect(triggerBadge("retest").label).toBe("Retest");
   });
 
   it("colours triggers distinctly", () => {
     expect(triggerBadge("manual").classes).toContain("blue");
-    expect(triggerBadge("scheduler").classes).toContain("violet");
+    expect(triggerBadge("scheduled").classes).toContain("violet");
     expect(triggerBadge("retest").classes).toContain("indigo");
   });
 
-  it("shows an unknown/custom trigger as 'Custom' with the raw value in the tooltip (never 'Manual')", () => {
-    const b = triggerBadge("t2-cutover-verify");
+  it("puts a descriptive label in the tooltip of a known type", () => {
+    const b = triggerBadge("manual", "t2-cutover-verify");
+    expect(b.label).toBe("Manual");
+    expect(b.title).toBe("t2-cutover-verify");
+  });
+
+  it("shows a legacy custom run (trigger_type null) as 'Custom' with the label in the tooltip (never 'Manual')", () => {
+    const b = triggerBadge(null, "t2-cutover-verify");
     expect(b.label).toBe("Custom");
     expect(b.title).toBe("t2-cutover-verify");
     expect(b.classes).toContain("gray");
   });
 
-  it("renders empty/null trigger as Unknown with no tooltip", () => {
+  it("renders null type + no label as Unknown with no tooltip", () => {
     expect(triggerBadge(null).label).toBe("Unknown");
     expect(triggerBadge(null).title).toBeUndefined();
-    expect(triggerBadge("").label).toBe("Unknown");
+    expect(triggerBadge(null, null).label).toBe("Unknown");
   });
 });
