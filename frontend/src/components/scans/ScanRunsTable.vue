@@ -88,43 +88,43 @@ function formatDuration(run: ScanRun): string {
           <tr>
             <th
               scope="col"
-              class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+              class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
             >
               ID
             </th>
             <th
               scope="col"
-              class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+              class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
             >
               Status
             </th>
             <th
               scope="col"
-              class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+              class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
             >
               Tier
             </th>
             <th
               scope="col"
-              class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+              class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
             >
               Trigger
             </th>
             <th
               scope="col"
-              class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+              class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
             >
               Started
             </th>
             <th
               scope="col"
-              class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+              class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
             >
               Duration
             </th>
             <th
               scope="col"
-              class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+              class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
             >
               Actions
             </th>
@@ -140,11 +140,11 @@ function formatDuration(run: ScanRun): string {
             @click="emit('view-detail', run)"
           >
             <td
-              class="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900 dark:text-dark-text-primary"
+              class="px-4 py-4 whitespace-nowrap text-sm font-mono text-gray-900 dark:text-dark-text-primary"
             >
               #{{ run.id }}
             </td>
-            <td class="px-6 py-4 whitespace-nowrap">
+            <td class="px-4 py-4 whitespace-nowrap">
               <span
                 class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full"
                 :class="getStatusBadgeClass(run.status)"
@@ -156,7 +156,7 @@ function formatDuration(run: ScanRun): string {
                 {{ run.status }}
               </span>
             </td>
-            <td class="px-6 py-4 whitespace-nowrap">
+            <td class="px-4 py-4 whitespace-nowrap">
               <span
                 class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full"
                 :class="tierBadge(run.scan_tier).classes"
@@ -164,7 +164,7 @@ function formatDuration(run: ScanRun): string {
                 {{ tierBadge(run.scan_tier).label }}
               </span>
             </td>
-            <td class="px-6 py-4 whitespace-nowrap">
+            <td class="px-4 py-4 whitespace-nowrap">
               <span
                 class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full"
                 :class="triggerBadge(run.triggered_by).classes"
@@ -173,17 +173,17 @@ function formatDuration(run: ScanRun): string {
               </span>
             </td>
             <td
-              class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-dark-text-secondary"
+              class="px-4 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-dark-text-secondary"
             >
               {{ formatDate(run.started_at) }}
             </td>
             <td
-              class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-dark-text-secondary"
+              class="px-4 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-dark-text-secondary"
             >
               {{ formatDuration(run) }}
             </td>
             <td
-              class="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-3"
+              class="px-4 py-4 whitespace-nowrap text-sm font-medium space-x-3"
             >
               <button
                 @click.stop="emit('view-detail', run)"
