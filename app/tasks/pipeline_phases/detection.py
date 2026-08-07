@@ -658,6 +658,13 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         now_fn=lambda: datetime.now(timezone.utc),
         log=tenant_logger,
     )
+    # UI-1: surface the canonical endpoint_verification snapshot at the phase-result top level so the
+    # phase-completion boundary (_update_phase) can persist it onto scan_run.stats in the SAME
+    # transaction that records the phase — no autonomous commit here. Fail-CLOSED for coverage: if the
+    # snapshot is absent the builder reports incomplete/data_inconsistent and auto-close keeps deriving
+    # eligibility from the real coverage rows — nothing is ever authorised from the snapshot.
+    _ev_snapshot = endpoint_stats.get("endpoint_verification") if isinstance(endpoint_stats, dict) else None
+
     # Rollup driven by phase_non_degrading (NOT status): insufficient_phase_budget / partial / failed
     # / error degrade the phase; feature_disabled / no_targets / completed do not.
     if phase_degraded_by_endpoint(endpoint_stats):
@@ -692,6 +699,10 @@ def _phase_9_vuln_scanning(tenant_id, project_id, scan_run_id, db, tenant_logger
         # http_endpoint pass stats (Sprint 3) — counts + hashes only, never a URL. None when the
         # feature flag/allowlist leaves it disabled (then this key carries the SKIPPED reason).
         "http_endpoint": endpoint_stats,
+        # UI-1: the canonical endpoint_verification snapshot (closed-enum, JSON-serializable, no
+        # URL/hash/raw error). The phase-completion boundary persists this onto scan_run.stats atomically
+        # with the phase record. None when the endpoint pass produced no snapshot (legacy/off).
+        "endpoint_verification": _ev_snapshot,
     }
 
 

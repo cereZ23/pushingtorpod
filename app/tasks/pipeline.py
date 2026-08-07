@@ -210,6 +210,25 @@ def _update_phase(db, scan_run_id: int, phase_id: str, status: PhaseStatus, stat
     if error:
         phase_result.error_message = error
 
+    # UI-1: the endpoint_verification snapshot lives on scan_run.stats and is OWNED by phase 9. Every
+    # phase-9 update reconciles it in the SAME transaction as the phase record (no autonomous commit),
+    # so the UI can never read a stale snapshot as the current outcome:
+    #   * a valid new snapshot REPLACES the old one (only that key changes);
+    #   * a phase-9 start (RUNNING) or a terminal phase-9 update WITHOUT a snapshot (a retry that failed
+    #     before producing one) CLEARS the previous snapshot — a prior COMPLETE must not linger.
+    # Updates to any OTHER phase never touch the snapshot. Fail-CLOSED for coverage — the snapshot
+    # never authorises an auto-close.
+    if phase_id == "9":
+        scan_run = db.query(ScanRun).filter(ScanRun.id == scan_run_id).first()
+        if scan_run is not None:
+            run_stats = dict(scan_run.stats or {})
+            snapshot = stats.get("endpoint_verification") if stats else None
+            if isinstance(snapshot, dict):
+                run_stats["endpoint_verification"] = snapshot
+            else:
+                run_stats.pop("endpoint_verification", None)
+            scan_run.stats = run_stats
+
     db.commit()
     return phase_result
 

@@ -108,6 +108,11 @@ class EndpointBatchResult:
     findings_created: int
     findings_updated: int
     operationally_complete: bool = False
+    # EVERY limitation reason observed for this batch, deduplicated + precedence-ordered, across BOTH
+    # the execution evidence AND the out-of-evidence verdict inputs (writer/attribution/cleanup). Empty
+    # for a clean batch. The rollup flattens these across batches so NO secondary cause (e.g. a timeout
+    # coinciding with a writer_error) is lost from limitations[] — only the headline is collapsed.
+    limitation_reasons: tuple[str, ...] = ()
 
 
 @dataclass
@@ -139,6 +144,22 @@ def _skipped(
         "coverage_authorizing": _coverage_authorizing(PASS_SKIPPED, reason),
         "phase_non_degrading": _phase_non_degrading(PASS_SKIPPED, reason),
     }
+    # For no_targets, surface non-sensitive numeric context (why nothing was selected) from the
+    # caller's selection stats — counts only, never a URL/target/hash.
+    _detail = None
+    if reason == "no_targets" and isinstance(stats, dict):
+        _detail = {
+            "candidate_count": stats.get("candidate_count"),
+            "out_of_scope_dropped": stats.get("out_of_scope"),
+            "template_count": stats.get("template_count"),
+        }
+    base["endpoint_verification"] = _minimal_endpoint_verification(
+        enabled=reason != "feature_disabled",
+        no_targets=reason == "no_targets",
+        structural_failed=False,
+        phase_non_degrading=base["phase_non_degrading"],
+        detail=_detail,
+    )
     return EndpointPassResult(
         status=PASS_SKIPPED,
         skip_reason=reason,
@@ -235,6 +256,14 @@ def run_http_endpoint_pass(
                 "coverage_authorizing": False,
                 "phase_non_degrading": False,
                 "error": str(exc),
+                # Snapshot carries only the canonical reason — NEVER str(exc).
+                "endpoint_verification": _minimal_endpoint_verification(
+                    enabled=True,
+                    no_targets=False,
+                    structural_failed=True,
+                    phase_non_degrading=False,
+                    extra_reasons=["configuration_error"],
+                ),
             },
         )
 
@@ -599,7 +628,16 @@ def _run_one_batch(
         operationally_complete,
         len(evidence.findings),
     )
-    return EndpointBatchResult(batch, evidence, status, created, updated, operationally_complete)
+    # Collect ALL this batch's limitation reasons by PRECEDENCE across the out-of-evidence verdict
+    # inputs (writer/attribution/cleanup — invisible to batch_limitation_reason) AND the evidence, so a
+    # coinciding cause (e.g. writer_error + timeout) is never lost from the rolled-up limitations[].
+    limitation_reasons = _batch_limitation_reasons(
+        writer_ok=writer_ok, attribution_ok=attribution_ok, cleanup_failed=cleanup_failed, evidence=evidence
+    )
+
+    return EndpointBatchResult(
+        batch, evidence, status, created, updated, operationally_complete, limitation_reasons=limitation_reasons
+    )
 
 
 def _batch_authority(batch: EndpointBatch) -> tuple[str, int]:
@@ -771,6 +809,51 @@ def _rollup_stats(base_stats, batch_results, bundle, pass_status, skip_reason, e
     )
     if extra_error:
         stats["error"] = extra_error
+
+    # UI-1: canonical, JSON-serializable endpoint_verification snapshot (closed-enum limitation, counts
+    # for audit only — the builder re-aggregates the authoritative coverage rows). No URL/hash/raw error.
+    from app.services.endpoint_verification import batch_limitation_reason, build_snapshot
+
+    # Flatten EVERY batch's reasons (writer/attribution/cleanup + evidence) so no secondary cause is
+    # lost; build_snapshot dedups/orders them. Batches created without a verdict (budget-SKIPPED /
+    # staging-FAILED) carry no limitation_reasons — fall back to their evidence-derived reason.
+    batch_reasons = []
+    for br in batch_results:
+        reasons = getattr(br, "limitation_reasons", ()) or ()
+        if reasons:
+            batch_reasons.extend(reasons)
+        else:
+            ev_reason = batch_limitation_reason(br.evidence)
+            if ev_reason:
+                batch_reasons.append(ev_reason)
+    extra_reasons = []
+    if pass_status == "failed":
+        # a FAILED pass is structural/execution: staging → configuration_error, else execution_error.
+        extra_reasons.append("configuration_error" if extra_error else "execution_error")
+    stats["endpoint_verification"] = build_snapshot(
+        enabled=True,
+        no_targets=False,
+        structural_failed=(pass_status == "failed"),
+        pass_status=pass_status,
+        execution_complete=execution_complete,
+        phase_non_degrading=stats["phase_non_degrading"],
+        coverage_authorizing=stats["coverage_authorizing"],
+        counts={
+            "selected": int(base_stats.get("selected_count", 0) or 0),
+            "covered": stats["endpoints_covered"],
+            "partial": stats["endpoints_partial"],
+            "failed": stats["endpoints_failed"],
+            "skipped": stats["endpoints_skipped"],
+        },
+        batch_reasons=batch_reasons,
+        extra_reasons=extra_reasons,
+        detail={
+            "candidate_count": base_stats.get("candidate_count"),
+            "out_of_scope_dropped": base_stats.get("out_of_scope"),
+            "template_count": base_stats.get("template_count"),
+            "batch_count": len(batch_results),
+        },
+    )
     return stats
 
 
@@ -785,8 +868,31 @@ def _write_target_file(path: str, batch: EndpointBatch) -> None:
         fh.write("\n".join(t.url for t in batch.targets))
 
 
+def _batch_limitation_reasons(*, writer_ok, attribution_ok, cleanup_failed, evidence) -> tuple[str, ...]:
+    """EVERY limitation reason for ONE batch, deduplicated + precedence-ordered, folding the
+    out-of-evidence verdict inputs (writer/attribution/cleanup — which ``batch_limitation_reason``
+    cannot see) together WITH the evidence-derived reason. This is where the #155 regression lived:
+    ``writer_ok`` existed at verdict time but never reached the mapper. Returns ALL reasons (not just
+    the winner) so a coinciding cause is never lost. Pure + directly testable."""
+    from app.services.endpoint_verification import batch_limitation_reason, ranked_limitations
+
+    reasons = []
+    if not writer_ok:
+        reasons.append("writer_error")
+    if not attribution_ok:
+        reasons.append("parser_incomplete")
+    if cleanup_failed:
+        reasons.append("execution_error")
+    ev_reason = batch_limitation_reason(evidence)
+    if ev_reason:
+        reasons.append(ev_reason)
+    return tuple(ranked_limitations(reasons))
+
+
 def _skipped_evidence() -> BatchExecutionEvidence:
-    return BatchExecutionEvidence(launched=False, exit_code=None)
+    # This evidence is used ONLY on the budget-out path (budget_out / batch_timeout <= 0), so the
+    # canonical reason must be insufficient_budget — otherwise a budget-skipped tail loses its cause.
+    return BatchExecutionEvidence(launched=False, exit_code=None, budget_expired=True)
 
 
 def _staging_failed_evidence() -> BatchExecutionEvidence:
@@ -800,6 +906,30 @@ def _staging_failed_evidence() -> BatchExecutionEvidence:
 # ==================================================================================================
 
 
+def _minimal_endpoint_verification(
+    *, enabled, no_targets, structural_failed, phase_non_degrading, extra_reasons=(), detail=None
+):
+    """A no-batch endpoint_verification snapshot for the disabled / no_targets / structural-error /
+    wiring-error paths (state disabled/no_targets/failed). Counts are all zero; no batches ran.
+    ``detail`` carries non-sensitive numeric context (candidate/template/out-of-scope counts) so a
+    no_targets snapshot explains WHY there was nothing to verify."""
+    from app.services.endpoint_verification import build_snapshot
+
+    return build_snapshot(
+        enabled=enabled,
+        no_targets=no_targets,
+        structural_failed=structural_failed,
+        pass_status="failed" if structural_failed else "skipped",
+        execution_complete=False,
+        phase_non_degrading=phase_non_degrading,
+        coverage_authorizing=False,
+        counts={"selected": 0, "covered": 0, "partial": 0, "failed": 0, "skipped": 0},
+        batch_reasons=[],
+        extra_reasons=extra_reasons,
+        detail=detail,
+    )
+
+
 def _feature_disabled_stats() -> dict:
     return {
         "enabled": False,
@@ -808,6 +938,9 @@ def _feature_disabled_stats() -> dict:
         "coverage_complete": False,
         "coverage_authorizing": False,
         "phase_non_degrading": True,  # a disabled feature must NOT degrade the existing phase
+        "endpoint_verification": _minimal_endpoint_verification(
+            enabled=False, no_targets=False, structural_failed=False, phase_non_degrading=True
+        ),
     }
 
 
@@ -819,6 +952,13 @@ def _endpoint_error_stats(reason_code: str) -> dict:
         "coverage_authorizing": False,
         "phase_non_degrading": False,  # an unexpected error DEGRADES the phase (fail-closed)
         "error": reason_code,
+        "endpoint_verification": _minimal_endpoint_verification(
+            enabled=True,
+            no_targets=False,
+            structural_failed=True,
+            phase_non_degrading=False,
+            extra_reasons=["execution_error"],
+        ),
     }
 
 
