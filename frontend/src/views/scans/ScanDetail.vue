@@ -463,15 +463,25 @@ function getStatsEntries(
               <dd class="mt-1">
                 <span
                   class="px-2.5 py-0.5 inline-flex items-center text-xs font-semibold rounded-full"
-                  :class="triggerBadge(scanStore.currentScanRun.triggered_by).classes"
+                  :class="
+                    triggerBadge(
+                      scanStore.currentScanRun.trigger_type,
+                      scanStore.currentScanRun.trigger_label,
+                    ).classes
+                  "
                 >
-                  {{ triggerBadge(scanStore.currentScanRun.triggered_by).label }}
+                  {{
+                    triggerBadge(
+                      scanStore.currentScanRun.trigger_type,
+                      scanStore.currentScanRun.trigger_label,
+                    ).label
+                  }}
                 </span>
                 <span
-                  v-if="triggerBadge(scanStore.currentScanRun.triggered_by).title"
+                  v-if="scanStore.currentScanRun.trigger_label"
                   class="ml-2 text-xs text-gray-500 dark:text-dark-text-secondary font-mono"
                 >
-                  {{ triggerBadge(scanStore.currentScanRun.triggered_by).title }}
+                  {{ scanStore.currentScanRun.trigger_label }}
                 </span>
               </dd>
             </div>

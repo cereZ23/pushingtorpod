@@ -51,7 +51,9 @@ export interface ScanRun {
   profile_id: number | null;
   tenant_id: number;
   status: ScanRunStatus;
-  triggered_by: string;
+  triggered_by: string; // legacy/compat
+  trigger_type: string | null; // manual/scheduled/api/retest; null = legacy custom
+  trigger_label: string | null; // optional descriptive label (display-only)
   scan_tier: number | null; // 1/2/3; null = unknown (legacy) or untiered (retest)
   started_at: string | null;
   completed_at: string | null;

@@ -60,6 +60,8 @@ function makeScanRun(overrides: Partial<ScanRun> = {}): ScanRun {
     tenant_id: 1,
     status: 'pending',
     triggered_by: 'manual',
+    trigger_type: 'manual',
+    trigger_label: null,
     scan_tier: null,
     started_at: null,
     completed_at: null,
