@@ -54,6 +54,13 @@ const router = createRouter({
           meta: { title: "Dashboard" },
         },
         {
+          path: "operations",
+          name: "OperationalDashboard",
+          component: () =>
+            import("@/views/dashboard/OperationalDashboardView.vue"),
+          meta: { title: "Operational dashboard" },
+        },
+        {
           path: "assets",
           name: "AssetList",
           component: () => import("@/views/assets/AssetsView.vue"),
