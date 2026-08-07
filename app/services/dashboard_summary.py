@@ -230,15 +230,18 @@ def _to_tier(v) -> Optional[int]:
 
 
 def _distinct_findings_by_event(db, tenant_id: int, event_type: str, from_dt, to_dt) -> tuple[int, dict]:
-    """DISTINCT findings with ``event_type`` in-window. Total is tenant-wide. Per-tier attribution
-    resolves, per FINDING, ``detail['tier']`` first (the ORIGIN policy tier stamped on the event),
-    falling back to ``Finding.origin_policy_hash → scan_policy.tier``. The run tier is NEVER used (a
-    T2 run may re-detect a T1-origin finding). Findings with no certified tier appear only in the
-    total — an explained difference.
+    """DISTINCT findings with ``event_type`` in-window. Each finding is attributed to at most ONE
+    tier in the breakdown, resolved DETERMINISTICALLY from its LATEST in-window event of this type
+    (``ORDER BY created_at DESC, id DESC`` — equal timestamps break by the higher id): that event's
+    ``detail['tier']`` (the ORIGIN policy tier stamped on it) first, then the finding's CURRENT
+    ``origin_policy_hash → scan_policy.tier``. The run tier is NEVER used (a T2 run may re-detect a
+    T1-origin finding). Findings with no certified tier appear only in the tenant-wide total — an
+    explained difference. This matters because a finding auto-closed by T1 and then again by T2 in
+    the same window must not attribute non-deterministically.
 
-    Aggregated in SQL: ``COUNT(DISTINCT finding_id)`` for the total, and one small (finding_id,
-    detail_tier, origin_tier) row per distinct combination for the split — the full event JSON is
-    never materialized."""
+    Aggregated in SQL via a ``row_number()`` window keeping one (latest) row per finding; only three
+    scalar columns (finding_id, the extracted detail tier, the joined origin tier) are read — the
+    full event JSON is never materialized."""
     from sqlalchemy import func
 
     from app.models.coverage import ScanPolicy
@@ -251,32 +254,38 @@ def _distinct_findings_by_event(db, tenant_id: int, event_type: str, from_dt, to
         FindingLifecycleEvent.created_at < to_dt,
     )
 
-    total = db.query(func.count(func.distinct(FindingLifecycleEvent.finding_id))).filter(*in_window).scalar() or 0
-
-    # Only three scalar columns per distinct (finding, detail-tier, origin-tier) — not the JSON blob.
     detail_tier = func.json_extract_path_text(FindingLifecycleEvent.detail, "tier")
-    rows = (
-        db.query(FindingLifecycleEvent.finding_id, detail_tier, ScanPolicy.tier)
-        .join(Finding, Finding.id == FindingLifecycleEvent.finding_id)
-        .outerjoin(ScanPolicy, ScanPolicy.policy_hash == Finding.origin_policy_hash)
+    rn = func.row_number().over(
+        partition_by=FindingLifecycleEvent.finding_id,
+        order_by=(FindingLifecycleEvent.created_at.desc(), FindingLifecycleEvent.id.desc()),
+    )
+    ranked = (
+        db.query(
+            FindingLifecycleEvent.finding_id.label("fid"),
+            detail_tier.label("detail_tier"),
+            rn.label("rn"),
+        )
         .filter(*in_window)
-        .distinct()
+        .subquery()
+    )
+    # rn == 1 → exactly one (latest) event row per finding.
+    rows = (
+        db.query(ranked.c.fid, ranked.c.detail_tier, ScanPolicy.tier)
+        .join(Finding, Finding.id == ranked.c.fid)
+        .outerjoin(ScanPolicy, ScanPolicy.policy_hash == Finding.origin_policy_hash)
+        .filter(ranked.c.rn == 1)
         .all()
     )
-    resolved: dict = {}  # finding_id -> certified tier int (or None)
-    for fid, dtier, otier in rows:
+
+    total = len(rows)  # one row per distinct finding
+    tier_counts = {t: 0 for t in CERTIFIED_TIERS}
+    for _fid, dtier, otier in rows:
         tier = _to_tier(dtier)
         if tier is None:
             tier = _to_tier(otier)
-        # keep the finding; upgrade None -> a real tier if any of its rows carries one
-        if fid not in resolved or (resolved[fid] is None and tier is not None):
-            resolved[fid] = tier
-
-    tier_counts = {t: 0 for t in CERTIFIED_TIERS}
-    for tier in resolved.values():
         if tier in CERTIFIED_TIERS:
             tier_counts[tier] += 1
-    return int(total), tier_counts
+    return total, tier_counts
 
 
 def _awaiting_confirmation(db, tenant_id: int) -> tuple[int, dict]:

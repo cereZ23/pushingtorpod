@@ -29,9 +29,11 @@ DEFAULT_CLOSE_THRESHOLD = 2
 
 
 def is_awaiting_confirmation(is_open: bool, streak: int, threshold: int = DEFAULT_CLOSE_THRESHOLD) -> bool:
-    """Canonical 'awaiting confirmation' predicate: an OPEN finding accumulating covered misses but not
-    yet at the close threshold (``0 < streak < threshold``). Kept here — the single source of truth —
-    so the dashboard aggregate and the per-finding lifecycle view never diverge on the definition."""
+    """Reusable 'awaiting confirmation' predicate: an OPEN finding accumulating covered misses but not
+    yet at the close threshold (``0 < streak < threshold``). Exposed here so callers share ONE
+    definition. The UI-3 dashboard's SQL filter is equivalent to this predicate; the per-finding
+    lifecycle endpoint still classifies via its own ``_lifecycle_state`` (which names this range
+    ``eligible_miss``) and could adopt this helper later."""
     return bool(is_open) and 0 < (streak or 0) < threshold
 
 
@@ -500,4 +502,5 @@ __all__ = [
     "decide_finding_auto_close",
     "shadow_auto_close",
     "DEFAULT_CLOSE_THRESHOLD",
+    "is_awaiting_confirmation",
 ]

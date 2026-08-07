@@ -293,6 +293,55 @@ def test_findings_tier_attribution_fallback(db_session, test_tenant):
     )
 
 
+def test_finding_tier_uses_latest_event_deterministically(db_session, test_tenant):
+    # Residual blocker: a finding auto-closed by T1 (older) then T2 (newer) in the same window must be
+    # attributed to the LATEST event's tier (T2) exactly once, regardless of DB row order.
+    p = _project(db_session, test_tenant)
+    a = _asset(db_session, test_tenant, "dash.latest.com")
+    f = _finding(db_session, test_tenant, a)
+    _event(db_session, test_tenant, f, "auto_closed", IN_WINDOW - timedelta(hours=2), tier=1)  # older T1
+    _event(db_session, test_tenant, f, "auto_closed", IN_WINDOW, tier=2)  # newer T2 wins
+    db_session.commit()
+
+    s = get_dashboard_summary(db_session, test_tenant.id, 30, NOW)
+    assert s["findings"]["auto_closed"] == 1  # one distinct finding
+    assert s["by_tier"]["2"]["findings"]["auto_closed"] == 1  # latest event's tier
+    assert s["by_tier"]["1"]["findings"]["auto_closed"] == 0  # NOT double-attributed to the older tier
+
+
+def test_finding_tier_latest_event_tie_breaks_by_id(db_session, test_tenant):
+    # Equal timestamps → the event with the higher id is the "latest" and decides the tier.
+    p = _project(db_session, test_tenant)
+    a = _asset(db_session, test_tenant, "dash.latesttie.com")
+    f = _finding(db_session, test_tenant, a)
+    ts = IN_WINDOW
+    e1 = FindingLifecycleEvent(
+        tenant_id=test_tenant.id,
+        finding_id=f.id,
+        scan_run_id=None,
+        event_type="auto_closed",
+        detail={"tier": 1},
+        created_at=ts,
+    )
+    db_session.add(e1)
+    db_session.commit()
+    e2 = FindingLifecycleEvent(
+        tenant_id=test_tenant.id,
+        finding_id=f.id,
+        scan_run_id=None,
+        event_type="auto_closed",
+        detail={"tier": 2},
+        created_at=ts,
+    )
+    db_session.add(e2)
+    db_session.commit()
+    assert e2.id > e1.id
+
+    s = get_dashboard_summary(db_session, test_tenant.id, 30, NOW)
+    assert s["by_tier"]["2"]["findings"]["auto_closed"] == 1  # higher-id event (tier 2) wins
+    assert s["by_tier"]["1"]["findings"]["auto_closed"] == 0
+
+
 def test_endpoint_selection_ignores_non_terminal_and_cancelled(db_session, test_tenant):
     # Blocker 2: a running/pending row with completed_at, or a newer cancelled run, must NOT supplant
     # the last TERMINAL non-cancelled scan as the ledger source.
