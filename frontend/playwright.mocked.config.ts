@@ -11,7 +11,9 @@ const BASE_URL = `http://localhost:${PORT}`
 
 export default defineConfig({
   testDir: './e2e',
-  testMatch: /scan-operational-summary\.spec\.ts/,
+  // Only the self-contained, auth-injected, fully-mocked specs — never auth.setup.ts / smoke.spec.ts
+  // (those need a real backend and belong to the future full-stack suite).
+  testMatch: /(scan-operational-summary|finding-lifecycle)\.spec\.ts/,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
