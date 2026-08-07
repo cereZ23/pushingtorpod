@@ -13,7 +13,7 @@ from app.models.scanning import Project, ScanRun
 from app.repositories.coverage_repository import CoverageRepository
 from app.services.endpoint_identity import endpoint_shape_hash as _esh
 from app.services.operational_summary import get_operational_summary
-from app.services.scan_policy import build_nuclei_policy_manifest
+from app.services.scan_policy import PASS_HTTP_ENDPOINT, build_nuclei_policy_manifest
 
 _proj_seq = 0
 
@@ -28,17 +28,33 @@ def _project(db, tenant):
     return p
 
 
-def _manifest():
-    # http_stock avoids the endpoint-refinement CHECK (catalog_digest/classifier_version); the summary
-    # aggregates coverage by STATUS regardless of pass_name, so this is representative.
+def _manifest(pass_name=PASS_HTTP_ENDPOINT, roots=("http/cves",)):
+    # A REAL http_endpoint manifest (carries catalog_digest + classifier_version, required by the
+    # endpoint-refinement CHECK) so the summary's pass_name filter is exercised as in production.
+    kw = {}
+    if pass_name == PASS_HTTP_ENDPOINT:
+        kw = {"catalog_digest": "d" * 64, "classifier_version": 1}
     return build_nuclei_policy_manifest(
         nuclei_version="3.3.1",
         template_revision="rev-1b",
-        pass_name="http_stock",
+        pass_name=pass_name,
         tier=1,
         severity=["critical", "high"],
-        template_roots=["http/cves"],
+        template_roots=list(roots),
         exclude_tags=["fuzz"],
+        **kw,
+    )
+
+
+def _rec(repo, tenant, run, m, asset_id, url, status):
+    return repo.record_endpoint_coverage(
+        tenant_id=tenant.id,
+        scan_run_id=run.id,
+        phase=m.phase,
+        pass_name=m.pass_name,
+        policy_hash=m.policy_hash,
+        entries=[(asset_id, _esh(url))],
+        status=status,
     )
 
 
@@ -89,25 +105,9 @@ def test_summary_reconciles_with_real_ledger(db_session, test_tenant):
     # snapshot says limited/unresponsive with 2 covered + 1 partial of 3 selected
     run = _run(db_session, test_tenant, stats={"endpoint_verification": _snapshot("limited", "unresponsive_origins")})
     # write the AUTHORITATIVE ledger to match: 2 covered, 1 partial
-    for path in ("https://ep.summary.com/a", "https://ep.summary.com/b"):
-        repo.record_endpoint_coverage(
-            tenant_id=test_tenant.id,
-            scan_run_id=run.id,
-            phase=m.phase,
-            pass_name=m.pass_name,
-            policy_hash=m.policy_hash,
-            entries=[(asset.id, _esh(path))],
-            status=CoverageStatus.COVERED,
-        )
-    repo.record_endpoint_coverage(
-        tenant_id=test_tenant.id,
-        scan_run_id=run.id,
-        phase=m.phase,
-        pass_name=m.pass_name,
-        policy_hash=m.policy_hash,
-        entries=[(asset.id, _esh("https://ep.summary.com/c?q=1"))],
-        status=CoverageStatus.PARTIAL,
-    )
+    _rec(repo, test_tenant, run, m, asset.id, "https://ep.summary.com/a", CoverageStatus.COVERED)
+    _rec(repo, test_tenant, run, m, asset.id, "https://ep.summary.com/b", CoverageStatus.COVERED)
+    _rec(repo, test_tenant, run, m, asset.id, "https://ep.summary.com/c?q=1", CoverageStatus.PARTIAL)
     db_session.commit()
 
     summary = get_operational_summary(db_session, run)
@@ -131,15 +131,7 @@ def test_summary_flags_inconsistency_when_ledger_disagrees(db_session, test_tena
         test_tenant,
         stats={"endpoint_verification": _snapshot("complete", selected=3, covered=3, partial=0)},
     )
-    repo.record_endpoint_coverage(
-        tenant_id=test_tenant.id,
-        scan_run_id=run.id,
-        phase=m.phase,
-        pass_name=m.pass_name,
-        policy_hash=m.policy_hash,
-        entries=[(asset.id, _esh("https://ep.mismatch.com/only"))],
-        status=CoverageStatus.COVERED,
-    )
+    _rec(repo, test_tenant, run, m, asset.id, "https://ep.mismatch.com/only", CoverageStatus.COVERED)
     db_session.commit()
 
     summary = get_operational_summary(db_session, run)
@@ -150,6 +142,58 @@ def test_summary_flags_inconsistency_when_ledger_disagrees(db_session, test_tena
     # displayed counts come from the ledger (1 covered), not the snapshot's claimed 3
     assert ev["covered"] == 1
     assert ev["selected"] == 1
+
+
+def test_summary_counts_only_http_endpoint_pass(db_session, test_tenant):
+    # Blocker 1: a run may hold rows from MULTIPLE endpoint passes; the summary must count ONLY the
+    # http_endpoint rows — other passes/tenants must not inflate selected or fake an inconsistency.
+    repo = CoverageRepository(db_session)
+    m_ep = _manifest(pass_name=PASS_HTTP_ENDPOINT)
+    m_stock = _manifest(pass_name="http_stock")
+    repo.persist_policy(m_ep)
+    repo.persist_policy(m_stock)
+    asset = _asset(db_session, test_tenant, "ep.multipass.com")
+    run = _run(
+        db_session,
+        test_tenant,
+        stats={"endpoint_verification": _snapshot("complete", selected=2, covered=2, partial=0)},
+    )
+    # http_endpoint: 2 covered (matches the snapshot)
+    _rec(repo, test_tenant, run, m_ep, asset.id, "https://ep.multipass.com/a", CoverageStatus.COVERED)
+    _rec(repo, test_tenant, run, m_ep, asset.id, "https://ep.multipass.com/b", CoverageStatus.COVERED)
+    # http_stock rows on the SAME run — must be ignored by the summary
+    _rec(repo, test_tenant, run, m_stock, asset.id, "https://ep.multipass.com/x", CoverageStatus.PARTIAL)
+    _rec(repo, test_tenant, run, m_stock, asset.id, "https://ep.multipass.com/y", CoverageStatus.FAILED)
+    db_session.commit()
+
+    summary = get_operational_summary(db_session, run)
+    ev = summary["endpoint_verification"]
+    # only the 2 http_endpoint COVERED rows count — stock's partial/failed are excluded
+    assert (ev["selected"], ev["covered"], ev["not_verifiable"], ev["failed"]) == (2, 2, 0, 0)
+    assert ev["data_inconsistent"] is False
+    assert ev["state"] == "complete"
+    assert summary["outcome"] == "completed"
+
+
+def test_summary_ignores_other_run_and_tenant(db_session, test_tenant):
+    # Rows from a different run must never contribute to this run's summary.
+    repo = CoverageRepository(db_session)
+    m = _manifest()
+    repo.persist_policy(m)
+    asset = _asset(db_session, test_tenant, "ep.otherrun.com")
+    run = _run(
+        db_session,
+        test_tenant,
+        stats={"endpoint_verification": _snapshot("complete", selected=1, covered=1, partial=0)},
+    )
+    other = _run(db_session, test_tenant)
+    _rec(repo, test_tenant, run, m, asset.id, "https://ep.otherrun.com/mine", CoverageStatus.COVERED)
+    _rec(repo, test_tenant, other, m, asset.id, "https://ep.otherrun.com/theirs", CoverageStatus.FAILED)
+    db_session.commit()
+
+    ev = get_operational_summary(db_session, run)["endpoint_verification"]
+    assert (ev["selected"], ev["covered"], ev["failed"]) == (1, 1, 0)
+    assert ev["data_inconsistent"] is False
 
 
 def test_summary_counts_lifecycle_events_for_this_run(db_session, test_tenant):
@@ -215,25 +259,9 @@ def test_scan_detail_endpoint_returns_operational_summary(authenticated_client, 
     m = _manifest()
     repo.persist_policy(m)
     asset = _asset(db_session, test_tenant, "ep.api.com")
-    for path in ("https://ep.api.com/a", "https://ep.api.com/b"):
-        repo.record_endpoint_coverage(
-            tenant_id=test_tenant.id,
-            scan_run_id=run.id,
-            phase=m.phase,
-            pass_name=m.pass_name,
-            policy_hash=m.policy_hash,
-            entries=[(asset.id, _esh(path))],
-            status=CoverageStatus.COVERED,
-        )
-    repo.record_endpoint_coverage(
-        tenant_id=test_tenant.id,
-        scan_run_id=run.id,
-        phase=m.phase,
-        pass_name=m.pass_name,
-        policy_hash=m.policy_hash,
-        entries=[(asset.id, _esh("https://ep.api.com/c?q=1"))],
-        status=CoverageStatus.PARTIAL,
-    )
+    _rec(repo, test_tenant, run, m, asset.id, "https://ep.api.com/a", CoverageStatus.COVERED)
+    _rec(repo, test_tenant, run, m, asset.id, "https://ep.api.com/b", CoverageStatus.COVERED)
+    _rec(repo, test_tenant, run, m, asset.id, "https://ep.api.com/c?q=1", CoverageStatus.PARTIAL)
     db_session.commit()
 
     resp = authenticated_client.get(f"/api/v1/tenants/{test_tenant.id}/scans/{run.id}/progress")

@@ -12,6 +12,7 @@ from app.services.operational_summary import (
     OUTCOME_FAILED,
     OUTCOME_PENDING,
     OUTCOME_RUNNING,
+    OUTCOME_UNKNOWN,
     build_operational_summary,
 )
 
@@ -122,7 +123,8 @@ def test_no_targets_is_completed_with_null_percent():
 # --- legacy + inconsistency (negative space) ---
 
 
-def test_legacy_run_without_snapshot():
+def test_legacy_run_without_snapshot_clean_ledger():
+    # no snapshot + empty/all-covered ledger → clean completed
     s = _build(scan_status="completed", snapshot=None, ledger={})
     assert s["outcome"] == OUTCOME_COMPLETED
     ev = s["endpoint_verification"]
@@ -131,6 +133,101 @@ def test_legacy_run_without_snapshot():
     assert ev["limitation"] is None
     assert ev["data_inconsistent"] is False
     assert ev["coverage_percent"] is None
+
+
+def test_legacy_run_only_covered_is_completed():
+    s = _build(scan_status="completed", snapshot=None, ledger=_ledger(covered=5))
+    assert s["outcome"] == OUTCOME_COMPLETED
+    assert s["endpoint_verification"]["state"] is None
+
+
+def test_legacy_run_with_partial_ledger_is_incomplete_unknown():
+    # ledger proves some endpoints were NOT fully verified, but no historical reason → unknown, CWL.
+    s = _build(scan_status="completed", snapshot=None, ledger=_ledger(covered=8, partial=2))
+    assert s["outcome"] == OUTCOME_COMPLETED_WITH_LIMITATIONS
+    ev = s["endpoint_verification"]
+    assert ev["available"] is False
+    assert ev["state"] == "incomplete"
+    assert ev["limitation"] == "unknown"
+    assert ev["limitation"] != "unresponsive_origins"  # never guessed
+    assert ev["data_inconsistent"] is False
+
+
+def test_legacy_run_with_failed_ledger_is_incomplete_unknown():
+    s = _build(scan_status="completed", snapshot=None, ledger=_ledger(covered=0, failed=3))
+    assert s["outcome"] == OUTCOME_COMPLETED_WITH_LIMITATIONS
+    assert s["endpoint_verification"]["state"] == "incomplete"
+    assert s["endpoint_verification"]["limitation"] == "unknown"
+
+
+def test_legacy_run_with_unstarted_ledger_is_incomplete_unknown():
+    s = _build(scan_status="completed", snapshot=None, ledger=_ledger(covered=1, unstarted=4))
+    assert s["endpoint_verification"]["state"] == "incomplete"
+    assert s["endpoint_verification"]["limitation"] == "unknown"
+    assert s["endpoint_verification"]["unstarted"] == 4
+
+
+# --- malformed snapshots (fail-closed) ---
+
+
+def test_empty_snapshot_dict_is_data_inconsistent():
+    s = _build(snapshot={}, ledger=_ledger(covered=3))
+    ev = s["endpoint_verification"]
+    assert ev["available"] is False  # a malformed dict is NOT available
+    assert ev["data_inconsistent"] is True
+    assert ev["state"] == "incomplete"
+    assert ev["limitation"] == "data_inconsistent"
+    assert s["outcome"] == OUTCOME_COMPLETED_WITH_LIMITATIONS
+
+
+def test_unknown_schema_version_is_data_inconsistent():
+    s = _build(snapshot={"schema_version": 999, "state": "complete"}, ledger=_ledger())
+    assert s["endpoint_verification"]["data_inconsistent"] is True
+    assert s["endpoint_verification"]["available"] is False
+
+
+def test_unknown_state_is_data_inconsistent():
+    snap = _snap("complete")
+    snap["state"] = "garbage"
+    s = _build(snapshot=snap, ledger=_ledger())
+    assert s["endpoint_verification"]["data_inconsistent"] is True
+    assert s["outcome"] == OUTCOME_COMPLETED_WITH_LIMITATIONS
+
+
+def test_unknown_limitation_is_data_inconsistent():
+    snap = _snap("limited", "unresponsive_origins")
+    snap["limitation"] = "not_a_reason"
+    s = _build(snapshot=snap, ledger=_ledger(covered=100))
+    assert s["endpoint_verification"]["data_inconsistent"] is True
+
+
+def test_limitations_not_a_list_is_data_inconsistent():
+    snap = _snap("complete")
+    snap["limitations"] = "unresponsive_origins"  # not a list
+    s = _build(snapshot=snap, ledger=_ledger())
+    assert s["endpoint_verification"]["data_inconsistent"] is True
+
+
+def test_limitations_with_non_enum_is_data_inconsistent():
+    snap = _snap("complete")
+    snap["limitations"] = ["not-an-enum"]
+    s = _build(snapshot=snap, ledger=_ledger())
+    assert s["endpoint_verification"]["data_inconsistent"] is True
+
+
+# --- unknown scan status ---
+
+
+def test_unrecognized_scan_status_is_unknown_not_completed():
+    s = _build(scan_status="weird_status", snapshot=_snap("complete"), ledger=_ledger())
+    assert s["outcome"] == OUTCOME_UNKNOWN
+
+
+def test_unstarted_is_exposed_and_reconciles():
+    s = _build(snapshot=None, ledger=_ledger(covered=6, unstarted=4))
+    ev = s["endpoint_verification"]
+    assert ev["unstarted"] == 4
+    assert ev["selected"] == ev["covered"] + ev["not_verifiable"] + ev["failed"] + ev["skipped"] + ev["unstarted"]
 
 
 def test_snapshot_ledger_count_mismatch_is_data_inconsistent():

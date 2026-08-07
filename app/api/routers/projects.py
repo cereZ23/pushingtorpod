@@ -23,6 +23,7 @@ from app.api.dependencies import (
 )
 from app.api.schemas.common import PaginatedResponse, TaskResponse, SuccessResponse
 from app.api.schemas.scan_diff import ScanCompareResponse
+from app.api.schemas.scan_summary import OperationalSummaryResponse
 from app.models.scanning import (
     Project,
     Scope,
@@ -184,7 +185,8 @@ class ScanRunResponse(BaseModel):
     duration_seconds: int | None = None
     # UI-1: normalized customer-facing summary (outcome + endpoint verification + auto-close counts).
     # Populated ONLY on single-run detail responses; None on list responses (avoids an N+1 aggregate).
-    operational_summary: dict | None = None
+    # Typed (closed enums + extra="forbid") so the contract is OpenAPI-visible and validated on output.
+    operational_summary: OperationalSummaryResponse | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
