@@ -45,6 +45,51 @@ export interface ScanHealth {
   summary: string;
 }
 
+// UI-1: normalized, backend-decided summary of a scan's customer outcome + endpoint verification +
+// auto-close counts. Present only on single-run detail responses (null on list rows / legacy).
+export type ScanOutcome =
+  | "pending"
+  | "running"
+  | "completed"
+  | "completed_with_limitations"
+  | "failed"
+  | "cancelled"
+  | "unknown";
+
+export interface EndpointVerificationSummary {
+  available: boolean;
+  enabled: boolean;
+  state: string | null; // disabled|no_targets|complete|limited|incomplete|failed | null (legacy clean)
+  limitation: string | null; // closed enum | data_inconsistent | null
+  limitations: string[];
+  selected: number;
+  covered: number;
+  not_verifiable: number;
+  failed: number;
+  skipped: number;
+  unstarted: number;
+  coverage_percent: number | null; // null when selected == 0 (never 100)
+  data_inconsistent: boolean;
+}
+
+export interface AutoCloseSummary {
+  detected: number;
+  eligible_miss: number;
+  would_close: number;
+  closed: number;
+  reopened: number;
+}
+
+export interface OperationalSummary {
+  schema_version: number;
+  outcome: ScanOutcome;
+  tier: number | null;
+  trigger_type: string | null;
+  trigger_label: string | null;
+  endpoint_verification: EndpointVerificationSummary;
+  auto_close: AutoCloseSummary;
+}
+
 export interface ScanRun {
   id: number;
   project_id: number;
@@ -62,6 +107,7 @@ export interface ScanRun {
   celery_task_id: string | null;
   created_at: string;
   duration_seconds: number | null;
+  operational_summary?: OperationalSummary | null; // UI-1; absent on list rows
 }
 
 export type PhaseStatus =
