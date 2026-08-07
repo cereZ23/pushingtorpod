@@ -7,9 +7,11 @@ Handles vulnerability findings from Nuclei and other sources
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, or_, and_
-from typing import Optional, List
+from pydantic import BaseModel
+from typing import Optional, List, Annotated
 from datetime import datetime, timedelta, timezone
 import logging
+import re
 
 from app.api.dependencies import get_db, verify_tenant_access, PaginationParams, escape_like
 from app.api.schemas.finding import (
@@ -417,6 +419,159 @@ def get_finding_playbook(
     return {"playbook": pb, "finding_id": finding_id, "host": host}
 
 
+# ---------------------------------------------------------------------------
+# Coverage-aware auto-close lifecycle (UI-2). A durable, queryable, URL/hash-free
+# view of a finding's auto-close state + transition trail, for the finding-detail UI.
+# NOTE: an "ineligible" run is not persisted as its own event yet, and a run that
+# leaves the streak at 0 writes no miss_reset — so a never-missed finding reports
+# state="open" and does NOT explain WHY it is ineligible. A later step adds an
+# explicit `ineligible` event (closed reason code) to close that gap.
+# ---------------------------------------------------------------------------
+
+# Only these sources are driven by the coverage-aware consumer; for anything else (manual, etc.)
+# coverage_scope is unknown rather than implied to be "host".
+_COVERAGE_SOURCES = frozenset({"nuclei", "misconfig"})
+
+# A reason_code is a short machine token. The event writer sanitizes key NAMES, not values, so a
+# corrupted/legacy row could carry a URL or hash in `reason`; only surface values matching this.
+_REASON_CODE_RE = re.compile(r"^[a-z0-9_:-]{1,64}$")
+
+
+def _safe_reason_code(detail) -> str | None:
+    if isinstance(detail, dict):
+        r = detail.get("reason")
+        if isinstance(r, str) and _REASON_CODE_RE.match(r):
+            return r
+    return None
+
+
+class LifecycleEventItem(BaseModel):
+    """One persisted transition. Closed schema — never a URL or a hash."""
+
+    type: str
+    scan_run_id: int | None
+    created_at: datetime
+    reason_code: str | None = None
+
+
+class AutoCloseState(BaseModel):
+    """Synthetic current auto-close state derived from the finding + its events."""
+
+    state: str  # open | eligible_miss | awaiting_confirmation | auto_fixed | manually_fixed | suppressed
+    current_streak: int
+    threshold: int
+    last_detected_run_id: int | None
+    last_eligible_run_id: int | None
+    coverage_scope: str | None  # "endpoint" | "host" | None (non-coverage-aware source)
+    origin_tier: int | None  # tier of the covering policy (endpoint findings), else null
+
+
+class FindingLifecycleResponse(BaseModel):
+    finding_id: int
+    auto_close: AutoCloseState
+    events: list[LifecycleEventItem]  # most recent `limit`, presented chronologically
+    total_events: int  # full count regardless of the page limit
+    has_more: bool  # True when total_events exceeds the returned page
+    # False for legacy findings with no recorded events (the UI shows "history from migration 031"
+    # rather than inventing a retroactive timeline).
+    has_history: bool
+
+
+def _lifecycle_state(finding, auto_fixed: bool, streak: int, threshold: int) -> str:
+    if finding.status == FindingStatus.FIXED:
+        return "auto_fixed" if auto_fixed else "manually_fixed"
+    if finding.status == FindingStatus.SUPPRESSED:
+        return "suppressed"
+    if streak >= threshold:
+        return "awaiting_confirmation"
+    if streak >= 1:
+        return "eligible_miss"
+    return "open"
+
+
+@router.get("/{finding_id}/lifecycle", response_model=FindingLifecycleResponse)
+def get_finding_lifecycle(
+    tenant_id: int,
+    finding_id: int,
+    # Annotated form so a DIRECT call (tests) gets the int default 100, while FastAPI still
+    # validates the HTTP query param (a bare `= Query(...)` would pass the FieldInfo as the value).
+    limit: Annotated[int, Query(ge=1, le=200, description="Max events (most recent), returned chronologically")] = 100,
+    db: Session = Depends(get_db),
+    membership=Depends(verify_tenant_access),
+):
+    """Coverage-aware auto-close lifecycle for a finding: the synthetic current state plus the
+    chronological, de-duplicated event trail (most recent ``limit``). Tenant-isolated (finding must
+    belong to the tenant); no URL and no hash is ever returned — only a short reason_code and counts.
+
+    Raises 404 if the finding does not belong to the tenant.
+    """
+    from app.models.coverage import ScanPolicy
+    from app.models.database import FindingLifecycleEvent
+    from app.services.coverage_autoclose import DEFAULT_CLOSE_THRESHOLD
+
+    finding = db.query(Finding).join(Asset).filter(Finding.id == finding_id, Asset.tenant_id == tenant_id).first()
+    if not finding:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finding not found")
+
+    base = db.query(FindingLifecycleEvent).filter(
+        FindingLifecycleEvent.finding_id == finding_id,
+        FindingLifecycleEvent.tenant_id == tenant_id,  # belt-and-suspenders with the finding scope
+    )
+    total_events = base.count()
+    # Bounded: take the most recent `limit` events, then present them chronologically.
+    recent = base.order_by(FindingLifecycleEvent.created_at.desc(), FindingLifecycleEvent.id.desc()).limit(limit).all()
+    recent.reverse()
+
+    threshold = DEFAULT_CLOSE_THRESHOLD
+    streak = finding.eligible_miss_streak or 0
+
+    # auto_fixed vs manually_fixed depends on the LAST close-lineage transition (independent of the
+    # page limit): a finding auto-closed, reopened, then manually fixed is manually_fixed, not auto.
+    last_close = (
+        base.filter(FindingLifecycleEvent.event_type.in_(("auto_closed", "reopened")))
+        .order_by(FindingLifecycleEvent.created_at.desc(), FindingLifecycleEvent.id.desc())
+        .first()
+    )
+    auto_fixed = last_close is not None and last_close.event_type == "auto_closed"
+
+    origin_tier = None
+    if finding.origin_policy_hash:
+        row = db.query(ScanPolicy.tier).filter(ScanPolicy.policy_hash == finding.origin_policy_hash).first()
+        origin_tier = row[0] if row else None
+
+    if finding.source not in _COVERAGE_SOURCES:
+        coverage_scope = None  # not coverage-aware → unknown, don't imply "host"
+    elif finding.endpoint_shape_hash:
+        coverage_scope = "endpoint"
+    else:
+        coverage_scope = "host"
+
+    return FindingLifecycleResponse(
+        finding_id=finding.id,
+        auto_close=AutoCloseState(
+            state=_lifecycle_state(finding, auto_fixed, streak, threshold),
+            current_streak=streak,
+            threshold=threshold,
+            last_detected_run_id=finding.last_detected_scan_run_id,
+            last_eligible_run_id=finding.last_eligible_run_id,
+            coverage_scope=coverage_scope,
+            origin_tier=origin_tier,
+        ),
+        events=[
+            LifecycleEventItem(
+                type=e.event_type,
+                scan_run_id=e.scan_run_id,
+                created_at=e.created_at,
+                reason_code=_safe_reason_code(e.detail),
+            )
+            for e in recent
+        ],
+        total_events=total_events,
+        has_more=total_events > len(recent),
+        has_history=total_events > 0,
+    )
+
+
 @router.get("/{finding_id}", response_model=FindingDetailResponse)
 def get_finding(
     tenant_id: int, finding_id: int, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)
@@ -520,10 +675,26 @@ def update_finding(
 
     # Apply updates
     if updates.status is not None:
+        prev_status = finding.status
         try:
-            finding.status = FindingStatus(updates.status)
+            new_status = FindingStatus(updates.status)
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid status: {updates.status}")
+        finding.status = new_status
+        # A manual exit from FIXED must be recorded, or the lifecycle would still see a stale
+        # `auto_closed` as the last close-lineage event and mislabel a later manual fix as auto_fixed.
+        # Written in THIS transaction, run-less (scan_run_id=None → not deduplicated by the writer).
+        if prev_status == FindingStatus.FIXED and new_status in (FindingStatus.OPEN, FindingStatus.SUPPRESSED):
+            from app.services.lifecycle_events import record_lifecycle_event
+
+            record_lifecycle_event(
+                db,
+                tenant_id=tenant_id,
+                finding_id=finding.id,
+                scan_run_id=None,
+                event_type="reopened",
+                detail={"reason": "manual_reopen" if new_status == FindingStatus.OPEN else "manual_status_change"},
+            )
 
     # Note: Notes field doesn't exist in current model
     # Would need to add to Finding model or store in evidence JSON
