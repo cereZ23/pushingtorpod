@@ -23,6 +23,7 @@ from app.api.dependencies import (
 )
 from app.api.schemas.common import PaginatedResponse, TaskResponse, SuccessResponse
 from app.api.schemas.scan_diff import ScanCompareResponse
+from app.api.schemas.scan_summary import OperationalSummaryResponse
 from app.models.scanning import (
     Project,
     Scope,
@@ -182,6 +183,10 @@ class ScanRunResponse(BaseModel):
     celery_task_id: str | None
     created_at: datetime
     duration_seconds: int | None = None
+    # UI-1: normalized customer-facing summary (outcome + endpoint verification + auto-close counts).
+    # Populated ONLY on single-run detail responses; None on list responses (avoids an N+1 aggregate).
+    # Typed (closed enums + extra="forbid") so the contract is OpenAPI-visible and validated on output.
+    operational_summary: OperationalSummaryResponse | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1479,7 +1484,9 @@ def get_scan_run_by_id(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Scan run not found",
         )
-    return _serialize_scan_run(scan_run)
+    from app.services.operational_summary import get_operational_summary
+
+    return _serialize_scan_run(scan_run, operational_summary=get_operational_summary(db, scan_run))
 
 
 @router.get("/scans/{run_id}/progress", response_model=ScanProgressResponse)
@@ -1513,8 +1520,10 @@ def get_scan_run_progress_by_id(
         .all()
     )
 
+    from app.services.operational_summary import get_operational_summary
+
     return ScanProgressResponse(
-        scan_run=_serialize_scan_run(scan_run),
+        scan_run=_serialize_scan_run(scan_run, operational_summary=get_operational_summary(db, scan_run)),
         phases=[_serialize_phase_result(p) for p in phases],
     )
 
