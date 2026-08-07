@@ -467,6 +467,12 @@ function getStatsEntries(
                 >
                   {{ triggerBadge(scanStore.currentScanRun.triggered_by).label }}
                 </span>
+                <span
+                  v-if="triggerBadge(scanStore.currentScanRun.triggered_by).title"
+                  class="ml-2 text-xs text-gray-500 dark:text-dark-text-secondary font-mono"
+                >
+                  {{ triggerBadge(scanStore.currentScanRun.triggered_by).title }}
+                </span>
               </dd>
             </div>
             <div>
