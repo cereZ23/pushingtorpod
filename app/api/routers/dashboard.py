@@ -26,6 +26,8 @@ from app.models.database import (
 from app.models.issues import Issue, IssueStatus
 from app.models.risk import RiskScore
 from app.models.scanning import ScanRun, ScanRunStatus
+from app.api.schemas.dashboard_summary import DashboardOperationalSummaryResponse
+from app.services.dashboard_summary import get_dashboard_summary as _build_operational_summary
 from app.api.schemas.dashboard import (
     ChangeDetectionResponse,
     ChangeItem,
@@ -47,6 +49,24 @@ router = APIRouter(
     prefix="/api/v1/tenants/{tenant_id}/dashboard",
     tags=["Dashboard"],
 )
+
+
+@router.get("/operational-summary", response_model=DashboardOperationalSummaryResponse)
+def get_operational_summary(
+    tenant_id: int,
+    days: int = Query(30, description="Window length in days; clamped server-side to [1, 365]."),
+    db: Session = Depends(get_db),
+    membership=Depends(verify_tenant_access),
+) -> DashboardOperationalSummaryResponse:
+    """UI-3 operational dashboard aggregate: scan outcomes, endpoint verification observations, and
+    finding lifecycle activity over a UTC window, tenant-scoped, with a certified-tier (1/2) split.
+
+    All decisions (outcome buckets, endpoint selection, awaiting-confirmation) are made server-side
+    from persisted data; the payload carries only counts + UTC timestamps (no URL/hash/finding name).
+    """
+    _verify_tenant_exists(db, tenant_id)
+    summary = _build_operational_summary(db, tenant_id, days, datetime.now(timezone.utc))
+    return DashboardOperationalSummaryResponse(**summary)
 
 
 @router.get("/summary", response_model=DashboardSummary)
