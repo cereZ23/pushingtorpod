@@ -1,5 +1,5 @@
 import apiClient from './client'
-import type { Finding, PaginatedResponse } from './types'
+import type { Finding, PaginatedResponse, FindingLifecycle } from './types'
 
 export interface FindingListParams {
   page?: number
@@ -35,6 +35,13 @@ export const findingApi = {
     const response = await apiClient.patch<Finding>(
       `/api/v1/tenants/${tenantId}/findings/${findingId}`,
       updates
+    )
+    return response.data
+  },
+
+  async getLifecycle(tenantId: number, findingId: number): Promise<FindingLifecycle> {
+    const response = await apiClient.get<FindingLifecycle>(
+      `/api/v1/tenants/${tenantId}/findings/${findingId}/lifecycle`
     )
     return response.data
   },

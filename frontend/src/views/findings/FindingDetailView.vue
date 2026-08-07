@@ -4,7 +4,8 @@ import { useRoute, useRouter } from "vue-router";
 import { useTenantStore } from "@/stores/tenant";
 import { findingApi } from "@/api/findings";
 import { assetApi } from "@/api/assets";
-import type { Finding, Asset } from "@/api/types";
+import type { Finding, Asset, FindingLifecycle } from "@/api/types";
+import FindingLifecycleCard from "@/components/findings/FindingLifecycleCard.vue";
 import { ArrowLeftIcon } from "@heroicons/vue/24/outline";
 import {
   getSeverityBadgeClass,
@@ -30,6 +31,26 @@ const showPlaybook = ref(true);
 const isRetesting = ref(false);
 const retestResult = ref<string | null>(null);
 const retestPolling = ref(false);
+
+// Coverage-aware auto-close lifecycle (UI-2)
+const lifecycle = ref<FindingLifecycle | null>(null);
+const lifecycleLoading = ref(false);
+
+async function loadLifecycle(): Promise<void> {
+  if (!tenantStore.currentTenantId) return;
+  lifecycleLoading.value = true;
+  try {
+    lifecycle.value = await findingApi.getLifecycle(
+      tenantStore.currentTenantId,
+      findingId.value,
+    );
+  } catch {
+    // Non-fatal: the finding detail still renders without the lifecycle card.
+    lifecycle.value = null;
+  } finally {
+    lifecycleLoading.value = false;
+  }
+}
 
 async function triggerRetest(): Promise<void> {
   if (!finding.value || !tenantStore.currentTenantId) return;
@@ -160,6 +181,8 @@ async function updateFindingStatus(newStatus: FindingStatus): Promise<void> {
       finding.value.id,
       { status: newStatus },
     );
+    // A manual status change (e.g. reopening a fixed finding) writes a lifecycle event — refresh.
+    loadLifecycle();
   } catch (err: unknown) {
     const axiosErr = err as {
       response?: { data?: { detail?: string } };
@@ -278,8 +301,9 @@ function getEpssBgColor(score: number): string {
   return "bg-green-50 dark:bg-green-900/10";
 }
 
-onMounted(() => {
-  loadFindingDetails();
+onMounted(async () => {
+  await loadFindingDetails();
+  loadLifecycle();
 });
 </script>
 
@@ -601,6 +625,9 @@ onMounted(() => {
           </div>
         </dl>
       </div>
+
+      <!-- Coverage-aware auto-close lifecycle (UI-2) -->
+      <FindingLifecycleCard :lifecycle="lifecycle" :loading="lifecycleLoading" />
 
       <!-- Threat Intelligence -->
       <div
