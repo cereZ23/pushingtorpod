@@ -36,6 +36,8 @@ class TestSerializeScanRun:
             tenant_id=2,
             status=ScanRunStatus.COMPLETED,
             triggered_by="manual",
+            trigger_type="manual",
+            trigger_label=None,
             scan_tier=2,
             started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
             completed_at=datetime(2026, 1, 1, 1, tzinfo=timezone.utc),
@@ -50,6 +52,8 @@ class TestSerializeScanRun:
         assert out["project_id"] == 10
         assert out["status"] == "completed"
         assert out["triggered_by"] == "manual"
+        assert out["trigger_type"] == "manual"
+        assert out["trigger_label"] is None
         assert out["scan_tier"] == 2
         assert out["stats"] == {"assets": 10}
         assert out["celery_task_id"] == "task-abc"
@@ -64,6 +68,8 @@ class TestSerializeScanRun:
             tenant_id=2,
             status="weird-status",
             triggered_by="cron",
+            trigger_type=None,
+            trigger_label="cron",
             scan_tier=None,
             started_at=None,
             completed_at=None,
@@ -210,6 +216,8 @@ class TestGetScanProgress:
             tenant_id=1,
             status=ScanRunStatus.RUNNING,
             triggered_by="api",
+            trigger_type="api",
+            trigger_label=None,
             scan_tier=3,
             started_at=None,
             completed_at=None,
@@ -264,7 +272,7 @@ class TestTriggerScanInvalidProfile:
                 project=project,
                 profile_id=999,
                 scan_tier=1,
-                triggered_by="manual",
+                trigger_type="manual",
             )
         assert exc.value.status_code == 400
         assert "not found" in exc.value.detail.lower()

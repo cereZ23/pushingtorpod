@@ -159,7 +159,8 @@ class ScanTrigger(BaseModel):
 
     profile_id: int | None = None
     scan_tier: int = Field(1, ge=1, le=3, description="Scan tier: 1=Safe, 2=Moderate, 3=Aggressive")
-    triggered_by: str = "manual"
+    triggered_by: str = "manual"  # DEPRECATED: provenance is server-decided; ignored except for compat
+    trigger_label: str | None = Field(None, max_length=100, description="Optional descriptive label (display-only)")
 
 
 class ScanRunResponse(BaseModel):
@@ -170,7 +171,9 @@ class ScanRunResponse(BaseModel):
     profile_id: int | None
     tenant_id: int
     status: str
-    triggered_by: str | None
+    triggered_by: str | None  # legacy/compat
+    trigger_type: str | None = None  # manual/scheduled/api/retest; None = legacy custom
+    trigger_label: str | None = None  # optional descriptive label
     scan_tier: int | None = None  # 1/2/3; None = unknown (legacy) or untiered (retest)
     started_at: datetime | None
     completed_at: datetime | None
@@ -801,12 +804,16 @@ def trigger_scan(
     project = _get_project_or_404(db, tenant_id, project_id)
 
     service = ScanRunService(db)
+    # This endpoint's provenance is manual by definition (user-facing UI/API trigger). We do NOT
+    # infer manual-vs-api from the JWT — a dedicated API-key/machine endpoint would pass trigger_type
+    # "api". The client-supplied string is only a descriptive label, never the type.
     scan_run, task_id = service.trigger_scan(
         tenant_id=tenant_id,
         project=project,
         profile_id=trigger.profile_id,
         scan_tier=trigger.scan_tier,
-        triggered_by=trigger.triggered_by,
+        trigger_type="manual",
+        trigger_label=trigger.trigger_label,
     )
 
     log_audit_event(
@@ -817,7 +824,12 @@ def trigger_scan(
         tenant_id=tenant_id,
         resource="scan_run",
         resource_id=str(scan_run.id),
-        details={"project_id": project.id, "triggered_by": trigger.triggered_by, "profile_id": scan_run.profile_id},
+        details={
+            "project_id": project.id,
+            "trigger_type": scan_run.trigger_type,
+            "trigger_label": scan_run.trigger_label,
+            "profile_id": scan_run.profile_id,
+        },
     )
 
     return TaskResponse(

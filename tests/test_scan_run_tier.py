@@ -31,7 +31,7 @@ def _profile(db_session, project, tier):
     return sp
 
 
-def _trigger(db_session, test_tenant, project, profile, *, scan_tier, triggered_by):
+def _trigger(db_session, test_tenant, project, profile, *, scan_tier, trigger_type):
     from app.services.scan_run_service import ScanRunService
 
     # Patch the Celery dispatch (imported inside trigger_scan) so nothing is enqueued.
@@ -43,7 +43,7 @@ def _trigger(db_session, test_tenant, project, profile, *, scan_tier, triggered_
             project=project,
             profile_id=profile.id if profile else None,
             scan_tier=scan_tier,
-            triggered_by=triggered_by,
+            trigger_type=trigger_type,
         )
     return run
 
@@ -52,15 +52,16 @@ def test_trigger_scan_snapshots_tier_from_profile(db_session, test_tenant):
     project = _project(db_session, test_tenant)
     profile = _profile(db_session, project, tier=2)
     # scan_tier param is 1 but the profile is T2 → the RUN tier must follow the profile (authoritative).
-    run = _trigger(db_session, test_tenant, project, profile, scan_tier=1, triggered_by="scheduler")
+    run = _trigger(db_session, test_tenant, project, profile, scan_tier=1, trigger_type="scheduled")
     assert run.scan_tier == 2
-    assert run.triggered_by == "scheduler"
+    assert run.trigger_type == "scheduled"
+    assert run.triggered_by == "scheduler"  # legacy compat mapping
 
 
 def test_tier_snapshot_survives_later_profile_edit(db_session, test_tenant):
     project = _project(db_session, test_tenant, name="p-immut")
     profile = _profile(db_session, project, tier=2)
-    run = _trigger(db_session, test_tenant, project, profile, scan_tier=2, triggered_by="manual")
+    run = _trigger(db_session, test_tenant, project, profile, scan_tier=2, trigger_type="manual")
     assert run.scan_tier == 2
     # A later profile edit must NOT retro-change the historical run tier.
     profile.scan_tier = 3
@@ -72,7 +73,7 @@ def test_tier_snapshot_survives_later_profile_edit(db_session, test_tenant):
 def test_profileless_tier_uses_requested_value(db_session, test_tenant):
     # No profile_id → trigger_scan auto-creates a default profile for the requested tier.
     project = _project(db_session, test_tenant, name="p-auto")
-    run = _trigger(db_session, test_tenant, project, None, scan_tier=3, triggered_by="api")
+    run = _trigger(db_session, test_tenant, project, None, scan_tier=3, trigger_type="api")
     assert run.scan_tier == 3
 
 

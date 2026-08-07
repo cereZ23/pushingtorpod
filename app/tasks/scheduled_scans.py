@@ -87,7 +87,7 @@ def dispatch_scheduled_scans() -> dict:
                     project=project,
                     profile_id=profile.id,
                     scan_tier=profile.scan_tier,
-                    triggered_by="scheduler",
+                    trigger_type="scheduled",
                 )
 
                 logger.info(

@@ -120,7 +120,6 @@ def _create_retest_scan_run(
         profile_id=None,
         tenant_id=tenant_id,
         status=ScanRunStatus.PENDING,
-        triggered_by="retest",
         scan_tier=None,  # a retest is a targeted single-template re-run, not a tiered scan → Unknown tier
         stats={
             "retest_finding_id": finding.id,
@@ -128,6 +127,10 @@ def _create_retest_scan_run(
             "asset_identifier": finding.asset.identifier if finding.asset else None,
         },
     )
+    # Provenance via the single helper (sets trigger_type=retest + legacy triggered_by).
+    from app.services.scan_triggers import apply_trigger
+
+    apply_trigger(scan_run, "retest")
     db.add(scan_run)
     db.flush()  # Get the scan_run.id before commit
 
