@@ -2,8 +2,7 @@
 import type { ScanRun, ScanRunStatus } from "@/stores/scans";
 import { formatDate } from "@/utils/formatters";
 import { tierBadge, triggerBadge } from "@/utils/scanBadges";
-import { Menu, MenuButton, MenuItems, MenuItem } from "@headlessui/vue";
-import { EllipsisVerticalIcon } from "@heroicons/vue/24/outline";
+import { EyeIcon, TrashIcon } from "@heroicons/vue/24/outline";
 
 interface Props {
   runs: ScanRun[];
@@ -189,40 +188,25 @@ function formatDuration(run: ScanRun): string {
             <td
               class="sticky right-0 bg-white dark:bg-dark-bg-secondary group-hover:bg-gray-50 dark:group-hover:bg-dark-bg-tertiary px-4 py-4 whitespace-nowrap text-right text-sm font-medium"
             >
-              <Menu as="div" class="relative inline-block text-left" @click.stop>
-                <MenuButton
-                  class="p-1 rounded hover:bg-gray-100 dark:hover:bg-dark-bg-tertiary text-gray-500 dark:text-dark-text-secondary"
-                  aria-label="Row actions"
+              <div class="inline-flex items-center gap-1">
+                <button
+                  @click.stop="emit('view-detail', run)"
+                  title="View"
+                  aria-label="View scan run"
+                  class="p-1 rounded hover:bg-gray-100 dark:hover:bg-dark-bg-tertiary text-primary-600 dark:text-primary-400"
                 >
-                  <EllipsisVerticalIcon class="w-5 h-5" />
-                </MenuButton>
-                <MenuItems
-                  class="absolute right-0 z-20 mt-1 w-32 origin-top-right rounded-md bg-white dark:bg-dark-bg-secondary shadow-lg ring-1 ring-black/5 dark:ring-white/10 focus:outline-none"
+                  <EyeIcon class="w-5 h-5" />
+                </button>
+                <button
+                  v-if="canDelete(run)"
+                  @click.stop="emit('delete-run', run)"
+                  title="Delete"
+                  aria-label="Delete scan run"
+                  class="p-1 rounded hover:bg-gray-100 dark:hover:bg-dark-bg-tertiary text-red-600 dark:text-red-400"
                 >
-                  <MenuItem v-slot="{ active }">
-                    <button
-                      @click.stop="emit('view-detail', run)"
-                      :class="[
-                        active ? 'bg-gray-100 dark:bg-dark-bg-tertiary' : '',
-                        'block w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-dark-text-primary rounded-t-md',
-                      ]"
-                    >
-                      View
-                    </button>
-                  </MenuItem>
-                  <MenuItem v-if="canDelete(run)" v-slot="{ active }">
-                    <button
-                      @click.stop="emit('delete-run', run)"
-                      :class="[
-                        active ? 'bg-gray-100 dark:bg-dark-bg-tertiary' : '',
-                        'block w-full text-left px-3 py-2 text-sm text-red-600 dark:text-red-400 rounded-b-md',
-                      ]"
-                    >
-                      Delete
-                    </button>
-                  </MenuItem>
-                </MenuItems>
-              </Menu>
+                  <TrashIcon class="w-5 h-5" />
+                </button>
+              </div>
             </td>
           </tr>
         </tbody>
