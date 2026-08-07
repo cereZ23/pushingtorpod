@@ -7,6 +7,7 @@ import type { PhaseStatus, ScanHealth } from "@/stores/scans";
 import { useToastStore } from "@/stores/toast";
 import { formatDate, parseApiDate } from "@/utils/formatters";
 import { tierBadge, triggerBadge } from "@/utils/scanBadges";
+import ScanOperationalSummary from "@/components/scans/ScanOperationalSummary.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -531,6 +532,12 @@ function getStatsEntries(
           </p>
         </div>
       </div>
+
+      <!-- Scan result (operational summary) -->
+      <ScanOperationalSummary
+        v-if="scanStore.currentScanRun.operational_summary"
+        :summary="scanStore.currentScanRun.operational_summary"
+      />
 
       <!-- Phase Progress Timeline -->
       <div
