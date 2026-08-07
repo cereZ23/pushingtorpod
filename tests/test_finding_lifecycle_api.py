@@ -22,6 +22,19 @@ def _asset(db_session, test_tenant, ident="lcapi.test.com"):
     return a
 
 
+def _run(db_session, test_tenant):
+    # scan_run_id on the event is FK-constrained to scan_runs, so use a real run.
+    from app.models.scanning import Project, ScanRun, ScanRunStatus
+
+    p = Project(tenant_id=test_tenant.id, name="lcapi-proj")
+    db_session.add(p)
+    db_session.flush()
+    r = ScanRun(project_id=p.id, tenant_id=test_tenant.id, status=ScanRunStatus.COMPLETED)
+    db_session.add(r)
+    db_session.commit()
+    return r.id
+
+
 def _finding(db_session, test_tenant, *, status=None, streak=0, shape=None):
     from app.models.database import Finding, FindingSeverity, FindingStatus
 
@@ -65,12 +78,14 @@ def test_lifecycle_tenant_isolation_404(db_session, test_tenant):
 
 def test_lifecycle_events_chronological(db_session, test_tenant):
     f = _finding(db_session, test_tenant, streak=1)
+    r1, r2 = _run(db_session, test_tenant), _run(db_session, test_tenant)
     base = datetime(2026, 8, 1, tzinfo=timezone.utc)
     # insert out of order; endpoint must return ascending by created_at
-    _event(db_session, test_tenant, f, "eligible_miss", run_id=2, when=base + timedelta(hours=2))
-    _event(db_session, test_tenant, f, "detected", run_id=1, when=base)
+    _event(db_session, test_tenant, f, "eligible_miss", run_id=r2, when=base + timedelta(hours=2))
+    _event(db_session, test_tenant, f, "detected", run_id=r1, when=base)
     resp = get_finding_lifecycle(tenant_id=test_tenant.id, finding_id=f.id, db=db_session, membership=None)
     assert [e.type for e in resp.events] == ["detected", "eligible_miss"]
+    assert resp.events[0].scan_run_id == r1
     assert resp.has_history is True
     assert resp.auto_close.threshold == 2
 
@@ -91,7 +106,14 @@ def test_synthetic_state(db_session, test_tenant, status_name, streak, has_ac, e
 
     f = _finding(db_session, test_tenant, status=FindingStatus[status_name], streak=streak)
     if has_ac:
-        _event(db_session, test_tenant, f, "auto_closed", run_id=5, detail={"reason": "coverage_miss_streak"})
+        _event(
+            db_session,
+            test_tenant,
+            f,
+            "auto_closed",
+            run_id=_run(db_session, test_tenant),
+            detail={"reason": "coverage_miss_streak"},
+        )
     resp = get_finding_lifecycle(tenant_id=test_tenant.id, finding_id=f.id, db=db_session, membership=None)
     assert resp.auto_close.state == expected
     assert resp.auto_close.current_streak == streak
@@ -105,7 +127,7 @@ def test_lifecycle_reason_code_only_no_url_or_hash(db_session, test_tenant):
         test_tenant,
         f,
         "auto_closed",
-        run_id=7,
+        run_id=_run(db_session, test_tenant),
         detail={"reason": "coverage_miss_streak", "streak": 2, "tier": 2, "scope": "endpoint"},
     )
     resp = get_finding_lifecycle(tenant_id=test_tenant.id, finding_id=f.id, db=db_session, membership=None)
