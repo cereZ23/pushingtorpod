@@ -28,6 +28,13 @@ logger = logging.getLogger(__name__)
 DEFAULT_CLOSE_THRESHOLD = 2
 
 
+def is_awaiting_confirmation(is_open: bool, streak: int, threshold: int = DEFAULT_CLOSE_THRESHOLD) -> bool:
+    """Canonical 'awaiting confirmation' predicate: an OPEN finding accumulating covered misses but not
+    yet at the close threshold (``0 < streak < threshold``). Kept here — the single source of truth —
+    so the dashboard aggregate and the per-finding lifecycle view never diverge on the definition."""
+    return bool(is_open) and 0 < (streak or 0) < threshold
+
+
 class AutoCloseDecision(str, enum.Enum):
     INELIGIBLE = "ineligible"  # can't prove coverage this run → reset streak (fail-closed)
     DETECTED_RESET = "detected_reset"  # still detected → reset streak, attribute detection

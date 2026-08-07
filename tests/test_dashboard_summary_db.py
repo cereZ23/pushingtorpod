@@ -243,6 +243,142 @@ def test_findings_distinct_and_retry_safe(db_session, test_tenant):
     assert s["by_tier"]["2"]["findings"]["auto_closed"] == 1
 
 
+def test_findings_tier_attribution_fallback(db_session, test_tenant):
+    # Blocker 1: detail.tier first, else origin_policy_hash → scan_policy.tier, else total-only.
+    p = _project(db_session, test_tenant)
+    a = _asset(db_session, test_tenant, "dash.tier.com")
+    repo = CoverageRepository(db_session)
+    m1 = _manifest(tier=1)
+    m2 = _manifest(tier=2)
+    repo.persist_policy(m1)
+    repo.persist_policy(m2)
+
+    # (a) auto_closed WITH detail.tier=1
+    f_detail = _finding(db_session, test_tenant, a)
+    _event(db_session, test_tenant, f_detail, "auto_closed", IN_WINDOW, tier=1)
+
+    # (b) reopened WITHOUT tier, but finding origin policy is T1 → attributed via origin
+    f_origin1 = _finding(db_session, test_tenant, a, origin_policy_hash=m1.policy_hash)
+    _event(db_session, test_tenant, f_origin1, "reopened", IN_WINDOW, tier=None)
+
+    # (c) manual reopen (no detail tier, scan_run_id None) but origin policy T2 → attributed via origin
+    f_origin2 = _finding(db_session, test_tenant, a, origin_policy_hash=m2.policy_hash)
+    e = FindingLifecycleEvent(
+        tenant_id=test_tenant.id,
+        finding_id=f_origin2.id,
+        scan_run_id=None,
+        event_type="reopened",
+        detail={"reason": "manual_reopen"},
+        created_at=IN_WINDOW,
+    )
+    db_session.add(e)
+
+    # (d) truly unattributable: no detail tier, no origin policy → total only
+    f_none = _finding(db_session, test_tenant, a, origin_policy_hash=None)
+    _event(db_session, test_tenant, f_none, "reopened", IN_WINDOW, tier=None)
+    db_session.commit()
+
+    s = get_dashboard_summary(db_session, test_tenant.id, 30, NOW)
+    # auto_closed: only f_detail (tier 1)
+    assert s["findings"]["auto_closed"] == 1
+    assert s["by_tier"]["1"]["findings"]["auto_closed"] == 1
+    # reopened: f_origin1 (T1), f_origin2 (T2), f_none (untiered) → total 3
+    assert s["findings"]["reopened"] == 3
+    assert s["by_tier"]["1"]["findings"]["reopened"] == 1  # f_origin1 via origin policy
+    assert s["by_tier"]["2"]["findings"]["reopened"] == 1  # f_origin2 via origin policy
+    # f_none is in the total but neither tier — explained difference (3 total, 2 attributed)
+    assert (
+        s["by_tier"]["1"]["findings"]["reopened"] + s["by_tier"]["2"]["findings"]["reopened"]
+        == s["findings"]["reopened"] - 1
+    )
+
+
+def test_endpoint_selection_ignores_non_terminal_and_cancelled(db_session, test_tenant):
+    # Blocker 2: a running/pending row with completed_at, or a newer cancelled run, must NOT supplant
+    # the last TERMINAL non-cancelled scan as the ledger source.
+    p = _project(db_session, test_tenant)
+    a = _asset(db_session, test_tenant, "dash.sel.com")
+    repo = CoverageRepository(db_session)
+    m = _manifest(tier=1)
+    repo.persist_policy(m)
+
+    # the real terminal completed scan (older) with 2 covered
+    good = _run(
+        db_session,
+        test_tenant,
+        project_id=p.id,
+        tier=1,
+        status="completed",
+        completed_at=IN_WINDOW - timedelta(hours=2),
+        snapshot=_snap("complete", selected=2, covered=2),
+    )
+    _rec(repo, test_tenant, good, m, a.id, "https://dash.sel.com/a", CoverageStatus.COVERED)
+    _rec(repo, test_tenant, good, m, a.id, "https://dash.sel.com/b", CoverageStatus.COVERED)
+    # a NEWER incoherent running row with completed_at set (no ledger) — must NOT supplant `good`
+    running = _run(db_session, test_tenant, project_id=p.id, tier=1, status="running", completed_at=IN_WINDOW)
+    # a NEWER cancelled run — must NOT supplant `good`
+    _run(
+        db_session,
+        test_tenant,
+        project_id=p.id,
+        tier=1,
+        status="cancelled",
+        completed_at=IN_WINDOW + timedelta(hours=1),
+    )
+    db_session.commit()
+    assert running.completed_at > good.completed_at
+
+    s = get_dashboard_summary(db_session, test_tenant.id, 30, NOW)
+    ep = s["endpoints"]
+    assert (ep["selected"], ep["verified"]) == (2, 2)  # still the good terminal scan's ledger
+
+
+def test_endpoint_selection_tie_breaks_by_higher_id(db_session, test_tenant):
+    # Blocker 2: two terminal runs with the SAME completed_at → the higher id wins deterministically.
+    p = _project(db_session, test_tenant)
+    a = _asset(db_session, test_tenant, "dash.tie.com")
+    repo = CoverageRepository(db_session)
+    m = _manifest(tier=1)
+    repo.persist_policy(m)
+    ts = IN_WINDOW
+    r1 = _run(
+        db_session, test_tenant, project_id=p.id, tier=1, status="completed", completed_at=ts, snapshot=_snap("limited")
+    )
+    _rec(repo, test_tenant, r1, m, a.id, "https://dash.tie.com/old", CoverageStatus.PARTIAL)
+    r2 = _run(
+        db_session,
+        test_tenant,
+        project_id=p.id,
+        tier=1,
+        status="completed",
+        completed_at=ts,
+        snapshot=_snap("complete", selected=1, covered=1),
+    )
+    _rec(repo, test_tenant, r2, m, a.id, "https://dash.tie.com/new", CoverageStatus.COVERED)
+    db_session.commit()
+    assert r2.id > r1.id
+
+    s = get_dashboard_summary(db_session, test_tenant.id, 30, NOW)
+    # r2 (higher id) wins → 1 covered, not the partial from r1
+    assert (s["endpoints"]["selected"], s["endpoints"]["verified"], s["endpoints"]["not_verifiable"]) == (1, 1, 0)
+
+
+def test_failed_run_can_source_the_ledger(db_session, test_tenant):
+    # Blocker 2: a failed run may carry useful partial coverage and IS kept as a ledger source.
+    p = _project(db_session, test_tenant)
+    a = _asset(db_session, test_tenant, "dash.failed.com")
+    repo = CoverageRepository(db_session)
+    m = _manifest(tier=1)
+    repo.persist_policy(m)
+    fr = _run(db_session, test_tenant, project_id=p.id, tier=1, status="failed", completed_at=IN_WINDOW)
+    _rec(repo, test_tenant, fr, m, a.id, "https://dash.failed.com/x", CoverageStatus.PARTIAL)
+    db_session.commit()
+
+    s = get_dashboard_summary(db_session, test_tenant.id, 30, NOW)
+    assert s["scans"]["failed"] == 1
+    assert (s["endpoints"]["selected"], s["endpoints"]["not_verifiable"]) == (1, 1)
+
+
 def test_awaiting_confirmation_current_state(db_session, test_tenant):
     p = _project(db_session, test_tenant)
     a = _asset(db_session, test_tenant, "dash.await.com")

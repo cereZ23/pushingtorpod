@@ -157,6 +157,17 @@ def test_clamp_applied_in_full_build():
     assert s["period_days"] == 365
 
 
+def test_is_awaiting_confirmation_canonical():
+    from app.services.coverage_autoclose import DEFAULT_CLOSE_THRESHOLD, is_awaiting_confirmation
+
+    th = DEFAULT_CLOSE_THRESHOLD  # 2
+    assert is_awaiting_confirmation(True, 1, th) is True  # 0 < 1 < 2
+    assert is_awaiting_confirmation(True, 0, th) is False  # no streak
+    assert is_awaiting_confirmation(True, th, th) is False  # at threshold → would_close, not awaiting
+    assert is_awaiting_confirmation(False, 1, th) is False  # not open
+    assert is_awaiting_confirmation(True, None, th) is False
+
+
 def test_no_sensitive_data():
     import json
     import re

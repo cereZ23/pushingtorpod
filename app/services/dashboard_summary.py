@@ -3,7 +3,7 @@
 Aggregates ALREADY-PERSISTED data — scan snapshots, the endpoint coverage ledger, and finding
 lifecycle events — into one tenant-scoped summary. It introduces NO new scan/auto-close logic and
 reuses the canonical vocabulary (``operational_summary`` for the per-scan outcome, the coverage-
-autoclose threshold + the ``_lifecycle_state`` rule for current finding state).
+autoclose threshold + ``is_awaiting_confirmation`` for current finding state).
 
 Semantics that matter (these are the reviewed decisions):
 * Time window: ``days`` clamped to [1, 365]; ``from``/``to`` are UTC; scans are placed in the window
@@ -17,12 +17,14 @@ Semantics that matter (these are the reviewed decisions):
   aggregate the ``http_endpoint`` ledger rows for exactly those runs. ``selected = verified +
   not_verifiable + failed + skipped``; ``coverage_percent`` is null when selected == 0 (never 100).
 * Findings: ``auto_closed``/``reopened`` = DISTINCT findings with that event in-window (the lifecycle
-  unique constraint makes retries idempotent). ``awaiting_confirmation`` is CURRENT state — open
-  findings with an eligible miss streak below the close threshold — NOT derived from historical
-  events (a past eligible_miss may since have been re-detected/closed/reopened).
+  unique constraint makes retries idempotent). ``awaiting_confirmation`` is CURRENT state (the
+  canonical ``is_awaiting_confirmation`` predicate: open + 0 < streak < threshold) — NOT derived from
+  historical events (a past eligible_miss may since have been re-detected/closed/reopened).
 * By-tier: always returns keys "1" and "2" (zeros allowed), same schema as the totals. T3 is excluded
-  until certified. Finding tier attribution uses the triggering event's run tier; findings not
-  attributable to a certified tier appear only in the tenant-wide total (an explained difference).
+  until certified. Finding tier attribution resolves ``detail['tier']`` (the ORIGIN policy tier
+  stamped on the event) first, then ``origin_policy_hash → scan_policy.tier``; the RUN tier is never
+  used (a T2 run may re-detect a T1-origin finding). Findings with no certified tier appear only in
+  the tenant-wide total (an explained difference).
 * Emits only integers/floats + UTC ISO strings — no URL, hash, or finding name. Typed + extra=forbid.
 """
 
@@ -218,49 +220,76 @@ def _ledger_for_runs(db, tenant_id: int, run_ids: list[int]) -> dict:
     return {(k.value if hasattr(k, "value") else str(k)): int(n) for k, n in rows}
 
 
-def _distinct_findings_by_event(db, tenant_id: int, event_type: str, from_dt, to_dt) -> tuple[int, dict]:
-    """DISTINCT findings with ``event_type`` in-window. Total is tenant-wide; per-tier is attributed
-    by the event's own ``detail['tier']`` (the policy tier stamped on the event). Findings whose event
-    carries no certified tier appear only in the total (an explained difference). Aggregated in Python
-    over the (bounded) in-window event set — ``detail`` is a generic JSON column, so distinct-per-tier
-    counting here avoids dialect-specific JSON SQL and stays portable."""
-    from app.models.database import FindingLifecycleEvent
+def _to_tier(v) -> Optional[int]:
+    """Coerce a tier value (int or text) to a certified tier int, else None."""
+    try:
+        t = int(v)
+    except (TypeError, ValueError):
+        return None
+    return t if t in CERTIFIED_TIERS else None
 
+
+def _distinct_findings_by_event(db, tenant_id: int, event_type: str, from_dt, to_dt) -> tuple[int, dict]:
+    """DISTINCT findings with ``event_type`` in-window. Total is tenant-wide. Per-tier attribution
+    resolves, per FINDING, ``detail['tier']`` first (the ORIGIN policy tier stamped on the event),
+    falling back to ``Finding.origin_policy_hash → scan_policy.tier``. The run tier is NEVER used (a
+    T2 run may re-detect a T1-origin finding). Findings with no certified tier appear only in the
+    total — an explained difference.
+
+    Aggregated in SQL: ``COUNT(DISTINCT finding_id)`` for the total, and one small (finding_id,
+    detail_tier, origin_tier) row per distinct combination for the split — the full event JSON is
+    never materialized."""
+    from sqlalchemy import func
+
+    from app.models.coverage import ScanPolicy
+    from app.models.database import Finding, FindingLifecycleEvent
+
+    in_window = (
+        FindingLifecycleEvent.tenant_id == tenant_id,
+        FindingLifecycleEvent.event_type == event_type,
+        FindingLifecycleEvent.created_at >= from_dt,
+        FindingLifecycleEvent.created_at < to_dt,
+    )
+
+    total = db.query(func.count(func.distinct(FindingLifecycleEvent.finding_id))).filter(*in_window).scalar() or 0
+
+    # Only three scalar columns per distinct (finding, detail-tier, origin-tier) — not the JSON blob.
+    detail_tier = func.json_extract_path_text(FindingLifecycleEvent.detail, "tier")
     rows = (
-        db.query(FindingLifecycleEvent.finding_id, FindingLifecycleEvent.detail)
-        .filter(
-            FindingLifecycleEvent.tenant_id == tenant_id,
-            FindingLifecycleEvent.event_type == event_type,
-            FindingLifecycleEvent.created_at >= from_dt,
-            FindingLifecycleEvent.created_at < to_dt,
-        )
+        db.query(FindingLifecycleEvent.finding_id, detail_tier, ScanPolicy.tier)
+        .join(Finding, Finding.id == FindingLifecycleEvent.finding_id)
+        .outerjoin(ScanPolicy, ScanPolicy.policy_hash == Finding.origin_policy_hash)
+        .filter(*in_window)
+        .distinct()
         .all()
     )
-    total_findings: set = set()
-    tier_findings = {t: set() for t in CERTIFIED_TIERS}
-    for fid, detail in rows:
-        total_findings.add(fid)
-        tier = None
-        if isinstance(detail, dict):
-            try:
-                tier = int(detail.get("tier"))
-            except (TypeError, ValueError):
-                tier = None
+    resolved: dict = {}  # finding_id -> certified tier int (or None)
+    for fid, dtier, otier in rows:
+        tier = _to_tier(dtier)
+        if tier is None:
+            tier = _to_tier(otier)
+        # keep the finding; upgrade None -> a real tier if any of its rows carries one
+        if fid not in resolved or (resolved[fid] is None and tier is not None):
+            resolved[fid] = tier
+
+    tier_counts = {t: 0 for t in CERTIFIED_TIERS}
+    for tier in resolved.values():
         if tier in CERTIFIED_TIERS:
-            tier_findings[tier].add(fid)
-    return len(total_findings), {t: len(s) for t, s in tier_findings.items()}
+            tier_counts[tier] += 1
+    return int(total), tier_counts
 
 
 def _awaiting_confirmation(db, tenant_id: int) -> tuple[int, dict]:
-    """CURRENT-state open findings with an eligible miss streak below the close threshold (the
-    canonical ``_lifecycle_state`` 'eligible_miss' range: 0 < streak < threshold). Per-tier is
-    attributed via the finding's ``origin_policy_hash`` → ``scan_policy.tier`` (same source the
-    lifecycle card uses for origin_tier)."""
+    """CURRENT-state open findings that are awaiting confirmation — the canonical
+    ``is_awaiting_confirmation`` predicate (OPEN and ``0 < streak < threshold``). Per-tier is
+    attributed via the finding's ORIGIN policy (``origin_policy_hash`` → ``scan_policy.tier``), the
+    same source the lifecycle card uses for origin_tier; never the run tier."""
     from app.models.coverage import ScanPolicy
     from app.models.database import Asset, Finding, FindingStatus
     from app.services.coverage_autoclose import DEFAULT_CLOSE_THRESHOLD
 
     threshold = DEFAULT_CLOSE_THRESHOLD
+    # SQL filter mirrors is_awaiting_confirmation(is_open=True, streak, threshold).
     rows = (
         db.query(Finding.id, Finding.origin_policy_hash)
         .join(Asset, Finding.asset_id == Asset.id)
@@ -317,16 +346,23 @@ def get_dashboard_summary(db, tenant_id: int, days, now: datetime) -> dict:
 
     total_outcomes: list = []
     per_tier_outcomes = {t: [] for t in CERTIFIED_TIERS}
-    last_scan: dict = {}  # (project_id, tier) -> (completed_at, run_id)
+    last_scan: dict = {}  # (project_id, tier) -> (completed_at, run_id)  [selected endpoint source]
     for s in scans:
         snap = s.stats.get("endpoint_verification") if isinstance(s.stats, dict) else None
         outcome = scan_outcome_bucket(_status_str(s.status), snap if isinstance(snap, dict) else None)
         total_outcomes.append(outcome)
         if s.scan_tier in CERTIFIED_TIERS:
             per_tier_outcomes[s.scan_tier].append(outcome)
-            key = (s.project_id, s.scan_tier)
-            if key not in last_scan or (s.completed_at and s.completed_at > last_scan[key][0]):
-                last_scan[key] = (s.completed_at, s.id)
+            # Endpoint ledger source = the LAST TERMINAL, non-cancelled run per (project, tier). An
+            # incoherent running/pending row (outcome None) never supplants a real terminal scan;
+            # cancelled runs are excluded (no meaningful coverage); failed runs ARE kept (they can
+            # carry useful partial coverage). Ties on completed_at break deterministically by the
+            # higher run id — the (completed_at, id) tuple comparison guarantees it.
+            if outcome is not None and outcome != "cancelled":
+                key = (s.project_id, s.scan_tier)
+                candidate = (s.completed_at, s.id)
+                if key not in last_scan or candidate > last_scan[key]:
+                    last_scan[key] = candidate
 
     selected_run_ids = [rid for (_ts, rid) in last_scan.values()]
     selected_by_tier = {t: [] for t in CERTIFIED_TIERS}
