@@ -1,9 +1,13 @@
 import { expect, test, type Page } from '@playwright/test'
 
-// Exercises the REAL ScanDetail.vue + router + store + ScanOperationalSummary card. Only the
-// scan-detail/progress API is mocked — the Vue app runs for real. No scans are created and the
-// production database is never touched.
+// Self-contained browser integration suite for the Scan result / endpoint verification card.
+// It exercises the REAL router, stores, and ScanOperationalSummary rendering in a real browser, but
+// needs NO backend: minimal auth state is injected into localStorage and every API the Scan Detail
+// path touches is mocked with fixtures that match the typed backend contract. Any UNEXPECTED API
+// request fails the test, so a missing mock can never be silently hidden. This is NOT a full-stack
+// end-to-end test — auth.setup.ts is left untouched for a future full-stack suite.
 
+const TENANT_ID = 1
 const RUN_ID = 59100
 
 type EndpointVerification = {
@@ -76,55 +80,96 @@ function summary(partial: Partial<OperationalSummary> = {}): OperationalSummary 
   }
 }
 
-function scanRun(operational_summary: OperationalSummary | null) {
+function scanRunPayload(operational_summary: OperationalSummary | null) {
   return {
-    id: RUN_ID,
-    project_id: 1,
-    profile_id: 1,
-    tenant_id: 0,
-    status: 'completed',
-    triggered_by: 'manual',
-    trigger_type: 'manual',
-    trigger_label: null,
-    scan_tier: 1,
-    started_at: '2026-08-07T08:00:00Z',
-    completed_at: '2026-08-07T08:20:00Z',
-    stats: {},
-    error_message: null,
-    celery_task_id: null,
-    created_at: '2026-08-07T08:00:00Z',
-    duration_seconds: 1200,
-    operational_summary,
+    scan_run: {
+      id: RUN_ID,
+      project_id: 1,
+      profile_id: 1,
+      tenant_id: TENANT_ID,
+      status: 'completed',
+      triggered_by: 'manual',
+      trigger_type: 'manual',
+      trigger_label: null,
+      scan_tier: 1,
+      started_at: '2026-08-07T08:00:00Z',
+      completed_at: '2026-08-07T08:20:00Z',
+      stats: {},
+      error_message: null,
+      celery_task_id: null,
+      created_at: '2026-08-07T08:00:00Z',
+      duration_seconds: 1200,
+      operational_summary,
+    },
+    phases: [],
   }
 }
 
-async function mockProgress(page: Page, operational_summary: OperationalSummary | null) {
-  await page.route(new RegExp(`/api/v1/tenants/\\d+/scans/${RUN_ID}/progress$`), async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ scan_run: scanRun(operational_summary), phases: [] }),
-    })
+const USER = {
+  id: 1,
+  email: 'e2e@card.test',
+  username: 'e2e',
+  full_name: 'E2E User',
+  is_active: true,
+  is_superuser: false,
+  tenant_roles: { [TENANT_ID]: 'admin' },
+  created_at: '2026-08-01T00:00:00Z',
+}
+
+const TENANT = {
+  id: TENANT_ID,
+  name: 'E2E Tenant',
+  slug: 'e2e-tenant',
+  is_active: true,
+  created_at: '2026-08-01T00:00:00Z',
+}
+
+function json(body: unknown) {
+  return { status: 200, contentType: 'application/json', body: JSON.stringify(body) }
+}
+
+// Injects minimal auth state + mocks exactly the APIs the Scan Detail path consumes. Returns the
+// list of UNEXPECTED API paths so each test can assert it stayed empty.
+async function setup(page: Page, operational_summary: OperationalSummary | null): Promise<string[]> {
+  const unexpected: string[] = []
+
+  await page.addInitScript(() => {
+    localStorage.setItem('accessToken', 'e2e-mock-token')
+    localStorage.setItem('refreshToken', 'e2e-mock-refresh')
+    localStorage.setItem('currentTenantId', '1')
   })
+
+  // Catch-all FIRST so the specific routes (registered after) take precedence — an unmocked API
+  // request lands here, is recorded, and fails the test.
+  await page.route('**/api/**', (route) => {
+    unexpected.push(new URL(route.request().url()).pathname)
+    route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })
+  })
+
+  await page.route(/\/api\/v1\/auth\/me$/, (route) => route.fulfill(json(USER)))
+  await page.route(/\/api\/v1\/tenants$/, (route) => route.fulfill(json([TENANT])))
+  await page.route(
+    new RegExp(`/api/v1/tenants/\\d+/scans/${RUN_ID}/progress$`),
+    (route) => route.fulfill(json(scanRunPayload(operational_summary))),
+  )
+
+  return unexpected
 }
 
-function card(page: Page) {
-  return page.getByTestId('auto-close-summary').or(page.getByText('Scan result')).first()
-}
-
-test.describe('Scan result / endpoint verification card', () => {
+test.describe('Scan result / endpoint verification card (mocked API)', () => {
   test('scenario 1 — clean completed scan, 100% covered', async ({ page }) => {
-    await mockProgress(page, summary())
+    const unexpected = await setup(page, summary())
     await page.goto(`/scans/${RUN_ID}`)
 
     await expect(page.getByTestId('scan-outcome-badge')).toHaveText('Completed')
     await expect(page.getByTestId('endpoint-state-badge')).toHaveText('All endpoints verified')
     await expect(page.getByTestId('coverage-percent')).toContainText('100%')
     await expect(page.getByTestId('limitation-reasons')).toHaveCount(0)
+    expect(unexpected).toEqual([])
   })
 
   test('scenario 2 — completed with limitations (96/100, unresponsive)', async ({ page }) => {
-    await mockProgress(
+    const unexpected = await setup(
       page,
       summary({
         outcome: 'completed_with_limitations',
@@ -147,10 +192,11 @@ test.describe('Scan result / endpoint verification card', () => {
     await expect(page.getByTestId('limitation-reasons')).toContainText('Some origins did not respond')
     // the raw enum code must never be shown to the customer
     await expect(page.getByTestId('endpoint-verification')).not.toContainText('unresponsive_origins')
+    expect(unexpected).toEqual([])
   })
 
   test('scenario 3 — legacy / data unavailable, no invented coverage', async ({ page }) => {
-    await mockProgress(
+    const unexpected = await setup(
       page,
       summary({
         outcome: 'completed',
@@ -170,10 +216,11 @@ test.describe('Scan result / endpoint verification card', () => {
     await expect(page.getByTestId('endpoint-unavailable')).toContainText('not available')
     await expect(page.getByTestId('endpoint-verification')).toHaveCount(0)
     await expect(page.getByTestId('coverage-percent')).toHaveCount(0)
+    expect(unexpected).toEqual([])
   })
 
   test('scenario 4 — auto-close activity (eligible/threshold/closed/reopened)', async ({ page }) => {
-    await mockProgress(
+    const unexpected = await setup(
       page,
       summary({
         auto_close: ac({ detected: 3, eligible_miss: 2, would_close: 1, closed: 1, reopened: 1 }),
@@ -188,7 +235,6 @@ test.describe('Scan result / endpoint verification card', () => {
     await expect(page.getByTestId('auto-close-would-close')).toContainText('Reached close threshold')
     await expect(page.getByTestId('auto-close-closed')).toContainText('Automatically fixed')
     await expect(page.getByTestId('auto-close-reopened')).toContainText('1')
-    // ensure card is visible
-    await expect(card(page)).toBeVisible()
+    expect(unexpected).toEqual([])
   })
 })

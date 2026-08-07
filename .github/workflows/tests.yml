@@ -211,6 +211,48 @@ jobs:
       - name: Build
         run: pnpm build
 
+  # ─── Frontend Playwright (mocked API) ─────────────────────────
+  # Self-contained browser integration suite: real router/stores/rendering in a real browser,
+  # every API mocked (no backend / docker). NOT a full-stack e2e — it covers the card's UI contract.
+  frontend-playwright:
+    name: "Frontend Playwright (mocked API)"
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true' && github.event_name == 'pull_request'
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run card integration suite
+        run: pnpm test:e2e:mocked
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-card
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          retention-days: 7
+
   # ─── Security ─────────────────────────────────────────────────
   security-scan:
     name: "Security"

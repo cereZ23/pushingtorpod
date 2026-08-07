@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:mocked": "playwright test --config playwright.mocked.config.ts"
   },
   "dependencies": {
     "@headlessui/vue": "^1.7.19",
