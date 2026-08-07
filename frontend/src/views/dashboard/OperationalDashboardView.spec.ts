@@ -1,7 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mount, flushPromises } from "@vue/test-utils";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mount, flushPromises, enableAutoUnmount } from "@vue/test-utils";
 import { nextTick, ref, type Ref } from "vue";
 import type { OperationalDashboard, DashTierBlock } from "@/api/dashboardSummary";
+
+// Unmount every wrapper after each test. Without this, leaked components share the module-level
+// tenant ref (below) and their watchers fire on a later test's tenant change — polluting the shared
+// request queue and breaking the race tests.
+enableAutoUnmount(afterEach);
 
 // A single lazily-created reactive tenant ref, shared between the mocked store and the tests.
 // Function declaration is hoisted, so the vi.mock factory below may reference it; `ref` is only
