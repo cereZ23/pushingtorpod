@@ -2,6 +2,8 @@
 import type { ScanRun, ScanRunStatus } from "@/stores/scans";
 import { formatDate } from "@/utils/formatters";
 import { tierBadge, triggerBadge } from "@/utils/scanBadges";
+import { Menu, MenuButton, MenuItems, MenuItem } from "@headlessui/vue";
+import { EllipsisVerticalIcon } from "@heroicons/vue/24/outline";
 
 interface Props {
   runs: ScanRun[];
@@ -124,7 +126,7 @@ function formatDuration(run: ScanRun): string {
             </th>
             <th
               scope="col"
-              class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+              class="sticky right-0 bg-gray-50 dark:bg-dark-bg-tertiary px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
             >
               Actions
             </th>
@@ -136,7 +138,7 @@ function formatDuration(run: ScanRun): string {
           <tr
             v-for="run in runs"
             :key="run.id"
-            class="hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary cursor-pointer"
+            class="group hover:bg-gray-50 dark:hover:bg-dark-bg-tertiary cursor-pointer"
             @click="emit('view-detail', run)"
           >
             <td
@@ -160,14 +162,16 @@ function formatDuration(run: ScanRun): string {
               <span
                 class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full"
                 :class="tierBadge(run.scan_tier).classes"
+                :title="tierBadge(run.scan_tier).label"
               >
-                {{ tierBadge(run.scan_tier).label }}
+                {{ tierBadge(run.scan_tier).short }}
               </span>
             </td>
             <td class="px-4 py-4 whitespace-nowrap">
               <span
                 class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full"
                 :class="triggerBadge(run.triggered_by).classes"
+                :title="triggerBadge(run.triggered_by).title || triggerBadge(run.triggered_by).label"
               >
                 {{ triggerBadge(run.triggered_by).label }}
               </span>
@@ -183,21 +187,42 @@ function formatDuration(run: ScanRun): string {
               {{ formatDuration(run) }}
             </td>
             <td
-              class="px-4 py-4 whitespace-nowrap text-sm font-medium space-x-3"
+              class="sticky right-0 bg-white dark:bg-dark-bg-secondary group-hover:bg-gray-50 dark:group-hover:bg-dark-bg-tertiary px-4 py-4 whitespace-nowrap text-right text-sm font-medium"
             >
-              <button
-                @click.stop="emit('view-detail', run)"
-                class="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300"
-              >
-                View
-              </button>
-              <button
-                v-if="canDelete(run)"
-                @click.stop="emit('delete-run', run)"
-                class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
-              >
-                Delete
-              </button>
+              <Menu as="div" class="relative inline-block text-left" @click.stop>
+                <MenuButton
+                  class="p-1 rounded hover:bg-gray-100 dark:hover:bg-dark-bg-tertiary text-gray-500 dark:text-dark-text-secondary"
+                  aria-label="Row actions"
+                >
+                  <EllipsisVerticalIcon class="w-5 h-5" />
+                </MenuButton>
+                <MenuItems
+                  class="absolute right-0 z-20 mt-1 w-32 origin-top-right rounded-md bg-white dark:bg-dark-bg-secondary shadow-lg ring-1 ring-black/5 dark:ring-white/10 focus:outline-none"
+                >
+                  <MenuItem v-slot="{ active }">
+                    <button
+                      @click.stop="emit('view-detail', run)"
+                      :class="[
+                        active ? 'bg-gray-100 dark:bg-dark-bg-tertiary' : '',
+                        'block w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-dark-text-primary rounded-t-md',
+                      ]"
+                    >
+                      View
+                    </button>
+                  </MenuItem>
+                  <MenuItem v-if="canDelete(run)" v-slot="{ active }">
+                    <button
+                      @click.stop="emit('delete-run', run)"
+                      :class="[
+                        active ? 'bg-gray-100 dark:bg-dark-bg-tertiary' : '',
+                        'block w-full text-left px-3 py-2 text-sm text-red-600 dark:text-red-400 rounded-b-md',
+                      ]"
+                    >
+                      Delete
+                    </button>
+                  </MenuItem>
+                </MenuItems>
+              </Menu>
             </td>
           </tr>
         </tbody>
