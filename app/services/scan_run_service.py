@@ -22,8 +22,11 @@ from app.models.scanning import (
 logger = logging.getLogger(__name__)
 
 
-def _serialize_scan_run(scan_run: ScanRun) -> dict:
-    """Convert a ScanRun ORM instance to a response-friendly dict."""
+def _serialize_scan_run(scan_run: ScanRun, operational_summary: dict | None = None) -> dict:
+    """Convert a ScanRun ORM instance to a response-friendly dict.
+
+    ``operational_summary`` is the normalized UI-1 summary; pass it ONLY on single-run detail
+    responses (the list path leaves it None to avoid an aggregate query per row)."""
     return {
         "id": scan_run.id,
         "project_id": scan_run.project_id,
@@ -41,6 +44,7 @@ def _serialize_scan_run(scan_run: ScanRun) -> dict:
         "celery_task_id": scan_run.celery_task_id,
         "created_at": scan_run.created_at,
         "duration_seconds": scan_run.duration_seconds,
+        "operational_summary": operational_summary,
     }
 
 
