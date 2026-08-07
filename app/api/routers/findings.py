@@ -7,6 +7,7 @@ Handles vulnerability findings from Nuclei and other sources
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, or_, and_
+from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, timedelta, timezone
 import logging
@@ -415,6 +416,114 @@ def get_finding_playbook(
         pb["email_template"] = pb["email_template"].replace("{host}", host)
 
     return {"playbook": pb, "finding_id": finding_id, "host": host}
+
+
+# ---------------------------------------------------------------------------
+# Coverage-aware auto-close lifecycle (UI-2). A durable, queryable, URL/hash-free
+# view of WHY a finding is open / ineligible / closed, for the finding-detail UI.
+# ---------------------------------------------------------------------------
+class LifecycleEventItem(BaseModel):
+    """One persisted transition. Closed schema — never a URL or a hash."""
+
+    type: str
+    scan_run_id: int | None
+    created_at: datetime
+    reason_code: str | None = None
+
+
+class AutoCloseState(BaseModel):
+    """Synthetic current auto-close state derived from the finding + its events."""
+
+    state: str  # open | eligible_miss | awaiting_confirmation | auto_fixed | manually_fixed | suppressed
+    current_streak: int
+    threshold: int
+    last_detected_run_id: int | None
+    last_eligible_run_id: int | None
+    coverage_scope: str | None  # "endpoint" | "host"
+    origin_tier: int | None  # tier of the covering policy (endpoint findings), else null
+
+
+class FindingLifecycleResponse(BaseModel):
+    finding_id: int
+    auto_close: AutoCloseState
+    events: list[LifecycleEventItem]
+    # False for legacy findings with no recorded events (the UI shows "history from migration 031"
+    # rather than inventing a retroactive timeline).
+    has_history: bool
+
+
+def _lifecycle_state(finding, has_auto_closed: bool, streak: int, threshold: int) -> str:
+    if finding.status == FindingStatus.FIXED:
+        return "auto_fixed" if has_auto_closed else "manually_fixed"
+    if finding.status == FindingStatus.SUPPRESSED:
+        return "suppressed"
+    if streak >= threshold:
+        return "awaiting_confirmation"
+    if streak >= 1:
+        return "eligible_miss"
+    return "open"
+
+
+@router.get("/{finding_id}/lifecycle", response_model=FindingLifecycleResponse)
+def get_finding_lifecycle(
+    tenant_id: int, finding_id: int, db: Session = Depends(get_db), membership=Depends(verify_tenant_access)
+):
+    """Coverage-aware auto-close lifecycle for a finding: the synthetic current state plus the
+    chronological, de-duplicated event trail. Tenant-isolated (finding must belong to the tenant);
+    no URL and no hash is ever returned — only a small reason_code and counts.
+
+    Raises 404 if the finding does not belong to the tenant.
+    """
+    from app.models.coverage import ScanPolicy
+    from app.models.database import FindingLifecycleEvent
+    from app.services.coverage_autoclose import DEFAULT_CLOSE_THRESHOLD
+
+    finding = db.query(Finding).join(Asset).filter(Finding.id == finding_id, Asset.tenant_id == tenant_id).first()
+    if not finding:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finding not found")
+
+    events = (
+        db.query(FindingLifecycleEvent)
+        .filter(
+            FindingLifecycleEvent.finding_id == finding_id,
+            FindingLifecycleEvent.tenant_id == tenant_id,  # belt-and-suspenders with the finding scope
+        )
+        .order_by(FindingLifecycleEvent.created_at.asc(), FindingLifecycleEvent.id.asc())
+        .all()
+    )
+
+    threshold = DEFAULT_CLOSE_THRESHOLD
+    streak = finding.eligible_miss_streak or 0
+    has_auto_closed = any(e.event_type == "auto_closed" for e in events)
+
+    origin_tier = None
+    if finding.origin_policy_hash:
+        row = db.query(ScanPolicy.tier).filter(ScanPolicy.policy_hash == finding.origin_policy_hash).first()
+        origin_tier = row[0] if row else None
+
+    return FindingLifecycleResponse(
+        finding_id=finding.id,
+        auto_close=AutoCloseState(
+            state=_lifecycle_state(finding, has_auto_closed, streak, threshold),
+            current_streak=streak,
+            threshold=threshold,
+            last_detected_run_id=finding.last_detected_scan_run_id,
+            last_eligible_run_id=finding.last_eligible_run_id,
+            coverage_scope="endpoint" if finding.endpoint_shape_hash else "host",
+            origin_tier=origin_tier,
+        ),
+        events=[
+            LifecycleEventItem(
+                type=e.event_type,
+                scan_run_id=e.scan_run_id,
+                created_at=e.created_at,
+                # Only expose a small reason code from the closed-schema detail — never the raw dict.
+                reason_code=(e.detail or {}).get("reason") if isinstance(e.detail, dict) else None,
+            )
+            for e in events
+        ],
+        has_history=len(events) > 0,
+    )
 
 
 @router.get("/{finding_id}", response_model=FindingDetailResponse)
