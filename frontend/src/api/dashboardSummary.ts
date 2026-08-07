@@ -41,7 +41,7 @@ export interface OperationalDashboard {
   scans: DashScans
   endpoints: DashEndpoints
   findings: DashFindings
-  by_tier: Record<string, DashTierBlock> // always keys "1" and "2"
+  by_tier: Record<"1" | "2", DashTierBlock> // the backend always returns both keys
 }
 
 export type DashboardPeriod = 7 | 30 | 90

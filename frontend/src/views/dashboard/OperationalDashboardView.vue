@@ -2,7 +2,7 @@
 // UI-3 operational dashboard. Purely data-driven: it LABELS the backend's operational-summary
 // aggregate (scan outcomes, endpoint verification, finding lifecycle) and never re-derives anything.
 // No charts, no click-through (the lists don't yet support equivalent filters).
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, watch } from "vue";
 import { useTenantStore } from "@/stores/tenant";
 import {
   dashboardSummaryApi,
@@ -21,9 +21,19 @@ const data = ref<OperationalDashboard | null>(null);
 const loading = ref(false);
 const error = ref("");
 
-const isEmpty = computed(() => {
+// The backend guarantees both tier keys; a response missing either is malformed, not "zero" —
+// we surface it as inconsistent rather than inventing zeros.
+const inconsistent = computed(() => {
   const d = data.value;
   if (!d) return false;
+  // The contract guarantees both keys; at runtime a malformed response might not, so check as partial.
+  const bt = d.by_tier as Partial<Record<"1" | "2", DashTierBlock>> | undefined;
+  return !bt || !bt["1"] || !bt["2"];
+});
+
+const isEmpty = computed(() => {
+  const d = data.value;
+  if (!d || inconsistent.value) return false;
   return (
     d.scans.total === 0 &&
     d.scans.cancelled === 0 &&
@@ -39,35 +49,44 @@ function pct(p: number | null): string {
   return p === null || p === undefined ? "—" : `${p}%`;
 }
 
-function tierBlock(t: "1" | "2"): DashTierBlock | null {
-  return data.value?.by_tier?.[t] ?? null;
-}
+// Race-safe: only the LATEST request may mutate state. A stale response (slower older request, or a
+// request from a previous tenant/period) is discarded via the generation token.
+let requestGeneration = 0;
 
 async function load(): Promise<void> {
-  if (!tenantId.value) {
+  const generation = ++requestGeneration;
+  const requestedTenant = tenantId.value;
+  const requestedPeriod = period.value;
+
+  if (!requestedTenant) {
+    data.value = null;
     error.value = "No tenant selected";
+    loading.value = false;
     return;
   }
+
   loading.value = true;
   error.value = "";
   try {
-    data.value = await dashboardSummaryApi.getOperational(tenantId.value, period.value);
+    const result = await dashboardSummaryApi.getOperational(requestedTenant, requestedPeriod);
+    if (generation !== requestGeneration) return; // superseded → ignore
+    data.value = result;
   } catch (err: unknown) {
-    error.value = err instanceof Error ? err.message : "Failed to load the operational dashboard";
+    if (generation !== requestGeneration) return; // superseded → don't show a stale error
     data.value = null;
+    error.value = err instanceof Error ? err.message : "Failed to load the operational dashboard";
   } finally {
-    loading.value = false;
+    if (generation === requestGeneration) loading.value = false;
   }
 }
 
 function setPeriod(p: DashboardPeriod): void {
-  if (p === period.value) return;
-  period.value = p;
-  load();
+  period.value = p; // the watcher fires the (deduped) reload
 }
 
-onMounted(load);
-watch(tenantId, load);
+// One watcher owns loading: fires immediately on mount and on any tenant/period change. No manual
+// onMounted/setPeriod calls → no double requests.
+watch([tenantId, period], load, { immediate: true });
 </script>
 
 <template>
@@ -120,6 +139,16 @@ watch(tenantId, load);
       data-testid="dash-error"
     >
       <p class="text-sm text-red-800 dark:text-red-200">{{ error }}</p>
+    </div>
+
+    <!-- Inconsistent data (a response missing a guaranteed tier block) -->
+    <div
+      v-else-if="inconsistent"
+      role="alert"
+      class="text-sm text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 p-4 rounded-md"
+      data-testid="dash-inconsistent"
+    >
+      The operational summary came back incomplete. Some tier data is unavailable — please retry.
     </div>
 
     <!-- Empty -->
@@ -201,6 +230,12 @@ watch(tenantId, load);
               </dd>
             </div>
             <div>
+              <dt class="text-gray-500 dark:text-dark-text-secondary">Failed</dt>
+              <dd class="text-red-700 dark:text-red-400 font-semibold" data-testid="endpoints-failed">
+                {{ data.endpoints.failed }}
+              </dd>
+            </div>
+            <div>
               <dt class="text-gray-500 dark:text-dark-text-secondary">Selected</dt>
               <dd class="text-gray-900 dark:text-dark-text-primary font-semibold" data-testid="endpoints-selected">
                 {{ data.endpoints.selected }}
@@ -261,9 +296,11 @@ watch(tenantId, load);
                 <th class="py-1 pr-4 font-medium">Tier</th>
                 <th class="py-1 pr-4 font-medium">Completed</th>
                 <th class="py-1 pr-4 font-medium">With limits</th>
-                <th class="py-1 pr-4 font-medium">Failed</th>
+                <th class="py-1 pr-4 font-medium">Scan failed</th>
                 <th class="py-1 pr-4 font-medium">Verified</th>
                 <th class="py-1 pr-4 font-medium">Not verifiable</th>
+                <th class="py-1 pr-4 font-medium">Ep failed</th>
+                <th class="py-1 pr-4 font-medium">Ep skipped</th>
                 <th class="py-1 pr-4 font-medium">Coverage</th>
                 <th class="py-1 pr-4 font-medium">Auto-fixed</th>
                 <th class="py-1 pr-4 font-medium">Reopened</th>
@@ -278,15 +315,22 @@ watch(tenantId, load);
                 class="border-t border-gray-100 dark:border-dark-border text-gray-900 dark:text-dark-text-primary"
               >
                 <td class="py-1.5 pr-4 font-medium">T{{ t }}</td>
-                <td class="py-1.5 pr-4">{{ tierBlock(t)?.scans.completed ?? 0 }}</td>
-                <td class="py-1.5 pr-4">{{ tierBlock(t)?.scans.completed_with_limitations ?? 0 }}</td>
-                <td class="py-1.5 pr-4">{{ tierBlock(t)?.scans.failed ?? 0 }}</td>
-                <td class="py-1.5 pr-4">{{ tierBlock(t)?.endpoints.verified ?? 0 }}</td>
-                <td class="py-1.5 pr-4">{{ tierBlock(t)?.endpoints.not_verifiable ?? 0 }}</td>
-                <td class="py-1.5 pr-4">{{ pct(tierBlock(t)?.endpoints.coverage_percent ?? null) }}</td>
-                <td class="py-1.5 pr-4">{{ tierBlock(t)?.findings.auto_closed ?? 0 }}</td>
-                <td class="py-1.5 pr-4">{{ tierBlock(t)?.findings.reopened ?? 0 }}</td>
-                <td class="py-1.5">{{ tierBlock(t)?.findings.awaiting_confirmation ?? 0 }}</td>
+                <td class="py-1.5 pr-4">{{ data.by_tier[t].scans.completed }}</td>
+                <td class="py-1.5 pr-4">{{ data.by_tier[t].scans.completed_with_limitations }}</td>
+                <td class="py-1.5 pr-4">{{ data.by_tier[t].scans.failed }}</td>
+                <td class="py-1.5 pr-4">{{ data.by_tier[t].endpoints.verified }}</td>
+                <td class="py-1.5 pr-4">{{ data.by_tier[t].endpoints.not_verifiable }}</td>
+                <td
+                  class="py-1.5 pr-4"
+                  :class="data.by_tier[t].endpoints.failed > 0 ? 'text-red-700 dark:text-red-400 font-medium' : ''"
+                >
+                  {{ data.by_tier[t].endpoints.failed }}
+                </td>
+                <td class="py-1.5 pr-4">{{ data.by_tier[t].endpoints.skipped }}</td>
+                <td class="py-1.5 pr-4">{{ pct(data.by_tier[t].endpoints.coverage_percent) }}</td>
+                <td class="py-1.5 pr-4">{{ data.by_tier[t].findings.auto_closed }}</td>
+                <td class="py-1.5 pr-4">{{ data.by_tier[t].findings.reopened }}</td>
+                <td class="py-1.5">{{ data.by_tier[t].findings.awaiting_confirmation }}</td>
               </tr>
             </tbody>
           </table>
