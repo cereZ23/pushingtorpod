@@ -31,6 +31,8 @@ def _serialize_scan_run(scan_run: ScanRun) -> dict:
         "tenant_id": scan_run.tenant_id,
         "status": scan_run.status.value if hasattr(scan_run.status, "value") else str(scan_run.status),
         "triggered_by": scan_run.triggered_by,
+        "trigger_type": scan_run.trigger_type,
+        "trigger_label": scan_run.trigger_label,
         "scan_tier": scan_run.scan_tier,
         "started_at": scan_run.started_at,
         "completed_at": scan_run.completed_at,
@@ -69,7 +71,8 @@ class ScanRunService:
         project: Project,
         profile_id: int | None,
         scan_tier: int,
-        triggered_by: str,
+        trigger_type: str,
+        trigger_label: str | None = None,
     ) -> tuple[ScanRun, str]:
         """Create a scan run and dispatch the pipeline to Celery.
 
@@ -78,7 +81,8 @@ class ScanRunService:
             project: Project ORM instance (already validated).
             profile_id: Optional scan profile ID.
             scan_tier: Scan tier (1-3) used when profile_id is None.
-            triggered_by: Who triggered the scan (e.g. "manual").
+            trigger_type: Server-decided provenance (manual/scheduled/api/retest) — NOT from client text.
+            trigger_label: Optional descriptive label (display-only; never decides the type).
 
         Returns:
             Tuple of (ScanRun instance, Celery task ID).
@@ -142,9 +146,12 @@ class ScanRunService:
             profile_id=profile_id,
             tenant_id=tenant_id,
             status=ScanRunStatus.PENDING,
-            triggered_by=triggered_by,
             scan_tier=run_tier,
         )
+        # Single source of truth for provenance — sets trigger_type + trigger_label + legacy triggered_by.
+        from app.services.scan_triggers import apply_trigger
+
+        apply_trigger(scan_run, trigger_type, trigger_label)
         self.db.add(scan_run)
         self.db.commit()
         self.db.refresh(scan_run)

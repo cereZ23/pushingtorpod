@@ -244,7 +244,12 @@ class ScanRun(Base):
         ),
         default=ScanRunStatus.PENDING,
     )
-    triggered_by = Column(String(100))  # 'manual', 'scheduler', 'api', 'retest'
+    triggered_by = Column(String(100))  # LEGACY (compat): written only via services.scan_triggers.apply_trigger
+    # Provenance split out of the overloaded triggered_by. trigger_type is decided SERVER-SIDE
+    # (manual/scheduled/api/retest) and is the only field UI/authorization should read; NULL for
+    # legacy custom runs (never guessed). trigger_label is an optional descriptive string, display-only.
+    trigger_type = Column(String(16))  # manual | scheduled | api | retest | NULL(legacy)
+    trigger_label = Column(String(100))  # optional custom label; never decides the type
     # Tier this run actually executed, SNAPSHOTTED at creation from the profile so a later profile
     # edit never rewrites history. Nullable: legacy runs (no linked profile) and untiered retests
     # stay NULL → the UI shows "Unknown" rather than guessing from duration/phases.
@@ -269,6 +274,10 @@ class ScanRun(Base):
         Index("idx_scanrun_status", "status"),
         Index("idx_scanrun_project_created", "project_id", "created_at"),
         CheckConstraint("scan_tier IS NULL OR scan_tier IN (1, 2, 3)", name="ck_scan_run_tier"),
+        CheckConstraint(
+            "trigger_type IS NULL OR trigger_type IN ('manual', 'scheduled', 'api', 'retest')",
+            name="ck_scan_run_trigger_type",
+        ),
     )
 
     def __repr__(self):
