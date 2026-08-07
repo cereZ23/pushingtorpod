@@ -17,7 +17,7 @@ function tenantRef(): Ref<number | null> {
 type Deferred = { promise: Promise<unknown>; resolve: (v: unknown) => void; reject: (e: unknown) => void };
 const h = vi.hoisted(() => {
   const deferreds: Deferred[] = [];
-  const getOperational = vi.fn(() => {
+  const getOperational = vi.fn((..._args: unknown[]) => {
     let resolve!: (v: unknown) => void;
     let reject!: (e: unknown) => void;
     const promise = new Promise<unknown>((res, rej) => {
@@ -81,7 +81,7 @@ describe("OperationalDashboardView", () => {
     const w = mount(OperationalDashboardView);
     await nextTick();
     expect(getOperational).toHaveBeenCalledWith(1, 30);
-    expect(w.get('[data-testid="dash-loading"]').exists()).toBe(true);
+    expect(w.find('[data-testid="dash-loading"]').exists()).toBe(true);
   });
 
   it("shows the error state when the request fails", async () => {
