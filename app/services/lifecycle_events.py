@@ -66,17 +66,22 @@ def record_lifecycle_event(
 
     from app.models.database import FindingLifecycleEvent
 
-    exists = (
-        db.query(FindingLifecycleEvent.id)
-        .filter(
-            FindingLifecycleEvent.finding_id == finding_id,
-            FindingLifecycleEvent.event_type == event_type,
-            FindingLifecycleEvent.scan_run_id == scan_run_id,
+    # Idempotency applies ONLY to run-attributed events: a retried scan must not duplicate its
+    # (finding, type, run) row. Run-less events (scan_run_id is None — e.g. a manual reopen) are
+    # NOT deduplicated: they are distinct real occurrences, and Postgres treats NULLs as distinct in
+    # the UNIQUE constraint, so a permanent pre-check would wrongly swallow the 2nd manual reopen.
+    if scan_run_id is not None:
+        exists = (
+            db.query(FindingLifecycleEvent.id)
+            .filter(
+                FindingLifecycleEvent.finding_id == finding_id,
+                FindingLifecycleEvent.event_type == event_type,
+                FindingLifecycleEvent.scan_run_id == scan_run_id,
+            )
+            .first()
         )
-        .first()
-    )
-    if exists is not None:
-        return False
+        if exists is not None:
+            return False
 
     db.add(
         FindingLifecycleEvent(

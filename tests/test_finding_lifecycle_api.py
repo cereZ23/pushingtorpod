@@ -22,11 +22,17 @@ def _asset(db_session, test_tenant, ident="lcapi.test.com"):
     return a
 
 
+_run_seq = 0
+
+
 def _run(db_session, test_tenant):
-    # scan_run_id on the event is FK-constrained to scan_runs, so use a real run.
+    # scan_run_id on the event is FK-constrained to scan_runs, so use a real run. Project has a
+    # UNIQUE(tenant_id, name), so give each run its own project name.
+    global _run_seq
+    _run_seq += 1
     from app.models.scanning import Project, ScanRun, ScanRunStatus
 
-    p = Project(tenant_id=test_tenant.id, name="lcapi-proj")
+    p = Project(tenant_id=test_tenant.id, name=f"lcapi-proj-{_run_seq}")
     db_session.add(p)
     db_session.flush()
     r = ScanRun(project_id=p.id, tenant_id=test_tenant.id, status=ScanRunStatus.COMPLETED)

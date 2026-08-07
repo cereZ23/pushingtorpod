@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, or_, and_
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Annotated
 from datetime import datetime, timedelta, timezone
 import logging
 import re
@@ -493,7 +493,9 @@ def _lifecycle_state(finding, auto_fixed: bool, streak: int, threshold: int) -> 
 def get_finding_lifecycle(
     tenant_id: int,
     finding_id: int,
-    limit: int = Query(100, ge=1, le=200, description="Max events (most recent), returned chronologically"),
+    # Annotated form so a DIRECT call (tests) gets the int default 100, while FastAPI still
+    # validates the HTTP query param (a bare `= Query(...)` would pass the FieldInfo as the value).
+    limit: Annotated[int, Query(ge=1, le=200, description="Max events (most recent), returned chronologically")] = 100,
     db: Session = Depends(get_db),
     membership=Depends(verify_tenant_access),
 ):
@@ -673,10 +675,26 @@ def update_finding(
 
     # Apply updates
     if updates.status is not None:
+        prev_status = finding.status
         try:
-            finding.status = FindingStatus(updates.status)
+            new_status = FindingStatus(updates.status)
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid status: {updates.status}")
+        finding.status = new_status
+        # A manual exit from FIXED must be recorded, or the lifecycle would still see a stale
+        # `auto_closed` as the last close-lineage event and mislabel a later manual fix as auto_fixed.
+        # Written in THIS transaction, run-less (scan_run_id=None → not deduplicated by the writer).
+        if prev_status == FindingStatus.FIXED and new_status in (FindingStatus.OPEN, FindingStatus.SUPPRESSED):
+            from app.services.lifecycle_events import record_lifecycle_event
+
+            record_lifecycle_event(
+                db,
+                tenant_id=tenant_id,
+                finding_id=finding.id,
+                scan_run_id=None,
+                event_type="reopened",
+                detail={"reason": "manual_reopen" if new_status == FindingStatus.OPEN else "manual_status_change"},
+            )
 
     # Note: Notes field doesn't exist in current model
     # Would need to add to Finding model or store in evidence JSON
