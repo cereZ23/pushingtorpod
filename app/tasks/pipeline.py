@@ -364,6 +364,27 @@ def _run_single_phase(
             tenant_logger.warning(f"Required phase {phase_id} failed, continuing pipeline")
 
 
+def _resolve_scan_tier(scan_run, db) -> int:
+    """The tier a run EXECUTES at. The snapshot persisted on the run (``scan_run.scan_tier``) is the
+    source of truth: it is what the UI shows AND what the pipeline runs, so a profile edited between
+    run creation and worker start can never change the executing tier out from under the recorded
+    tier. Only a legacy run with no snapshot (``scan_tier`` NULL) falls back to the historical
+    resolution order — profile.scan_tier → stats.config.tier → default 1 (Safe). For new runs the
+    profile and stats.config must NOT override the snapshot."""
+    if scan_run.scan_tier in (1, 2, 3):
+        return scan_run.scan_tier
+    tier = 1
+    if scan_run.profile_id:
+        profile = db.query(ScanProfile).filter(ScanProfile.id == scan_run.profile_id).first()
+        if profile:
+            tier = profile.scan_tier or 1
+    if scan_run.stats and isinstance(scan_run.stats, dict):
+        config_tier = scan_run.stats.get("config", {}).get("tier")
+        if config_tier in (1, 2, 3):
+            tier = config_tier
+    return tier
+
+
 @celery.task(
     name="app.tasks.pipeline.run_scan_pipeline",
     bind=True,
@@ -442,17 +463,9 @@ def run_scan_pipeline(self, scan_run_id: int):
             _update_scan_run(db, scan_run_id, ScanRunStatus.FAILED, error="Project not found")
             return {"error": "Project not found"}
 
-        # Determine scan tier from profile or stats config (default: 1=Safe)
-        scan_tier = 1
-        if scan_run.profile_id:
-            profile = db.query(ScanProfile).filter(ScanProfile.id == scan_run.profile_id).first()
-            if profile:
-                scan_tier = profile.scan_tier or 1
-        # Allow override via stats.config.tier (for manual/API-triggered scans)
-        if scan_run.stats and isinstance(scan_run.stats, dict):
-            config_tier = scan_run.stats.get("config", {}).get("tier")
-            if config_tier in (1, 2, 3):
-                scan_tier = config_tier
+        # The tier that executes is the run's SNAPSHOT (source of truth for UI + execution); a legacy
+        # NULL-snapshot run falls back to profile → stats.config → default. See _resolve_scan_tier.
+        scan_tier = _resolve_scan_tier(scan_run, db)
 
         # Update celery task id
         scan_run.celery_task_id = self.request.id
@@ -852,12 +865,9 @@ def run_single_phase(self, scan_run_id: int, phase_id: str):
         project_id = scan_run.project_id
         tenant_logger = TenantLoggerAdapter(logger, {"tenant_id": tenant_id})
 
-        # Determine scan tier from profile
-        scan_tier = 1
-        if scan_run.profile_id:
-            profile = db.query(ScanProfile).filter(ScanProfile.id == scan_run.profile_id).first()
-            if profile:
-                scan_tier = profile.scan_tier or 1
+        # Same snapshot-first resolution as the full pipeline (snapshot is source of truth; legacy
+        # NULL falls back to profile → stats.config → default).
+        scan_tier = _resolve_scan_tier(scan_run, db)
 
         tenant_logger.info(f"Running single phase {phase_id} on scan_run {scan_run_id} (tier {scan_tier})")
 

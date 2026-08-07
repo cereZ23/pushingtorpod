@@ -121,6 +121,7 @@ def _create_retest_scan_run(
         tenant_id=tenant_id,
         status=ScanRunStatus.PENDING,
         triggered_by="retest",
+        scan_tier=None,  # a retest is a targeted single-template re-run, not a tiered scan → Unknown tier
         stats={
             "retest_finding_id": finding.id,
             "template_id": finding.template_id,

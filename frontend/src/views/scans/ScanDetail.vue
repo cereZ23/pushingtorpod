@@ -6,6 +6,7 @@ import { useScanStore } from "@/stores/scans";
 import type { PhaseStatus, ScanHealth } from "@/stores/scans";
 import { useToastStore } from "@/stores/toast";
 import { formatDate, parseApiDate } from "@/utils/formatters";
+import { tierBadge, triggerBadge } from "@/utils/scanBadges";
 
 const route = useRoute();
 const router = useRouter();
@@ -253,6 +254,10 @@ const PHASE_LABELS: Record<string, { name: string; description: string }> = {
     name: "HTTP Probing",
     description: "Probing live web servers with HTTPX",
   },
+  "4b": {
+    name: "TLS Certificates",
+    description: "Collecting TLS certificates, SANs and issuers via TLSX",
+  },
   "5": {
     name: "Port Scanning",
     description: "Discovering open ports via Naabu",
@@ -283,14 +288,26 @@ const PHASE_LABELS: Record<string, { name: string; description: string }> = {
     name: "Misconfig Detection",
     description: "Checking for security misconfigurations",
   },
+  "8c": {
+    name: "WAF Origin Discovery",
+    description: "Finding origin servers reachable directly, bypassing the WAF/CDN",
+  },
   "9": {
     name: "Vuln Scanning",
     description: "Running Nuclei vulnerability templates",
+  },
+  "9b": {
+    name: "Typosquatting",
+    description: "Detecting look-alike / phishing domains via DNSTwist",
   },
   "9d": {
     name: "Active DAST",
     description:
       "Fuzzing crawled parameters (nuclei -dast) — Tier 3 + authorization only",
+  },
+  "9e": {
+    name: "Version → CVE",
+    description: "Inferring known CVEs from detected product versions",
   },
   "10": { name: "Correlation", description: "Grouping findings into issues" },
   "11": {
@@ -426,12 +443,30 @@ function getStatsEntries(
               <dt
                 class="text-sm font-medium text-gray-500 dark:text-dark-text-secondary"
               >
-                Triggered By
+                Tier
               </dt>
-              <dd
-                class="mt-1 text-sm text-gray-900 dark:text-dark-text-primary"
+              <dd class="mt-1">
+                <span
+                  class="px-2.5 py-0.5 inline-flex items-center text-xs font-semibold rounded-full"
+                  :class="tierBadge(scanStore.currentScanRun.scan_tier).classes"
+                >
+                  {{ tierBadge(scanStore.currentScanRun.scan_tier).label }}
+                </span>
+              </dd>
+            </div>
+            <div>
+              <dt
+                class="text-sm font-medium text-gray-500 dark:text-dark-text-secondary"
               >
-                {{ scanStore.currentScanRun.triggered_by }}
+                Trigger
+              </dt>
+              <dd class="mt-1">
+                <span
+                  class="px-2.5 py-0.5 inline-flex items-center text-xs font-semibold rounded-full"
+                  :class="triggerBadge(scanStore.currentScanRun.triggered_by).classes"
+                >
+                  {{ triggerBadge(scanStore.currentScanRun.triggered_by).label }}
+                </span>
               </dd>
             </div>
             <div>

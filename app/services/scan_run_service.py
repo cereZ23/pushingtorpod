@@ -31,6 +31,7 @@ def _serialize_scan_run(scan_run: ScanRun) -> dict:
         "tenant_id": scan_run.tenant_id,
         "status": scan_run.status.value if hasattr(scan_run.status, "value") else str(scan_run.status),
         "triggered_by": scan_run.triggered_by,
+        "scan_tier": scan_run.scan_tier,
         "started_at": scan_run.started_at,
         "completed_at": scan_run.completed_at,
         "stats": scan_run.stats,
@@ -132,13 +133,17 @@ class ScanRunService:
 
             profile_id = profile.id
 
-        # Create scan run
+        # Create scan run. Snapshot the tier from the profile that actually runs, so the run keeps
+        # its historical tier even if the profile is later edited. Falls back to the requested
+        # scan_tier if a profile somehow has none.
+        run_tier = getattr(profile, "scan_tier", None) or scan_tier
         scan_run = ScanRun(
             project_id=project.id,
             profile_id=profile_id,
             tenant_id=tenant_id,
             status=ScanRunStatus.PENDING,
             triggered_by=triggered_by,
+            scan_tier=run_tier,
         )
         self.db.add(scan_run)
         self.db.commit()

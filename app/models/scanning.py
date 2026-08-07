@@ -244,7 +244,11 @@ class ScanRun(Base):
         ),
         default=ScanRunStatus.PENDING,
     )
-    triggered_by = Column(String(100))  # 'manual', 'schedule', 'api'
+    triggered_by = Column(String(100))  # 'manual', 'scheduler', 'api', 'retest'
+    # Tier this run actually executed, SNAPSHOTTED at creation from the profile so a later profile
+    # edit never rewrites history. Nullable: legacy runs (no linked profile) and untiered retests
+    # stay NULL → the UI shows "Unknown" rather than guessing from duration/phases.
+    scan_tier = Column(Integer)  # 1=Safe, 2=Moderate, 3=Aggressive; NULL=unknown/untiered
     started_at = Column(DateTime)
     completed_at = Column(DateTime)
     stats = Column(JSON)  # {phases: {...}, asset_count, finding_count, change_events: [...]}
@@ -264,6 +268,7 @@ class ScanRun(Base):
         Index("idx_scanrun_tenant", "tenant_id"),
         Index("idx_scanrun_status", "status"),
         Index("idx_scanrun_project_created", "project_id", "created_at"),
+        CheckConstraint("scan_tier IS NULL OR scan_tier IN (1, 2, 3)", name="ck_scan_run_tier"),
     )
 
     def __repr__(self):

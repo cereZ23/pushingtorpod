@@ -36,6 +36,7 @@ class TestSerializeScanRun:
             tenant_id=2,
             status=ScanRunStatus.COMPLETED,
             triggered_by="manual",
+            scan_tier=2,
             started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
             completed_at=datetime(2026, 1, 1, 1, tzinfo=timezone.utc),
             stats={"assets": 10},
@@ -49,6 +50,7 @@ class TestSerializeScanRun:
         assert out["project_id"] == 10
         assert out["status"] == "completed"
         assert out["triggered_by"] == "manual"
+        assert out["scan_tier"] == 2
         assert out["stats"] == {"assets": 10}
         assert out["celery_task_id"] == "task-abc"
         assert out["duration_seconds"] == 3600
@@ -62,6 +64,7 @@ class TestSerializeScanRun:
             tenant_id=2,
             status="weird-status",
             triggered_by="cron",
+            scan_tier=None,
             started_at=None,
             completed_at=None,
             stats=None,
@@ -73,6 +76,7 @@ class TestSerializeScanRun:
         out = _serialize_scan_run(run)
         assert out["status"] == "weird-status"
         assert out["error_message"] == "err"
+        assert out["scan_tier"] is None
 
 
 class TestSerializePhaseResult:
@@ -206,6 +210,7 @@ class TestGetScanProgress:
             tenant_id=1,
             status=ScanRunStatus.RUNNING,
             triggered_by="api",
+            scan_tier=3,
             started_at=None,
             completed_at=None,
             stats=None,

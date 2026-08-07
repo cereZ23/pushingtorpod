@@ -171,6 +171,7 @@ class ScanRunResponse(BaseModel):
     tenant_id: int
     status: str
     triggered_by: str | None
+    scan_tier: int | None = None  # 1/2/3; None = unknown (legacy) or untiered (retest)
     started_at: datetime | None
     completed_at: datetime | None
     stats: dict | None

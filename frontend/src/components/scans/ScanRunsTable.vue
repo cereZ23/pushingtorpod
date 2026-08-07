@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ScanRun, ScanRunStatus } from "@/stores/scans";
 import { formatDate } from "@/utils/formatters";
+import { tierBadge, triggerBadge } from "@/utils/scanBadges";
 
 interface Props {
   runs: ScanRun[];
@@ -101,7 +102,13 @@ function formatDuration(run: ScanRun): string {
               scope="col"
               class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
             >
-              Triggered By
+              Tier
+            </th>
+            <th
+              scope="col"
+              class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-secondary uppercase tracking-wider"
+            >
+              Trigger
             </th>
             <th
               scope="col"
@@ -149,10 +156,21 @@ function formatDuration(run: ScanRun): string {
                 {{ run.status }}
               </span>
             </td>
-            <td
-              class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-dark-text-primary"
-            >
-              {{ run.triggered_by }}
+            <td class="px-6 py-4 whitespace-nowrap">
+              <span
+                class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full"
+                :class="tierBadge(run.scan_tier).classes"
+              >
+                {{ tierBadge(run.scan_tier).label }}
+              </span>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap">
+              <span
+                class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full"
+                :class="triggerBadge(run.triggered_by).classes"
+              >
+                {{ triggerBadge(run.triggered_by).label }}
+              </span>
             </td>
             <td
               class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-dark-text-secondary"
