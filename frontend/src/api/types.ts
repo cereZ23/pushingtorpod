@@ -328,3 +328,30 @@ export interface PaginatedResponseLegacy<T> {
   page_size: number;
   total_pages: number;
 }
+
+// Coverage-aware auto-close lifecycle (UI-2, from GET /findings/{id}/lifecycle)
+export interface LifecycleEvent {
+  type: string; // detected | eligible_miss | miss_reset | would_close | auto_closed | reopened
+  scan_run_id: number | null;
+  created_at: string;
+  reason_code: string | null;
+}
+
+export interface AutoCloseState {
+  state: string; // open | eligible_miss | awaiting_confirmation | auto_fixed | manually_fixed | suppressed
+  current_streak: number;
+  threshold: number;
+  last_detected_run_id: number | null;
+  last_eligible_run_id: number | null;
+  coverage_scope: string | null; // "endpoint" | "host" | null (non-coverage-aware)
+  origin_tier: number | null;
+}
+
+export interface FindingLifecycle {
+  finding_id: number;
+  auto_close: AutoCloseState;
+  events: LifecycleEvent[];
+  total_events: number;
+  has_more: boolean;
+  has_history: boolean;
+}
